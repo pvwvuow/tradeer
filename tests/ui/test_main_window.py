@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -5,13 +6,33 @@ from pytestqt.qtbot import QtBot
 
 from app.__version__ import __version__
 from app.core.ui_prefs import ThemeName, UiPrefs, ViewMode, load_prefs
+from app.observability.buffer import RecentLogBuffer
+from app.observability.controls import LogControls
+from app.observability.crash_handler import CrashInfo, CrashTestError
+from app.observability.levels import LevelRegistry
+from app.ui.crash_dialog import CrashNotifier
+from app.ui.logs_page import LogsPage
 from app.ui.main_window import MainWindow
 from app.ui.navigation import ADVANCED_PAGES, SIMPLE_HOME
+from app.ui.pages import PlaceholderPage
 from app.ui.theme import DARK, LIGHT
 
 
-def make_window(qtbot: QtBot, tmp_path: Path, prefs: UiPrefs | None = None) -> MainWindow:
-    window = MainWindow(prefs or UiPrefs(), tmp_path)
+def make_window(
+    qtbot: QtBot,
+    tmp_path: Path,
+    prefs: UiPrefs | None = None,
+    with_logs: bool = False,
+) -> MainWindow:
+    controls = None
+    if with_logs:
+        controls = LogControls(
+            RecentLogBuffer(),
+            LevelRegistry(),
+            tmp_path / "logs",
+            tmp_path / "crash_reports",
+        )
+    window = MainWindow(prefs or UiPrefs(), tmp_path, controls)
     qtbot.addWidget(window)
     window.show()
     return window
@@ -65,3 +86,56 @@ def test_stop_controls_are_visible_but_inactive(qtbot: QtBot, tmp_path: Path) ->
     assert not window.kill_switch.isEnabled()
     assert window.home.stop_button.isVisible()
     assert not window.home.stop_button.isEnabled()
+
+
+def test_logs_page_is_real_when_logging_is_wired(qtbot: QtBot, tmp_path: Path) -> None:
+    plain = make_window(qtbot, tmp_path)
+    plain.show_page("logs")
+    assert isinstance(plain.pages.currentWidget(), PlaceholderPage)
+    wired = make_window(qtbot, tmp_path, with_logs=True)
+    wired.show_page("logs")
+    assert isinstance(wired.pages.currentWidget(), LogsPage)
+    assert wired.crash_state()["page"] == "logs"
+
+
+def test_crash_state_is_plain_data_that_follows_the_ui(qtbot: QtBot, tmp_path: Path) -> None:
+    window = make_window(qtbot, tmp_path)
+    qtbot.mouseClick(window.theme_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.view_button, Qt.MouseButton.LeftButton)
+    assert window.crash_state() == {
+        "page": "dashboard",
+        "view_mode": "advanced",
+        "theme": "light",
+        "operating_mode": "paper",
+    }
+
+
+def test_the_crash_test_command_raises_inside_a_qt_slot(qtbot: QtBot, tmp_path: Path) -> None:
+    prefs = UiPrefs(view_mode=ViewMode.ADVANCED)
+    window = make_window(qtbot, tmp_path, prefs, with_logs=True)
+    palette = window.open_command_palette()
+    assert palette is not None
+    qtbot.keyClicks(palette.search, "crash reporter")
+    assert palette.visible_titles()[0] == "Test the crash reporter"
+    with qtbot.capture_exceptions() as exceptions:
+        qtbot.keyClick(palette.search, Qt.Key.Key_Return)
+    assert any(isinstance(error, CrashTestError) for _, error, _ in exceptions)
+
+
+def test_crash_notifications_from_any_thread_open_one_dialog(
+    qtbot: QtBot,
+    tmp_path: Path,
+) -> None:
+    window = make_window(qtbot, tmp_path, with_logs=True)
+    notifier = CrashNotifier()
+    notifier.crashed.connect(window.show_crash_dialog, type=Qt.ConnectionType.QueuedConnection)
+    report = tmp_path / "crash_reports" / "crash_test.json"
+    info = CrashInfo(report, "test", "worker", "ValueError: boom", None, True)
+    with qtbot.waitSignal(notifier.crashed, timeout=2000):
+        threading.Thread(target=notifier.notify, args=(info,)).start()
+    qtbot.waitUntil(lambda: window.crash_dialog is not None, timeout=2000)
+    dialog = window.crash_dialog
+    assert dialog is not None
+    assert dialog.summary_box.toPlainText() == "ValueError: boom"
+    window.show_crash_dialog(str(report), "second crash")
+    assert window.crash_dialog is dialog
