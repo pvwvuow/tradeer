@@ -35,6 +35,15 @@ if (Test-Path $report) { Get-Content $report }
 if ($process.ExitCode -ne 0) { throw "Frozen self-check failed with exit code $($process.ExitCode)" }
 Write-Host "::endgroup::"
 
+# Phase 2 acceptance on the real build: a forced crash must produce a masked crash report.
+$crashReport = Join-Path $root "dist/crash-test.txt"
+Write-Host "::group::Frozen crash test"
+$crashArgs = @("--crash-test", "--profile", "ci-crash-test", "--report-file", $crashReport)
+$process = Start-Process -FilePath $exe -ArgumentList $crashArgs -Wait -PassThru
+if (Test-Path $crashReport) { Get-Content $crashReport }
+if ($process.ExitCode -ne 0) { throw "Frozen crash test failed with exit code $($process.ExitCode)" }
+Write-Host "::endgroup::"
+
 $zip = Join-Path $root "dist/MT5TradingWorkstation-portable.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path (Join-Path $root "dist/MT5TradingWorkstation") -DestinationPath $zip

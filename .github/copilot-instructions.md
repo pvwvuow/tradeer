@@ -20,6 +20,15 @@
 - `FakeMT5` lives in `tests/fakes/` only and is never shipped.
 - Config changes apply between bars, are validated, versioned and audit-logged.
 
+## Logging rules (spec E3, details in `docs/ARCHITECTURE.md`)
+
+- Use `get_logger(LogCategory.X)` from `app/observability/logger.py`. Use `print()` only for CLI reports.
+- Pass dynamic text as an argument: `log.info("Order sent: {}", text)`, never inside the format string.
+- Register every secret as soon as it is read: `MASKER.register(value)`. Never log credentials on purpose, even though masking exists.
+- Wrap the work for one signal in `trace(...)`; hand work to other threads with `propagate(fn)`.
+- Audit-log every user action and setting change with `audit(action, before=..., after=...)`.
+- Code that runs in hooks or other threads never touches Qt widgets; it emits a Qt signal instead.
+
 ## Hard constraints (spec G4)
 
 - Never promise profit. Probabilities are estimates shown with sample size and confidence interval.
@@ -40,6 +49,7 @@ ruff format --check .
 mypy
 pytest
 python -m app --self-check
+python -m app --crash-test
 ```
 
 ## Git and pull requests (spec H1)

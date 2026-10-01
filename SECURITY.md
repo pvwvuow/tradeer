@@ -5,7 +5,7 @@
 - Never commit tokens, passwords, broker credentials, account numbers, `.env` files, logs, databases, crash reports or model files.
 - Account passwords, API keys and bot tokens are stored only in Windows Credential Manager through `keyring` (from Phase 3).
 - The app uses only the Supabase **anon** key with Row Level Security (`user_id = auth.uid()`), never the service-role key.
-- Logs, exports, crash reports and debug bundles pass through a redaction filter (from Phase 2).
+- Logs and crash reports pass through a redaction filter before anything is written (Phase 2): registered secret values, known token formats (GitHub, `sk-` keys, JWTs, Telegram, AWS, Slack, Bearer), sensitive `key=value` pairs and passwords inside URLs are replaced with `***`. Exports and debug bundles will use the same filter. `python -m app --crash-test` proves it on any build.
 - LLM requests never contain credentials or account passwords.
 - If a credential is ever pasted into a chat, an issue or a commit, revoke it immediately and create a new one.
 
