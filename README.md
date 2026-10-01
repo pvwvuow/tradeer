@@ -6,7 +6,7 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 ## Status
 
-Phase 1 of 16 (Foundation). The app opens with a Simple view and an Advanced view, a dark and a light theme, a grouped sidebar with empty pages, an always-visible status bar and a command palette (Ctrl+K). It does **not** connect to MetaTrader 5 and it never places orders yet.
+Phase 2 of 16 (Observability). The app opens with a Simple view and an Advanced view, a dark and a light theme, a grouped sidebar, an always-visible status bar and a command palette (Ctrl+K). It writes structured, masked logs, saves a crash report for every unexpected error, and has a Logs page. It does **not** connect to MetaTrader 5 and it never places orders yet.
 
 - Full specification: `docs/SPEC.md`
 - Progress and next steps: `docs/PROGRESS.md`
@@ -29,6 +29,19 @@ python -m app
 
 `--self-check` prints `Result: PASS` when Python, MetaTrader5 and Qt load correctly.
 
+## Logs and crash reports
+
+- Logs: `%APPDATA%\MT5TradingWorkstation\profiles\<profile>\logs`. One folder per category with one `.jsonl` file per day, plus a readable `all.log`. Old files are zipped, deleted after 30 days, and the folder never grows past 500 MB.
+- Crash reports: `...\profiles\<profile>\crash_reports\crash_<time>.json`.
+- Passwords, keys and tokens are masked before anything is written.
+- To prove crash reporting works on your PC, run:
+
+```powershell
+python -m app --crash-test
+```
+
+It crashes a background thread on purpose and prints `Result: PASS` when a crash report was written and no secret leaked into the report or the logs. The built app supports the same flag: `MT5TradingWorkstation.exe --crash-test --report-file crash-test.txt`.
+
 ## Run the checks
 
 ```powershell
@@ -38,15 +51,15 @@ mypy
 pytest
 ```
 
-## Turn on CI (one time)
+## Turn on CI
 
-The workflow files are staged in `ci/workflows/`. Move them to `.github/workflows/`:
+`main` already has a basic `.github/workflows/ci.yml` (ruff, Linux tests, a Windows smoke test and an exe artifact). The full pipeline is staged in `ci/workflows/`: `ci.yml` adds mypy and a `build` job (PyInstaller app, frozen `--self-check` and `--crash-test`), plus `codeql.yml` and `release.yml`. The assistant's GitHub connection cannot write `.github/workflows/`, so whoever maintains the workflows merges them by hand:
 
 1. Open the repository on GitHub, switch to the branch, and press the `.` key. GitHub opens a web editor.
-2. In the file tree, drag the folder `ci/workflows` onto the `.github` folder.
-3. Open the Source Control panel on the left, type `ci: enable workflows`, and click **Commit & Push**.
+2. Copy the staged files from `ci/workflows/` into `.github/workflows/` (merge `ci.yml` with the existing one rather than keeping two CI files).
+3. Open the Source Control panel on the left, type `ci: enable the full pipeline`, and click **Commit & Push**.
 
-After that every push runs `ci` (lint, type check, tests) and every pull request also runs `build` (PyInstaller app plus `--self-check`). The build can be downloaded from the pull request under Checks, then Artifacts.
+The build can then be downloaded from the pull request under Checks, then Artifacts.
 
 ## Protect the main branch
 
