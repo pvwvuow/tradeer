@@ -32,6 +32,7 @@ class CliOptions:
     report_file: Path | None
     profile: str
     crash_test: bool = False
+    mt5_smoke_test: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,10 +64,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="force a crash in a worker thread, verify the masked crash report, exit 0 or 1",
     )
     parser.add_argument(
+        "--mt5-smoke-test",
+        action="store_true",
+        help="connect with the saved profile, print account, prices, bars and deals (read-only)",
+    )
+    parser.add_argument(
         "--report-file",
         type=Path,
         default=None,
-        help="also write the self-check or crash-test report to this file",
+        help="also write the report of a test command to this file",
     )
     parser.add_argument(
         "--profile",
@@ -84,6 +90,7 @@ def parse_args(argv: Sequence[str]) -> CliOptions:
         report_file=namespace.report_file,
         profile=str(namespace.profile),
         crash_test=bool(namespace.crash_test),
+        mt5_smoke_test=bool(namespace.mt5_smoke_test),
     )
 
 

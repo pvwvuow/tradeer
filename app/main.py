@@ -13,11 +13,18 @@ from app.observability.categories import LogCategory
 from app.observability.levels import LogLevel
 
 if TYPE_CHECKING:
+    from PySide6.QtWidgets import QApplication
+
+    from app.mt5.checklist import ConnectRequest
+    from app.mt5.connection import ConnectionService
+    from app.mt5.gateway import MT5Gateway
     from app.observability.runtime import Observability
 
 APP_NAME = "MT5 Trading Workstation"
 UI_HEARTBEAT_MS = 1000
 UI_FREEZE_SECONDS = 10.0
+GATEWAY_FREEZE_SECONDS = 120.0
+SMOKE_TEST_TIMEOUT_SECONDS = 180.0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -27,6 +34,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return self_check_main(options)
     if options.crash_test:
         return crash_test_main(options)
+    if options.mt5_smoke_test:
+        return mt5_smoke_test_main(options)
     return run_gui(options, args)
 
 
@@ -56,32 +65,143 @@ def crash_test_main(options: CliOptions) -> int:
     return 0 if result.ok else 1
 
 
+def mt5_smoke_test_main(options: CliOptions) -> int:
+    from app.core.credentials import CredentialError, KeyringStore, credential_name, read_password
+    from app.core.profiles import load_account
+    from app.mt5.errors import MT5Error
+    from app.mt5.gateway import MT5Gateway, load_mt5
+    from app.mt5.privileges import is_elevated
+    from app.mt5.request_log import log_request
+    from app.mt5.smoke_test import run_smoke_test
+    from app.observability.logger import get_logger
+    from app.observability.runtime import start_observability
+
+    lines: list[str] = []
+    observability = start_observability(options.profile)
+    log = get_logger(LogCategory.MT5)
+
+    def emit(line: str) -> None:
+        lines.append(line)
+        log.info("Smoke test: {}", line)
+
+    ok = False
+    try:
+        account = load_account(app_data_dir(options.profile))
+        password = ""
+        if account.configured and account.login is not None:
+            name = credential_name(options.profile, account.login, account.server)
+            try:
+                password = read_password(KeyringStore(), name) or ""
+            except CredentialError as error:
+                emit(f"Saved password not available ({error}); trying the terminal's login.")
+        else:
+            emit(
+                f"No saved account in profile {options.profile!r}: using the account that is "
+                "logged in to MT5 right now.",
+            )
+        request = account.request(password)
+        elevated = is_elevated()
+        gateway = MT5Gateway(load_mt5, on_request=log_request)
+        gateway.start()
+        try:
+            ok = gateway.run(
+                "smoke_test",
+                lambda mt5: run_smoke_test(mt5, request, emit, elevated=elevated),
+                timeout=SMOKE_TEST_TIMEOUT_SECONDS,
+            )
+        except MT5Error as error:
+            emit(f"[\u2717] {error.title}")
+            if error.fix:
+                emit(f"      Fix: {error.fix}")
+            emit("Result: FAIL")
+        finally:
+            gateway.stop()
+    finally:
+        observability.shutdown()
+    emit_report("\n".join(lines), options.report_file)
+    return 0 if ok else 1
+
+
 def run_gui(options: CliOptions, qt_args: list[str]) -> int:
+    from app.core.single_instance import LOCK_FILE_NAME, InstanceLock
     from app.domain.config import TradingDefaults
     from app.observability.runtime import start_observability
 
-    defaults = TradingDefaults().model_dump(mode="json")
-    observability = start_observability(
-        options.profile,
-        console=_has_console(),
-        startup_details={"defaults": defaults},
-    )
+    lock = InstanceLock(app_data_dir(options.profile) / LOCK_FILE_NAME)
+    if not lock.acquire():
+        return _already_running(options, qt_args)
     try:
-        return _run_window(observability, options, qt_args)
+        defaults = TradingDefaults().model_dump(mode="json")
+        observability = start_observability(
+            options.profile,
+            console=_has_console(),
+            startup_details={"defaults": defaults},
+        )
+        try:
+            return _run_window(observability, options, qt_args)
+        finally:
+            observability.shutdown()
     finally:
-        observability.shutdown()
+        lock.release()
+
+
+def _already_running(options: CliOptions, qt_args: list[str]) -> int:
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    message = (
+        f"The app is already running for profile {options.profile!r}. Use that window, or start "
+        "another profile with --profile NAME."
+    )
+    print(message, file=sys.stderr)
+    application = QApplication([sys.argv[0], *qt_args])
+    QMessageBox.information(None, APP_NAME, message)
+    application.quit()
+    return 1
+
+
+def _start_connection(
+    observability: Observability,
+    profile: str,
+) -> tuple[MT5Gateway, ConnectionService]:
+    from app.core.credentials import CredentialError, KeyringStore, credential_name, read_password
+    from app.core.profiles import load_account
+    from app.mt5.connection import ConnectionService
+    from app.mt5.gateway import MT5Gateway, load_mt5
+    from app.mt5.privileges import is_elevated
+    from app.mt5.request_log import log_event, log_request
+
+    watchdog = observability.watchdog
+    watchdog.register("mt5-gateway", GATEWAY_FREEZE_SECONDS)
+    gateway = MT5Gateway(
+        load_mt5,
+        on_request=log_request,
+        heartbeat=partial(watchdog.beat, "mt5-gateway"),
+    )
+    gateway.start()
+    store = KeyringStore()
+
+    def request() -> ConnectRequest:
+        account = load_account(app_data_dir(profile))
+        password = ""
+        if account.login is not None:
+            try:
+                name = credential_name(profile, account.login, account.server)
+                password = read_password(store, name) or ""
+            except CredentialError as error:
+                log_event("WARNING", f"Saved password not available: {error}")
+        return account.request(password)
+
+    service = ConnectionService(gateway, request, log=log_event, elevated=is_elevated())
+    service.start_monitor()
+    return gateway, service
 
 
 def _run_window(observability: Observability, options: CliOptions, qt_args: list[str]) -> int:
     # Qt is imported lazily so that `--self-check` can report a broken Qt install.
-    from PySide6.QtCore import Qt, QTimer
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication, QMessageBox
 
-    from app.core.ui_prefs import load_prefs
     from app.observability.logger import get_logger
-    from app.ui.crash_dialog import CrashNotifier
-    from app.ui.main_window import MainWindow
     from app.ui.qt_logging import install_qt_message_handler
 
     ui_log = get_logger(LogCategory.UI)
@@ -107,9 +227,48 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
             ui_log.critical("Startup self-check failed:\n{}", report)
             QMessageBox.critical(None, APP_NAME, report)
             return 1
+    gateway, service = _start_connection(observability, options.profile)
     try:
-        prefs_dir = app_data_dir(options.profile)
-        window = MainWindow(load_prefs(prefs_dir), prefs_dir, observability.controls)
+        return _show_window(observability, options, application, gateway, service)
+    finally:
+        service.stop_monitor()
+        gateway.stop()
+        observability.watchdog.unregister("mt5-gateway")
+
+
+def _show_window(
+    observability: Observability,
+    options: CliOptions,
+    application: QApplication,
+    gateway: MT5Gateway,
+    service: ConnectionService,
+) -> int:
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtWidgets import QMessageBox
+
+    from app.core.credentials import KeyringStore
+    from app.core.profiles import load_account
+    from app.core.ui_prefs import load_prefs
+    from app.mt5.privileges import is_elevated
+    from app.observability.logger import get_logger
+    from app.ui.connection_page import ConnectionContext, launch_profile_instance
+    from app.ui.crash_dialog import CrashNotifier
+    from app.ui.main_window import MainWindow
+
+    ui_log = get_logger(LogCategory.UI)
+    reporter = observability.crash_reporter
+    prefs_dir = app_data_dir(options.profile)
+    try:
+        context = ConnectionContext(
+            profile=options.profile,
+            profile_dir=prefs_dir,
+            gateway=gateway,
+            service=service,
+            credentials=KeyringStore(),
+            elevated=is_elevated(),
+            launch_profile=launch_profile_instance,
+        )
+        window = MainWindow(load_prefs(prefs_dir), prefs_dir, observability.controls, context)
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")
         QMessageBox.critical(None, APP_NAME, "The app could not start. A crash report was saved.")
@@ -127,6 +286,10 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
     heartbeat.start(UI_HEARTBEAT_MS)
     window.show()
     ui_log.info("Main window shown")
+    account = load_account(prefs_dir)
+    if account.configured and account.auto_connect and window.connection_page is not None:
+        ui_log.info("Connecting automatically to the saved account")
+        window.connection_page.connect_to_mt5()
     try:
         return int(application.exec())
     finally:
