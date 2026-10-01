@@ -8,12 +8,14 @@ app/
   main.py          composition root: CLI, self-check, crash test, GUI start
   cli.py           argument parsing, --self-check build verification, report output
   core/            per-user paths, UI preferences, account profiles, credentials, instance lock
-  domain/          pure logic: operating modes, validated defaults (no Qt, MT5 or I/O)
+  domain/          pure logic: operating modes, validated defaults, trade history (no Qt, MT5 or I/O)
   mt5/             the MT5 gateway thread, connection checklist, diagnostics, smoke test (phase 3)
   observability/   logging, trace context, masking, crash reports, watchdog (phase 2)
-  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, crash dialog
+  storage/         SQLite database, migrations, outbox, cloud sync, history tracker (phase 4)
+  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, crash dialog
+supabase/          SQL to run in the Supabase SQL Editor: schema, RLS, views, cleanup (phase 4)
 tests/
-  fakes/           FakeMT5 for tests only (never shipped)
+  fakes/           FakeMT5 and FakeSupabase for tests only (never shipped)
   unit/            pure tests (no Qt, no loguru, no real MetaTrader5)
   integration/     the real loguru pipeline and the end-to-end crash test
   ui/              pytest-qt smoke tests (headless, QT_QPA_PLATFORM=offscreen)
@@ -96,6 +98,45 @@ Files live per profile: `%APPDATA%\MT5TradingWorkstation\profiles\<profile>\logs
 
 On start the app takes `profiles/<name>/instance.lock`, loads `account.json`, reads the password from Credential Manager (and registers it with the log masker), and connects automatically when a profile is saved.
 
+## Storage (Phase 4)
+
+`app/storage/` owns the local database and its copy in Supabase. It never imports Qt or MetaTrader5, and a test checks that. `app/main.py` opens it with `open_storage()` and hands the `StorageRuntime` to the main window.
+
+| Module | Role |
+| --- | --- |
+| `ids.py` | Row ids: random UUIDs, and uuid5 ids for accounts and trades |
+| `sqlite_db.py` | `Database`: WAL mode, one connection per thread, transactions, `release()` |
+| `schema.py` | Every table and column kind, indexes, conversion to SQLite and Supabase values |
+| `migrations/` | Frozen migrations (`m0001_initial`), listed in `MIGRATIONS` |
+| `migrate.py` | Applies migrations with checksums, after a backup |
+| `outbox.py` | Versioned outbox entries: enqueue, batch, mark sent, park, retry |
+| `repositories.py` | `Store`: upserts that enqueue in the same transaction, plus typed helpers |
+| `backup.py` | Daily backups (last 7) and backups before migrating (last 3) |
+| `cleanup.py` | Local retention rules |
+| `log_store.py` | Log sink for WARNING and higher and for audit entries |
+| `remote.py` | Error kinds, `AuthSession` and response classification, no network code |
+| `supabase_client.py` | httpx client for PostgREST and Supabase Auth |
+| `sync.py` | `SyncEngine` (one upload pass), `SyncWorker` thread, states and backoff |
+| `cloud.py` | `cloud.json`, URL and key checks, sign-in, sign-up, sign-out, refresh token in Credential Manager |
+| `tracker.py` | The connected account's row and snapshots, and the broker time offset |
+| `runtime.py` | `open_storage()`: open, migrate, back up, start sync and maintenance |
+
+Other Phase 4 modules: `app/domain/history.py` (pure deal and order models, trades rebuilt per position, manual, bot or external), `app/mt5/history_sync.py` (read-only history import through the gateway), `app/ui/data_page.py` (the "Data & cloud sync" settings tab) and `supabase/*.sql` (schema, RLS, views and cleanup to run in the Supabase SQL Editor).
+
+### Storage data flow
+
+```text
+write (UI, MT5, logs) -> Store.upsert -> business row + outbox entry, one transaction
+cloud-sync thread -> SyncEngine -> outbox batch (200 rows, parent tables first)
+  -> SupabaseClient.upsert (PostgREST, RLS)
+       ok      -> mark_sent, only if the version did not change
+       refused -> split the batch, park the bad rows as failed
+       offline -> back off 2 s .. 300 s, a paused project at least 600 s
+       401     -> refresh once, then signed out
+history import -> gateway deals and orders -> app.domain.history -> Store (mt5_deals, mt5_orders, trades)
+logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, audit_log
+```
+
 ## Decisions (ADR)
 
 1. **Design tokens in one file, QSS generated** (`app/ui/theme.py`). Reason: one source of truth for colors, sizes and radii; themes are testable without Qt. Contrast is unit-tested against WCAG AA (4.5:1). The dark accent button uses dark text because white on `#5B8CFF` is only about 3.2:1.
@@ -123,6 +164,19 @@ On start the app takes `profiles/<name>/instance.lock`, loads `account.json`, re
 23. **One app instance per profile, enforced by an OS file lock.** Reason: two instances on the same account would fight over the terminal and the log files. The lock is released by the OS if the app crashes. Opening another profile starts a new app window (`--profile NAME`) instead of switching in place, so a running engine is never swapped under itself.
 24. **Terminal discovery from four sources.** Reason: many users have several brokers installed. Program folders, `%APPDATA%\MetaQuotes\Terminal\*\origin.txt` (UTF-16 or UTF-8), the registry uninstall keys and running processes are merged, and the server dropdown is filled from the terminal's `bases` folder. "Browse" stays as the fallback.
 25. **Read-only tools stay read-only.** Reason: the checklist, diagnostics and `--mt5-smoke-test` only read. `FakeMT5` records every call, and tests assert that none of these tools ever calls `order_send` or `order_check`.
+26. **Failed CI checks are repeated as annotations.** Reason: the assistant's GitHub connection cannot read job logs, but check-run annotations are public. `scripts/ci/check.ps1` runs every check even after one fails and writes the output of each failed check as an annotation; a hook in `tests/conftest.py` does the same for failed tests on Linux and Windows.
+27. **SQLite is the local source of truth.** Reason: the app must keep working when the internet or Supabase is down, and it must never lose trades, signals or logs. Every write goes to a local SQLite file first: `profiles/<profile>/data/workstation.db`. It runs in WAL mode with `synchronous=NORMAL`, a 5000 ms busy timeout, autocommit connections (`isolation_level=None`) and explicit `BEGIN IMMEDIATE` transactions. Each thread has its own connection, and a nested transaction joins the outer one. Result: readers never block the writer, and the cloud is only a copy. A background thread that used the database calls `Database.release()` before it ends.
+28. **Frozen migrations with checksums.** Reason: users update the app over an existing database, and PyInstaller only bundles modules it can see. Each migration is a Python module in `app/storage/migrations/` with an `SQL` string, listed explicitly in `MIGRATIONS`. The `schema_migrations` table stores the version, name, sha256 checksum and time applied. All statements of one migration run in one transaction, and an existing database is backed up before migrating (the last 3 of these backups are kept). A changed checksum or a database newer than the app is refused with a clear error. Result: every schema change is a new migration module. `m0001_initial` never changes again; a test pins its checksum.
+29. **Transactional outbox with versioned entries.** Reason: rows written offline must reach the cloud later, once, without double uploads. `Store` writes the business row and its `outbox` entry in the same transaction. There is one entry per table and row id, with a version counter: a newer write replaces the pending entry, and `mark_sent` removes the entry only if the version did not change during the upload. Rows the server refuses are parked as `failed` and can be retried from the UI. Writing an unchanged row does not enqueue it again. Result: every row reaches the cloud in its latest version. Uploads are idempotent upserts, so a lost response only sends the same row again.
+30. **httpx instead of supabase-py (deviation from D1).** Reason: D1 names supabase-py. The app only needs idempotent upserts and email sign-in from Supabase. `app/storage/supabase_client.py` calls Supabase with `httpx==0.28.1`: `POST /rest/v1/<table>?on_conflict=id` with `Prefer: resolution=merge-duplicates,return=minimal` for uploads, `/auth/v1/token` (password or refresh token) for sign-in, and `/auth/v1/signup` for new accounts. Timeouts are explicit, and the tests use `httpx.MockTransport`. Result: one small dependency instead of the supabase-py tree, and full control over upserts and errors. The sync engine only knows the `Remote` protocol, so moving to supabase-py later means replacing this one module. This deviation needs the owner's approval.
+31. **Ids are made on the PC, deterministic where it matters.** Row ids are UUIDs created on the PC. Accounts use uuid5 of server and login, and trades use uuid5 of account and position id. Other rows get a random UUID. Result: rows can be written offline, and reconnecting or importing history again never creates duplicates.
+32. **No foreign keys.** Tables have no foreign keys, locally or in Supabase. Rows point to each other through indexed id columns. Result: rows can upload in any order, and a half-finished upload never fails on a constraint. Parent tables still upload first so the cloud stays tidy.
+33. **Supabase Auth with email, RLS on every table.** The user signs in with email and password using the anon (publishable) key only; service_role and secret keys are refused. Every remote table has `user_id default auth.uid()` and RLS policies `user_id = auth.uid()`, and the views use `security_invoker = true`. The password is never saved. The refresh token is kept in Windows Credential Manager under `<profile>/supabase-refresh-token`, and `cloud.json` holds only the URL, the anon key, the email and the on/off switch. Result: one project can hold several users safely, and the anon key alone cannot read anybody's rows.
+34. **Sync states and backoff.** The `cloud-sync` thread uploads batches of up to 200 rows, grouped by table, parent tables first. Failures back off from 2 s, doubling up to 300 s, and a paused project waits at least 600 s. A 401 refreshes the session once and then signs out. A refused batch is split in half until only the bad rows are parked. A missing table or column (404, PGRST204, PGRST205) means "setup needed" and keeps the rows. States: disabled, signed_out, up_to_date, syncing, offline, paused, setup_needed, error. Result: a paused free project or a bad network never loses rows, and the status bar always says what is going on.
+35. **Warnings and audit entries go to the database.** A `LogStore` sink on the log pipeline writes entries of level WARNING and higher to `app_logs` and audit entries to `audit_log`, so they reach the outbox too. The sink never logs about itself. Result: problems on the user's PC show up in the cloud, while DEBUG and INFO stay in the local log files.
+36. **Trades are rebuilt from deals.** History import reads deals and orders through the gateway: from 2000-01-01 the first time, then from 3 days before the newest stored deal. Trades are rebuilt from all deals of every position the import touched, in pure code (`app/domain/history.py`). Magic 0 means manual, the bot's magic numbers mean bot, and anything else is external. Server times are turned into UTC with the broker offset measured from fresh quotes, or 0 if it is unknown. Result: importing again is safe and gives the same trades. Known limitation: the offset is today's, so trades from the other side of a daylight-saving change can be one hour off until Phase 5.
+37. **Backups and cleanup.** The database is backed up once a day with the SQLite backup API, and the last 7 backups are kept. Local cleanup removes `app_logs` and `mt5_requests` rows after 90 days and `health_checks` and `performance_metrics` rows after 30 days. It never deletes trades or signals and never deletes a row that still waits in the outbox. `supabase/cleanup.sql` has an optional cleanup function for the cloud. Result: the database stays small without losing anything that matters.
+38. **One schema definition, checked three ways.** `app/storage/schema.py` lists every table and the kind of every column. `m0001_initial` and `supabase/schema.sql` were written from it, and a test checks that SQLite, `schema.py` and `supabase/schema.sql` agree. Result: the local and cloud schemas cannot drift apart silently.
 
 ## Logging rules for new code
 
@@ -140,3 +194,12 @@ On start the app takes `profiles/<name>/instance.lock`, loads `account.json`, re
 - Check `None` results and read `last_error()` through `app/mt5/errors.py`, which maps it to a plain-language fix.
 - Use `resolve_symbol()` for every symbol a user types (brokers add suffixes), then `symbol_select()` it.
 - Test with `FakeMT5` from `tests/fakes/fake_mt5.py`; it never ships with the app.
+
+## Storage rules
+
+- Write synced rows only through `Store`, so the outbox entry lands in the same transaction.
+- A schema change is a new migration module plus the matching change in `schema.py`, `supabase/schema.sql` and `supabase/rls.sql`. Never edit `m0001_initial`.
+- A thread that used the database calls `Database.release()` before it ends.
+- Never delete trades or signals. Cleanup skips rows that still wait in the outbox.
+- Only the anon key may reach the app. Never add code that accepts a service key.
+- `app/storage` and `app/domain` never import Qt or MetaTrader5.

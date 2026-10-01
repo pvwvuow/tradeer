@@ -6,6 +6,7 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 
 - Phase 1: Foundation, merged into `main` through pull request #1 on 2026-10-01.
 - Phase 2: Observability, pull request #10, CI green, waiting for review.
+- Phase 3: MT5 connection, pull request #13, CI green, waiting for review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -13,7 +14,51 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 3 MT5 connection (branch `phase/03-mt5-connection`, stacked on pull request #10)
+## Current phase: 4 Storage (branch `phase/04-storage`)
+
+Status: built on `phase/04-storage`, pull request into `phase/03-mt5-connection`, waiting for review.
+
+### What was built
+
+- A local SQLite database per profile (`profiles/<profile>/data/workstation.db`) in WAL mode, with frozen migrations, checksums and a backup before migrating.
+- All E2 tables locally and in Supabase, plus the local `outbox`, `sync_state`, `mt5_deals` and `mt5_orders` tables.
+- A transactional outbox and a background cloud sync: batches of 200, backoff from 2 s to 300 s, paused-project handling, refused rows parked with "Retry refused rows".
+- Supabase SQL in `supabase/`: schema, Row Level Security, four views (`security_invoker`) and a cleanup function.
+- Email sign-in and sign-up with the anon key only. The refresh token is kept in Credential Manager and the password is never saved.
+- Log entries of level WARNING and higher and audit entries are saved in `app_logs` and `audit_log` and synced.
+- Trade history import (deals and orders): trades are rebuilt per position and marked manual, bot or external.
+- Daily backups (last 7 kept) and a local cleanup that never deletes trades, signals or rows waiting to upload.
+- Settings has a new "Data & cloud sync" tab, and the status bar shows the cloud state.
+- Supabase is called with httpx instead of supabase-py (ADR 30, needs your approval).
+
+### Checklist
+
+- ✓ Offline writes sync later without duplicates (unit tests with a fake Supabase: offline then online, lost response, refused rows, expired token, paused project).
+- ✓ Migrations on a new and an existing database, running twice, changed checksum and a newer database (unit tests).
+- ✓ Importing history twice creates no duplicates (unit tests with FakeMT5).
+- ✓ SQLite, `schema.py` and `supabase/schema.sql` agree (unit test).
+- ✓ In the sandbox: 225 unit tests passed, 3 skipped. The httpx client, UI and integration tests run only in CI.
+- ✗ CI on this pull request: not known yet when this was written.
+- ✗ Not tested with a real Supabase project (see "Test on your PC").
+- ✗ The SQL files have not been run on a real Postgres database.
+- ✗ History import not checked against a real MT5 account.
+- ✗ Server time to UTC uses today's broker offset, so trades from before a daylight-saving change can be one hour off.
+
+### Test on your PC
+
+1. Create a free Supabase project and run `supabase/schema.sql`, `rls.sql`, `views.sql` and `cleanup.sql` in its SQL Editor.
+2. Start the app, open Settings, tab "Data & cloud sync", paste the project URL and the anon key, then click Create account or Sign in.
+3. Connect MT5 and click Import history now. Note the trade count, click it again: the count must not change.
+4. Turn the internet off for a few minutes while the app runs. The status bar must show "Cloud: offline" with rows waiting.
+5. Turn the internet back on. The status must go to "Cloud: up to date", and in the Supabase Table Editor every row must appear once.
+
+### Limitations
+
+- Sync goes one way, from the PC to the cloud. Restoring from the cloud is not built.
+- The daylight-saving limitation above stays until Phase 5.
+- Supabase is reached with httpx, not supabase-py (ADR 30).
+
+## Phase 3: MT5 connection (branch `phase/03-mt5-connection`, stacked on pull request #10)
 
 Built:
 
@@ -36,7 +81,7 @@ Acceptance checklist (spec G3 phase 3):
 - ✓ Gateway, checklist, diagnostics, smoke test, connection service, profiles, credentials, single-instance lock and terminal discovery pass their unit tests against `FakeMT5` in the agent sandbox (Python 3.12, without PySide6, loguru or keyring).
 - ✓ The read-only tools never call `order_send` or `order_check` (tests check every call `FakeMT5` received).
 - ✗ **The real connection is not verified.** The spec criterion is that the downloaded build connects to your real MT5 demo account and shows real broker, login, balance and live bid/ask. Only you can check this on your PC (see the pull request, "Test on your PC").
-- ✗ Not run in the sandbox: `ruff`, `mypy`, the Qt test of the Connection page and the integration test of the request log. CI runs them on this pull request.
+- ✓ CI is green on this pull request: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows, including the Qt tests of the Connection page and the integration test of the request log; the build job builds the app and runs the frozen `--self-check` and `--crash-test`.
 - ✗ Investor mode, reconnect and the open-position alert are verified with `FakeMT5` only.
 - ✗ Partly Windows-only: the test that compares the copied constants with the real package runs only in the Windows CI job. Terminal discovery and Credential Manager are tested with temporary folders and an in-memory store, not with a real installed terminal or the real vault.
 
@@ -67,7 +112,7 @@ Acceptance checklist (spec G3 phase 2):
 
 - Resolved: the staged `ci/workflows/` folder is gone; `.github/workflows/` is maintained by the CI maintainer agent, so Brain does not need the `workflow` permission.
 - No lock file yet; direct dependencies are pinned exactly.
-- The full deal and order history import and tick freshness checks belong to Phases 4 and 5. The checklist only checks that history exists and warns when "Max bars in chart" is low.
+- The deal and order history import arrived in Phase 4. Tick freshness checks belong to Phase 5; the checklist only checks that history exists and warns when "Max bars in chart" is low.
 - "Start MT5 automatically" and "Start the app with Windows" (spec I5) are not built yet.
 - `--mt5-trade-test` arrives with execution in Phase 8.
 - Profiles cannot be switched inside a running window; another profile opens in a new window.
@@ -76,6 +121,6 @@ Acceptance checklist (spec G3 phase 2):
 ## Next steps
 
 1. Done: the full pipeline is enabled on `main` (pull request #11) and merged into Phase 2; fix anything it reports on this pull request.
-2. Review and merge Phase 2 (#10), then retarget this pull request to `main`.
-3. Run "Test on your PC" from this pull request against your MT5 demo account and report the result.
-4. Phase 4: storage (SQLite and migrations, outbox, Supabase, audit log, history import).
+2. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), then Phase 4. Each one is retargeted to `main` after the one before it is merged.
+3. Run "Test on your PC" from the Phase 3 and Phase 4 pull requests against your MT5 demo account and a free Supabase project, and report the result.
+4. Phase 5 from the spec's phase list (docs/SPEC.md, G3), after Phase 4 is reviewed.
