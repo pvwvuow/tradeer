@@ -22,8 +22,12 @@ def _config_root() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 
 
+def profiles_root() -> Path:
+    return _config_root() / APP_DIR_NAME / "profiles"
+
+
 def app_data_dir(profile: str = "default") -> Path:
-    return _config_root() / APP_DIR_NAME / "profiles" / safe_profile_name(profile)
+    return profiles_root() / safe_profile_name(profile)
 
 
 def logs_dir(profile: str = "default") -> Path:
