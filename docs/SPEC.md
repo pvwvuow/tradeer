@@ -125,9 +125,10 @@ The app must work for someone with **little trading/technical knowledge** whose 
 ```python
 class Strategy(ABC):
     name: str
-    version: str                    # bump when logic changes
-    params_model: type[BaseModel]   # pydantic → auto-generated settings form
+    version: str  # bump when logic changes
+    params_model: type[BaseModel]  # pydantic → auto-generated settings form
     required_history: dict[Timeframe, int]
+
     def generate_signal(self, ctx: MarketContext) -> Signal | None: ...
 ```
 - `MarketContext` = closed bars of the entry TF + **only fully closed** higher-TF bars, symbol info, spread, session, analysis outputs.
