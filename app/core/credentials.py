@@ -46,7 +46,7 @@ class KeyringStore:
             # Choose the Windows backend directly: frozen builds can miss backend metadata.
             from keyring.backends import Windows
 
-            keyring.set_keyring(Windows.WinVaultKeyring())
+            keyring.set_keyring(Windows.WinVaultKeyring())  # type: ignore[no-untyped-call]
         self._ready = True
         module: ModuleType = keyring
         return module

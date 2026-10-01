@@ -67,8 +67,6 @@ def list_profiles(root: Path) -> list[str]:
     except OSError:
         return []
     used = [
-        folder.name
-        for folder in folders
-        if any((folder / name).exists() for name in MARKER_FILES)
+        folder.name for folder in folders if any((folder / name).exists() for name in MARKER_FILES)
     ]
     return sorted(used, key=str.casefold)
