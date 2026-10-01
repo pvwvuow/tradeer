@@ -19,11 +19,13 @@ if TYPE_CHECKING:
     from app.mt5.connection import ConnectionService
     from app.mt5.gateway import MT5Gateway
     from app.observability.runtime import Observability
+    from app.storage.runtime import StorageRuntime
 
 APP_NAME = "MT5 Trading Workstation"
 UI_HEARTBEAT_MS = 1000
 UI_FREEZE_SECONDS = 10.0
 GATEWAY_FREEZE_SECONDS = 120.0
+SYNC_FREEZE_SECONDS = 600.0
 SMOKE_TEST_TIMEOUT_SECONDS = 180.0
 
 
@@ -227,13 +229,80 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
             ui_log.critical("Startup self-check failed:\n{}", report)
             QMessageBox.critical(None, APP_NAME, report)
             return 1
+    from app.storage.runtime import StorageError
+
     gateway, service = _start_connection(observability, options.profile)
+    storage: StorageRuntime | None = None
     try:
-        return _show_window(observability, options, application, gateway, service)
+        storage = _open_storage(observability, options.profile, gateway, service)
+        return _show_window(observability, options, application, gateway, service, storage)
+    except StorageError as error:
+        ui_log.critical("Local storage failed: {}", error)
+        QMessageBox.critical(None, APP_NAME, str(error))
+        return 1
     finally:
         service.stop_monitor()
+        if storage is not None:
+            storage.close()
+            observability.watchdog.unregister("cloud-sync")
         gateway.stop()
         observability.watchdog.unregister("mt5-gateway")
+
+
+def _open_storage(
+    observability: Observability,
+    profile: str,
+    gateway: MT5Gateway,
+    service: ConnectionService,
+) -> StorageRuntime:
+    """The local database, the cloud sync and the account tracker (spec E1)."""
+    from app.__version__ import __version__
+    from app.core.credentials import KeyringStore
+    from app.domain.config import TradingDefaults
+    from app.mt5.history_sync import HistoryImporter
+    from app.observability.context import SESSION_ID
+    from app.observability.logger import get_logger
+    from app.storage.runtime import open_storage
+    from app.storage.supabase_client import SupabaseClient
+    from app.storage.tracker import AccountTracker
+
+    sync_log = get_logger(LogCategory.SYNC)
+
+    def log(level: str, message: str) -> None:
+        sync_log.log(level, "{}", message)
+
+    watchdog = observability.watchdog
+    storage = open_storage(
+        profile,
+        app_data_dir(profile),
+        SESSION_ID,
+        credentials=KeyringStore(),
+        client_factory=SupabaseClient,
+        log=log,
+        heartbeat=partial(watchdog.beat, "cloud-sync"),
+    )
+    try:
+        defaults = TradingDefaults()
+        storage.start_session(
+            app_version=__version__,
+            mode=defaults.mode.value,
+            settings=defaults.model_dump(mode="json"),
+        )
+        storage.attach_logs(observability.pipeline)
+        storage.tracker = AccountTracker(
+            storage.store,
+            storage.session_id,
+            status=lambda: service.status,
+            history=HistoryImporter(gateway, storage.store),
+            log=log,
+        )
+        service.add_listener(storage.tracker.on_status)
+        watchdog.register("cloud-sync", SYNC_FREEZE_SECONDS)
+        storage.start()
+    except BaseException:
+        storage.close()
+        raise
+    return storage
 
 
 def _show_window(
@@ -242,6 +311,7 @@ def _show_window(
     application: QApplication,
     gateway: MT5Gateway,
     service: ConnectionService,
+    storage: StorageRuntime,
 ) -> int:
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtWidgets import QMessageBox
@@ -268,7 +338,13 @@ def _show_window(
             elevated=is_elevated(),
             launch_profile=launch_profile_instance,
         )
-        window = MainWindow(load_prefs(prefs_dir), prefs_dir, observability.controls, context)
+        window = MainWindow(
+            load_prefs(prefs_dir),
+            prefs_dir,
+            observability.controls,
+            context,
+            storage,
+        )
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")
         QMessageBox.critical(None, APP_NAME, "The app could not start. A crash report was saved.")
