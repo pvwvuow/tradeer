@@ -49,6 +49,22 @@ SYMBOL_TRADE_MODE_SHORTONLY = 2
 SYMBOL_TRADE_MODE_CLOSEONLY = 3
 SYMBOL_TRADE_MODE_FULL = 4
 
+# Deals (history_deals_get): type, entry and reason
+DEAL_TYPE_BUY = 0
+DEAL_TYPE_SELL = 1
+DEAL_TYPE_BALANCE = 2
+DEAL_ENTRY_IN = 0
+DEAL_ENTRY_OUT = 1
+DEAL_ENTRY_INOUT = 2
+DEAL_ENTRY_OUT_BY = 3
+DEAL_REASON_CLIENT = 0
+DEAL_REASON_MOBILE = 1
+DEAL_REASON_WEB = 2
+DEAL_REASON_EXPERT = 3
+DEAL_REASON_SL = 4
+DEAL_REASON_TP = 5
+DEAL_REASON_SO = 6
+
 # last_error() codes
 RES_S_OK = 1
 RES_E_FAIL = -1
@@ -68,7 +84,7 @@ RES_E_INTERNAL_FAIL_TIMEOUT = -10005
 
 
 class MT5Api(Protocol):
-    """Read-only functions used in Phase 3. Order functions arrive with execution (Phase 8)."""
+    """Read-only functions used so far. Order functions arrive with execution (Phase 8)."""
 
     def initialize(self, *args: Any, **kwargs: Any) -> bool: ...
 
@@ -103,5 +119,7 @@ class MT5Api(Protocol):
     ) -> Any: ...
 
     def history_deals_get(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def history_orders_get(self, *args: Any, **kwargs: Any) -> Any: ...
 
     def positions_total(self) -> int: ...

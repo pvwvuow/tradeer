@@ -125,6 +125,8 @@ class AccountSnapshot:
     stopout_percent: bool
     margin_call: float
     stop_out: float
+    margin: float = 0.0
+    margin_level: float = 0.0
 
     @classmethod
     def from_mt5(cls, info: Any) -> AccountSnapshot:
@@ -145,6 +147,8 @@ class AccountSnapshot:
             stopout_percent=_int(info, "margin_so_mode") == api.ACCOUNT_STOPOUT_MODE_PERCENT,
             margin_call=_float(info, "margin_so_call"),
             stop_out=_float(info, "margin_so_so"),
+            margin=_float(info, "margin"),
+            margin_level=_float(info, "margin_level"),
         )
 
     @property
