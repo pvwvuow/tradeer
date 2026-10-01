@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QStatusBar,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -25,10 +26,13 @@ from app.mt5.connection import ConnectionState, ConnectionStatus
 from app.mt5.models import AccountKind
 from app.observability.controls import LogControls
 from app.observability.crash_handler import CrashTestError
+from app.storage.runtime import StorageRuntime
+from app.storage.sync import SyncStatus
 from app.ui.command_palette import CommandPalette
 from app.ui.commands import Command
 from app.ui.connection_page import ConnectionContext, ConnectionPage
 from app.ui.crash_dialog import CrashDialog
+from app.ui.data_page import DataPage
 from app.ui.logs_page import LogsPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
 from app.ui.pages import PlaceholderPage, SimpleHomePage, styled_label
@@ -44,6 +48,7 @@ class MainWindow(QMainWindow):
         prefs_dir: Path | None = None,
         log_controls: LogControls | None = None,
         connection: ConnectionContext | None = None,
+        storage: StorageRuntime | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -84,9 +89,18 @@ class MainWindow(QMainWindow):
         self._add_page(SIMPLE_HOME.page_id, self.home)
         self.logs_page = LogsPage(log_controls) if log_controls is not None else None
         self.connection_page = ConnectionPage(connection) if connection is not None else None
+        self.data_page = DataPage(storage) if storage is not None else None
+        self.settings_tabs: QTabWidget | None = None
         for spec in ADVANCED_PAGES:
             if spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
+            elif spec.page_id == "settings" and self.data_page is not None:
+                self.settings_tabs = QTabWidget()
+                self.settings_tabs.setObjectName("SettingsTabs")
+                first = self.connection_page or PlaceholderPage(spec)
+                self.settings_tabs.addTab(first, "Account & connection")
+                self.settings_tabs.addTab(self.data_page, "Data & cloud sync")
+                self._add_page(spec.page_id, self.settings_tabs)
             elif spec.page_id == "settings" and self.connection_page is not None:
                 self._add_page(spec.page_id, self.connection_page)
             else:
@@ -95,6 +109,9 @@ class MainWindow(QMainWindow):
         if connection is not None and self.connection_page is not None:
             self.connection_page.bridge.status.connect(self.set_connection_status)
             self.set_connection_status(connection.service.status)
+        if self.data_page is not None:
+            self.data_page.bridge.sync.connect(self.set_sync_status)
+            self.set_sync_status(self.data_page.last_status)
         self._shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         self._shortcut.activated.connect(self.open_command_palette)
         self.apply_theme(prefs.theme, persist=False)
@@ -170,6 +187,9 @@ class MainWindow(QMainWindow):
             items.append(
                 Command("diagnose", "Run connection diagnostics", "Connection", self._diagnose),
             )
+        if self.data_page is not None:
+            items.append(Command("upload", "Upload to the cloud now", "Data", self._upload))
+            items.append(Command("history", "Import trade history", "Data", self._import_history))
         return items
 
     def set_connection_status(self, status: object) -> None:
@@ -181,6 +201,12 @@ class MainWindow(QMainWindow):
         badge = "ANALYSIS-ONLY" if status.analysis_only else self.defaults.mode.label.upper()
         self.mode_badge.setText(badge)
         self.home.status_line.setText(plain_status(status))
+
+    def set_sync_status(self, status: object) -> None:
+        """Slot: show the cloud sync state in the status bar."""
+        if isinstance(status, SyncStatus):
+            self.sync_label.setText(status.status_bar_text())
+            self.sync_label.setToolTip(status.message)
 
     def trigger_crash_test(self) -> None:
         """Raise on purpose: the crash hook must write a report and show the dialog."""
@@ -253,9 +279,12 @@ class MainWindow(QMainWindow):
         self.kill_switch.setProperty("variant", "danger")
         self.kill_switch.setEnabled(False)
         self.kill_switch.setToolTip("Nothing is running yet. The kill switch arrives in Phase 8.")
+        self.sync_label = styled_label("Cloud: off", "status")
+        self.sync_label.setObjectName("SyncLabel")
         bar.addWidget(self.connection_label)
         bar.addWidget(self.mode_badge)
         bar.addWidget(self.bot_state_label)
+        bar.addWidget(self.sync_label)
         bar.addPermanentWidget(styled_label(f"v{__version__}", "status"))
         bar.addPermanentWidget(self.kill_switch)
         self.setStatusBar(bar)
@@ -272,15 +301,35 @@ class MainWindow(QMainWindow):
     def _to_simple(self) -> None:
         self.set_view_mode(ViewMode.SIMPLE)
 
+    def _show_connection_tab(self) -> None:
+        self.show_page("settings")
+        if self.settings_tabs is not None and self.connection_page is not None:
+            self.settings_tabs.setCurrentWidget(self.connection_page)
+
     def _connect(self) -> None:
         if self.connection_page is not None:
-            self.show_page("settings")
+            self._show_connection_tab()
             self.connection_page.connect_to_mt5()
 
     def _diagnose(self) -> None:
         if self.connection_page is not None:
-            self.show_page("settings")
+            self._show_connection_tab()
             self.connection_page.run_diagnostics()
+
+    def _show_data_tab(self) -> None:
+        self.show_page("settings")
+        if self.settings_tabs is not None and self.data_page is not None:
+            self.settings_tabs.setCurrentWidget(self.data_page)
+
+    def _upload(self) -> None:
+        if self.data_page is not None:
+            self._show_data_tab()
+            self.data_page.upload_now()
+
+    def _import_history(self) -> None:
+        if self.data_page is not None:
+            self._show_data_tab()
+            self.data_page.import_history()
 
     def _persist(self) -> None:
         if self._prefs_dir is not None:
