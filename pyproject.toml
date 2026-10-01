@@ -10,8 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = { text = "Proprietary. All rights reserved." }
 # Exact pins for direct dependencies. Each later phase adds its own pinned libraries
-# (loguru, keyring, httpx, psutil, pandas, pyqtgraph, lightgbm, scikit-learn, shap, supabase).
+# (keyring, httpx, psutil, pandas, pyqtgraph, lightgbm, scikit-learn, shap, supabase).
 dependencies = [
+  "loguru==0.7.3",
   "MetaTrader5==5.0.6090; sys_platform == 'win32'",
   "numpy==2.2.6",
   "pydantic==2.11.7",
