@@ -17,11 +17,14 @@ Set-Location $root
 Invoke-Step "Install" { python -m pip install -e ".[dev]" }
 Invoke-Step "Source self-check" { python -m app --self-check }
 Invoke-Step "PyInstaller" {
+    # numpy is only imported at C level inside MetaTrader5's compiled extension,
+    # which PyInstaller's static analysis cannot see, so collect it explicitly.
     pyinstaller --noconfirm --clean --onedir --windowed `
         --name MT5TradingWorkstation `
         --paths "$root" `
         --hidden-import MetaTrader5 `
         --collect-submodules MetaTrader5 `
+        --collect-all numpy `
         --distpath "$root/dist" `
         --workpath "$root/build/pyinstaller" `
         "$root/run_app.py"

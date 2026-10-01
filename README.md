@@ -51,28 +51,34 @@ mypy
 pytest
 ```
 
-## Turn on CI
+## CI
 
-`main` already has a basic `.github/workflows/ci.yml` (ruff, Linux tests, a Windows smoke test and an exe artifact). The full pipeline is staged in `ci/workflows/`: `ci.yml` adds mypy and a `build` job (PyInstaller app, frozen `--self-check` and `--crash-test`), plus `codeql.yml` and `release.yml`. The assistant's GitHub connection cannot write `.github/workflows/`, so whoever maintains the workflows merges them by hand:
+CI is on. `.github/workflows/` contains four workflows:
 
-1. Open the repository on GitHub, switch to the branch, and press the `.` key. GitHub opens a web editor.
-2. Copy the staged files from `ci/workflows/` into `.github/workflows/` (merge `ci.yml` with the existing one rather than keeping two CI files).
-3. Open the Source Control panel on the left, type `ci: enable the full pipeline`, and click **Commit & Push**.
+- **CI** (`ci.yml`) — every push to `main` and every pull request:
+  - `Tests (Linux, Qt offscreen)`: fast pytest run with `QT_QPA_PLATFORM=offscreen`.
+  - `ci`: Windows job running `scripts/ci/check.ps1` — install, `ruff check`, `ruff format --check`, `mypy` (strict) and `pytest` with coverage; uploads `coverage.xml` as an artifact.
+  - `build`: pull requests only — Windows job running `scripts/ci/build.ps1`, which builds the one-folder PyInstaller app, runs the frozen `--self-check`, zips it and uploads the portable build artifact (download it from the pull request under Checks, then Artifacts).
+- **codeql** (`codeql.yml`) — Python security analysis on `main`, pull requests and a weekly schedule.
+- **release** (`release.yml`) — release-please keeps a Release PR up to date; merging it tags `vX.Y.Z` and the `publish` job runs `scripts/ci/release.ps1` to attach the installer, portable zip, `checksums.txt` and `latest.json` to the GitHub Release.
 
-The build can then be downloaded from the pull request under Checks, then Artifacts.
+The workflow YAML stays thin; all CI logic lives in `scripts/ci/*.ps1`.
 
 ## Protect the main branch
 
-1. GitHub repository, then **Settings**, then **Branches**, then **Add branch ruleset** (or "Add rule").
-2. Target branch: `main`.
-3. Enable: **Require a pull request before merging**, **Require status checks to pass** (choose `ci`), **Block force pushes**, **Restrict deletions**.
-4. Save. Every phase arrives as a pull request that you review and merge yourself.
+A branch ruleset on `main` enforces this (configured in repository settings):
+
+1. **Require a pull request before merging**.
+2. **Require status checks to pass**: `ci`, `build` and `Tests (Linux, Qt offscreen)`.
+3. **Block force pushes** and **restrict deletions**.
+
+Every phase arrives as a pull request that you review and merge yourself.
 
 ## Releases
 
-Releases are automated by release-please once CI is on:
+Releases are automated by release-please:
 
-1. Settings, then Actions, then General, then Workflow permissions: enable **Allow GitHub Actions to create and approve pull requests**.
+1. Settings, then Actions, then General, then Workflow permissions: enable **Allow GitHub Actions to create and approve pull requests** (done in repository settings).
 2. Optional but recommended: add a repository secret `RELEASE_PLEASE_TOKEN` (a fine-grained token with Contents and Pull requests read/write on this repository). Without it, release pull requests do not trigger CI and need an admin merge.
 3. Merging a phase into `main` updates a "Release PR". Merging that Release PR creates the tag `vX.Y.Z`, builds the installer, and attaches the installer, a portable zip, `checksums.txt` and `latest.json` to the GitHub Release.
 
