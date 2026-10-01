@@ -31,11 +31,10 @@ Built:
 
 Acceptance checklist (spec G3 phase 2):
 
-- ✓ A forced exception produces a crash report: unit tests (thread hook, sys hook) and the `--crash-test` logic pass in the assistant's sandbox (Python 3.12). ✗ Not yet run with the real loguru pipeline, Qt or on Windows: `tests/integration` and `tests/ui` need CI.
-- ✓ Secrets are masked: unit tests cover token formats, key/value pairs, URL passwords, registered values, structured fields, stack traces and crash reports; a negative test proves the crash test fails when masking is broken. ✗ Same CI caveat for the real pipeline.
-- ✓ Unit tests: 95 passed, 1 skipped (Windows-only) in the sandbox.
-- ✗ Ruff, mypy, the integration tests and the Qt tests have not run yet: the sandbox has no ruff, mypy, loguru or PySide6, and no internet access to install them. The code follows the configured style by hand. CI is their first real run.
-- ✗ CI green: not known yet. The basic `ci.yml` on `main` runs ruff and the tests on this pull request; the frozen crash test runs only once the staged `build` job is in `.github/workflows/`.
+- ✓ A forced exception produces a crash report: unit tests, the Qt tests and the end-to-end `--crash-test` integration test pass in CI on Linux (Python 3.11, real loguru and PySide6) and on Windows (`windows-latest`).
+- ✓ Secrets are masked: unit tests cover token formats, key/value pairs, URL passwords, registered values, structured fields, stack traces and crash reports; the integration tests check the real log files and crash report; a negative test proves the crash test fails when masking is broken.
+- ✓ The basic CI on `main` is green on this pull request: `ruff check`, Linux tests, and the Windows smoke test (`--self-check`, pytest, PyInstaller exe build).
+- ✗ Not run yet: `ruff format --check`, `mypy` (strict) and `--crash-test` on the frozen exe. They are part of the staged pipeline in `ci/workflows/`, which still has to be moved to `.github/workflows/`.
 
 ## Known issues
 
@@ -46,7 +45,6 @@ Acceptance checklist (spec G3 phase 2):
 
 ## Next steps
 
-1. Let CI run on the Phase 2 pull request and fix anything it reports on the same branch.
-2. Merge the staged workflows from `ci/workflows/` into `.github/workflows/`.
-3. Review and merge Phase 2.
-4. Phase 3: the real MT5 connection (gateway thread, test-connection checklist, profiles, investor mode, diagnostics, `--mt5-smoke-test`).
+1. Merge the staged workflows from `ci/workflows/` into `.github/workflows/` and fix what `ruff format`, `mypy` and the frozen crash test report.
+2. Review and merge Phase 2.
+3. Phase 3: the real MT5 connection (gateway thread, test-connection checklist, profiles, investor mode, diagnostics, `--mt5-smoke-test`).
