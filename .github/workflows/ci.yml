@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff==0.14.0
+      - name: Ruff check
+        run: ruff check .
+
+  test:
+    name: Tests (Linux, Qt offscreen)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install project
+        run: pip install -e ".[dev]"
+      - name: Run tests
+        run: pytest
+
+  windows-smoke:
+    name: Windows smoke + exe build
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install project
+        run: pip install -e ".[dev]"
+        shell: bash
+      - name: Self-check (imports on real Windows)
+        run: python -m app.main --self-check
+        shell: bash
+      - name: Entry-point self-check
+        run: mt5-workstation --self-check
+        shell: bash
+      - name: Run tests on Windows
+        run: pytest
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - name: Build exe with PyInstaller
+        run: pyinstaller --onefile --name mt5-workstation --paths . app/main.py
+        shell: bash
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-workstation-windows-exe
+          path: dist/mt5-workstation.exe
+          if-no-files-found: error
