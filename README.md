@@ -6,7 +6,9 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 ## Status
 
-Phase 3 of 16 (MT5 connection). The app connects to the MetaTrader 5 terminal on your PC through one gateway thread, runs a Test-connection checklist with real values, saves account profiles (passwords in Windows Credential Manager), switches to Analysis-only with an investor password, and ships Connection Diagnostics and a read-only `--mt5-smoke-test`. It writes structured, masked logs and crash reports. It **never places orders yet**.
+Phase 4 of 16 (Storage). Everything the app records goes to a local SQLite database first, with optional cloud sync to your own Supabase project and an import of your MT5 trade history. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+
+From Phase 3 (MT5 connection): the app connects to the MetaTrader 5 terminal on your PC through one gateway thread, runs a Test-connection checklist with real values, saves account profiles (passwords in Windows Credential Manager), switches to Analysis-only with an investor password, and ships Connection Diagnostics and a read-only `--mt5-smoke-test`. It writes structured, masked logs and crash reports. It **never places orders yet**.
 
 - Full specification: `docs/SPEC.md`
 - Progress and next steps: `docs/PROGRESS.md`
@@ -57,6 +59,13 @@ python -m app --crash-test
 ```
 
 It crashes a background thread on purpose and prints `Result: PASS` when a crash report was written and no secret leaked into the report or the logs. The built app supports the same flag: `MT5TradingWorkstation.exe --crash-test --report-file crash-test.txt`.
+
+## Storage and cloud sync
+
+- Everything is written to a local SQLite database first (`profiles/<profile>/data/workstation.db`), so the app works offline.
+- Rows waiting for the cloud sit in an outbox and upload in the background. Going offline never loses or duplicates them.
+- Cloud sync is optional and uses your own free Supabase project with Row Level Security. Setup steps: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+- The app talks to Supabase with httpx (PostgREST and Supabase Auth), not supabase-py. Why: ADR 30 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Run the checks
 

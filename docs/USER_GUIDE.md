@@ -1,6 +1,8 @@
 # User guide
 
-## What works today (Phase 3)
+## What works today (Phase 4)
+
+Phase 4 adds a local database, optional cloud sync to your own Supabase project and trade history import. See "Cloud sync with Supabase" and "Trade history" below.
 
 - **Simple view** (default): a calm Home screen in plain language. It says you are in practice mode and whether the app is connected to MetaTrader 5. The "Stop trading now" button is always visible; it becomes active once trading exists.
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
@@ -62,6 +64,45 @@ Advanced view, sidebar **System**, then **Logs**.
 The app saves a crash report and shows a "Something went wrong" window with the report's location. The report contains no passwords or keys. Restart the app; if it happens again, attach the newest file from the crash reports folder to a comment on the GitHub pull request.
 
 To check that crash reporting works: open the command palette and run **Test the crash reporter**, or run `--crash-test` from PowerShell (see README).
+
+## Cloud sync with Supabase (optional)
+
+Everything is saved on your PC first. Cloud sync copies it to your own free Supabase project. The app works fine without it.
+
+1. Create a free project at https://supabase.com.
+2. In the project open SQL Editor and run these files from the `supabase` folder, in this order: `schema.sql`, `rls.sql`, `views.sql`, `cleanup.sql`.
+3. Open Authentication, Sign In / Providers, and check that Email is enabled. If "Confirm email" is on, click the link in the email before you sign in.
+4. Copy the Project URL and the anon (publishable) key from Project Settings (API Keys and Data API). Never use the service_role or secret key: the app refuses it.
+5. In the app open Settings, tab "Data & cloud sync". Paste the URL and the key, type your email and a password, then click Create account the first time or Sign in later.
+
+The app never saves your password. It keeps a sign-in token in Windows Credential Manager, so you stay signed in after a restart.
+
+### What the cloud status means
+
+| Status bar | Meaning |
+| --- | --- |
+| Cloud: off | Cloud sync is not set up or is turned off. |
+| Cloud: signed out | Sign in again in "Data & cloud sync". |
+| Cloud: up to date | Everything is uploaded. |
+| Cloud: uploading | Rows are being uploaded now. |
+| Cloud: offline | No internet, or Supabase cannot be reached. The app retries by itself. |
+| Cloud: project paused | Free projects pause after about a week without use. Restore it in the Supabase dashboard; nothing is lost. |
+| Cloud: setup needed | A table or column is missing. Run the SQL files again. |
+| Cloud: error | Something unexpected happened. Look at the Logs page. |
+| · N waiting | Rows saved on this PC that are not uploaded yet. |
+| · N refused | Rows Supabase refused. Fix the cause, then click Retry refused rows. |
+
+## Trade history
+
+Open Settings, tab "Data & cloud sync", and click Import history now, or use the command "Import trade history". The first import reads your whole history; later imports read only the last few days. Importing again never creates duplicates. Each trade is marked manual, bot or external (another EA).
+
+Times are converted to UTC with your broker's current offset, so trades from before a daylight-saving change can be one hour off. A later phase fixes this.
+
+## Your data on this PC
+
+- Database: `profiles/<profile>/data/workstation.db`.
+- Backups: one a day, the last 7 kept, plus one before every database update.
+- Cleanup: logs and MT5 request records older than 90 days and health and performance rows older than 30 days are removed. Trades and signals are never deleted, and nothing is deleted before it is uploaded.
 
 ## Where your files live
 
