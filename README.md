@@ -6,7 +6,7 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 ## Status
 
-Phase 2 of 16 (Observability). The app opens with a Simple view and an Advanced view, a dark and a light theme, a grouped sidebar, an always-visible status bar and a command palette (Ctrl+K). It writes structured, masked logs, saves a crash report for every unexpected error, and has a Logs page. It does **not** connect to MetaTrader 5 and it never places orders yet.
+Phase 3 of 16 (MT5 connection). The app connects to the MetaTrader 5 terminal on your PC through one gateway thread, runs a Test-connection checklist with real values, saves account profiles (passwords in Windows Credential Manager), switches to Analysis-only with an investor password, and ships Connection Diagnostics and a read-only `--mt5-smoke-test`. It writes structured, masked logs and crash reports. It **never places orders yet**.
 
 - Full specification: `docs/SPEC.md`
 - Progress and next steps: `docs/PROGRESS.md`
@@ -28,6 +28,22 @@ python -m app
 ```
 
 `--self-check` prints `Result: PASS` when Python, MetaTrader5 and Qt load correctly.
+
+## How the MT5 connection works
+
+The official `MetaTrader5` Python package talks to the **MT5 terminal installed on the same Windows PC**; it does not connect to the broker directly. So:
+
+- MT5 must be installed, running (the app can start it) and logged in, with **Algo Trading** on.
+- Run MT5 and the app as the same Windows user and at the same privilege level (both normal, or both "Run as administrator").
+- Run **one app instance per account**, never two on the same account. For several accounts at once, use one portable MT5 terminal and one app profile (`--profile NAME`) per account.
+- Keep the PC awake while the app runs: Windows Settings, System, Power, set "Sleep" to Never when plugged in, and schedule Windows updates outside trading hours (Windows Update, Advanced options, Active hours).
+- For 24/7 running use a Windows VPS close to your broker's server.
+
+Check a build against your account in 30 seconds (read-only, never trades):
+
+```powershell
+python -m app --mt5-smoke-test
+```
 
 ## Logs and crash reports
 
@@ -86,4 +102,5 @@ Releases are automated by release-please:
 
 - Paper mode is the default. Real accounts and Auto mode will require typed confirmation and the Go-Live gate.
 - Every live order will carry a server-side stop loss. No martingale, grid or averaging down, ever.
+- Account passwords are kept in Windows Credential Manager, never in files or logs.
 - Never paste passwords or tokens into chats, issues or commits.

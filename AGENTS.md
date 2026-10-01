@@ -29,6 +29,14 @@
 - Audit-log every user action and setting change with `audit(action, before=..., after=...)`.
 - Code that runs in hooks or other threads never touches Qt widgets; it emits a Qt signal instead.
 
+## MT5 rules (details in `docs/ARCHITECTURE.md`)
+
+- Call MT5 only through `MT5Gateway` (`gateway.call(...)` or `gateway.run(name, fn)`); never import `MetaTrader5` outside `app/mt5/gateway.py`. `tests/unit/test_architecture.py` enforces it.
+- Never wait on a gateway future in the UI thread; deliver results with a queued Qt signal.
+- Read-only tools (the checklist, diagnostics, `--mt5-smoke-test`) never call `order_send` or `order_check`.
+- Never retry a failed first login automatically: repeated wrong passwords can lock the account.
+- Test against `FakeMT5` from `tests/fakes/`; it implements the `MT5Api` protocol and records every call. It is never imported by `app/`.
+
 ## Hard constraints (spec G4)
 
 - Never promise profit. Probabilities are estimates shown with sample size and confidence interval.
@@ -50,6 +58,7 @@ mypy
 pytest
 python -m app --self-check
 python -m app --crash-test
+python -m app --mt5-smoke-test
 ```
 
 ## Git and pull requests (spec H1)
