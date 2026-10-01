@@ -14,7 +14,7 @@ tests/
   unit/            pure tests (no Qt)
   ui/              pytest-qt smoke tests (headless, QT_QPA_PLATFORM=offscreen)
 scripts/ci/        check, build and release scripts used by the workflows
-ci/workflows/      staged GitHub Actions workflows (move to .github/workflows/)
+.github/workflows/ CI, codeql and release workflows (thin YAML; logic in scripts/ci)
 installer/         Inno Setup script (per-user install, no admin rights)
 ```
 
