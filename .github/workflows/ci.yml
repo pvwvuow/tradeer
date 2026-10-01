@@ -73,7 +73,7 @@ jobs:
         run: pyinstaller --onefile --name mt5-workstation --paths . app/main.py
         shell: bash
       - name: Upload exe artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mt5-workstation-windows-exe
           path: dist/mt5-workstation.exe
