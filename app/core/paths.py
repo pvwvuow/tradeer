@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 APP_DIR_NAME = "MT5TradingWorkstation"
+LOGS_DIR_NAME = "logs"
+CRASH_REPORTS_DIR_NAME = "crash_reports"
 
 
 def safe_profile_name(profile: str) -> str:
@@ -22,3 +24,11 @@ def _config_root() -> Path:
 
 def app_data_dir(profile: str = "default") -> Path:
     return _config_root() / APP_DIR_NAME / "profiles" / safe_profile_name(profile)
+
+
+def logs_dir(profile: str = "default") -> Path:
+    return app_data_dir(profile) / LOGS_DIR_NAME
+
+
+def crash_reports_dir(profile: str = "default") -> Path:
+    return app_data_dir(profile) / CRASH_REPORTS_DIR_NAME
