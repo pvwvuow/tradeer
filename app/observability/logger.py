@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger as _loguru
@@ -30,6 +30,9 @@ from app.observability.records import (
 
 if TYPE_CHECKING:
     from loguru import Logger, Message, Record
+
+EntrySink = Callable[[Mapping[str, Any]], None]
+EntryFilter = Callable[[int, str], bool]
 
 
 def get_logger(category: LogCategory) -> Logger:
@@ -84,6 +87,14 @@ class _BufferSink:
 
     def __call__(self, message: Message) -> None:
         self._buffer.append(message.record["extra"][ENTRY_KEY])
+
+
+class _EntrySink:
+    def __init__(self, sink: EntrySink) -> None:
+        self._sink = sink
+
+    def __call__(self, message: Message) -> None:
+        self._sink(message.record["extra"][ENTRY_KEY])
 
 
 class LogPipeline:
@@ -151,6 +162,37 @@ class LogPipeline:
                 catch=True,
             )
             self._handler_ids.append(console_handler)
+
+    def add_entry_sink(self, sink: EntrySink, accept: EntryFilter) -> int:
+        """Send masked entries that pass `accept(level_no, category)` to `sink`.
+
+        The sink runs in its own worker thread (when the pipeline enqueues), so a slow sink
+        such as the database never blocks the thread that logs.
+        """
+
+        def keep(record: Record) -> bool:
+            if not _accepted(record):
+                return False
+            return accept(int(record["level"].no), str(record["extra"][CATEGORY_KEY]))
+
+        handler = _loguru.add(
+            _EntrySink(sink),
+            level=0,
+            format=_line_format,
+            filter=keep,
+            enqueue=self._enqueue,
+            backtrace=False,
+            diagnose=False,
+            catch=True,
+        )
+        self._handler_ids.append(handler)
+        return handler
+
+    def remove_sink(self, handler_id: int) -> None:
+        with contextlib.suppress(ValueError):
+            _loguru.remove(handler_id)
+        if handler_id in self._handler_ids:
+            self._handler_ids.remove(handler_id)
 
     def flush(self) -> None:
         """Wait until every queued record has been written."""
