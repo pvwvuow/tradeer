@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -45,6 +46,7 @@ class FakeAccount:
     trade_mode: int = api.ACCOUNT_TRADE_MODE_DEMO
     margin_mode: int = api.ACCOUNT_MARGIN_MODE_RETAIL_HEDGING
     trade_expert: bool = True
+    margin: float = 0.0
 
 
 @dataclass
@@ -82,6 +84,7 @@ class FakeMT5:
     server_offset_hours: float = 3.0
     open_positions: int = 0
     deals: list[SimpleNamespace] = field(default_factory=list)
+    orders: list[SimpleNamespace] = field(default_factory=list)
     rates_count: int = 5000
     initialize_error: tuple[int, str] | None = None
     hang_seconds: float = 0.0
@@ -179,6 +182,8 @@ class FakeMT5:
             margin_so_mode=api.ACCOUNT_STOPOUT_MODE_PERCENT,
             margin_so_call=100.0,
             margin_so_so=50.0,
+            margin=account.margin,
+            margin_level=account.balance / account.margin * 100.0 if account.margin else 0.0,
         )
 
     def symbols_total(self) -> int:
@@ -250,7 +255,15 @@ class FakeMT5:
 
     def history_deals_get(self, *args: Any, **kwargs: Any) -> tuple[SimpleNamespace, ...] | None:
         self.calls.append("history_deals_get")
-        return tuple(self.deals) if self._ready() else None
+        if not self._ready():
+            return None
+        return tuple(deal for deal in self.deals if _in_range(deal.time, args))
+
+    def history_orders_get(self, *args: Any, **kwargs: Any) -> tuple[SimpleNamespace, ...] | None:
+        self.calls.append("history_orders_get")
+        if not self._ready():
+            return None
+        return tuple(order for order in self.orders if _in_range(order.time_setup, args))
 
     def positions_total(self) -> int:
         self.calls.append("positions_total")
@@ -311,6 +324,118 @@ class FakeMT5:
     def _fail_none(self, code: int, message: str) -> None:
         self._error = (code, message)
         return None
+
+
+def _epoch(value: Any) -> int:
+    return int(value.timestamp()) if isinstance(value, datetime) else int(value)
+
+
+def _in_range(moment: int, args: tuple[Any, ...]) -> bool:
+    """`history_*_get(date_from, date_to)` with datetimes or seconds; no dates means all."""
+    if len(args) < 2:
+        return True
+    return _epoch(args[0]) <= moment <= _epoch(args[1])
+
+
+def make_trade_deal(
+    ticket: int,
+    position_id: int,
+    *,
+    entry: int,
+    deal_type: int,
+    time_s: int,
+    volume: float = 0.1,
+    price: float = 1.08,
+    profit: float = 0.0,
+    commission: float = 0.0,
+    swap: float = 0.0,
+    fee: float = 0.0,
+    magic: int = 0,
+    reason: int = api.DEAL_REASON_CLIENT,
+    symbol: str = "EURUSD.m",
+) -> SimpleNamespace:
+    """One deal as `history_deals_get` returns it (times are broker server time)."""
+    return SimpleNamespace(
+        ticket=ticket,
+        order=ticket + 500_000,
+        time=time_s,
+        time_msc=time_s * 1000,
+        type=deal_type,
+        entry=entry,
+        magic=magic,
+        position_id=position_id,
+        reason=reason,
+        volume=volume,
+        price=price,
+        commission=commission,
+        swap=swap,
+        profit=profit,
+        fee=fee,
+        symbol=symbol,
+        comment="",
+        external_id="",
+    )
+
+
+def make_closed_trade(
+    position_id: int,
+    *,
+    opened: int,
+    closed: int,
+    profit: float,
+    direction: int = api.DEAL_TYPE_BUY,
+    volume: float = 0.1,
+    magic: int = 0,
+    reason: int = api.DEAL_REASON_TP,
+) -> list[SimpleNamespace]:
+    """The entry and exit deal of one fully closed position."""
+    closing = api.DEAL_TYPE_SELL if direction == api.DEAL_TYPE_BUY else api.DEAL_TYPE_BUY
+    entry = make_trade_deal(
+        position_id * 10,
+        position_id,
+        entry=api.DEAL_ENTRY_IN,
+        deal_type=direction,
+        time_s=opened,
+        volume=volume,
+        price=1.08,
+        commission=-0.35,
+        magic=magic,
+    )
+    exit_deal = make_trade_deal(
+        position_id * 10 + 1,
+        position_id,
+        entry=api.DEAL_ENTRY_OUT,
+        deal_type=closing,
+        time_s=closed,
+        volume=volume,
+        price=1.081,
+        profit=profit,
+        commission=-0.35,
+        swap=-0.12,
+        magic=magic,
+        reason=reason,
+    )
+    return [entry, exit_deal]
+
+
+def make_order(ticket: int, position_id: int, time_s: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        ticket=ticket,
+        time_setup=time_s,
+        time_done=time_s,
+        type=0,
+        state=4,
+        magic=0,
+        position_id=position_id,
+        volume_initial=0.1,
+        volume_current=0.0,
+        price_open=1.08,
+        sl=0.0,
+        tp=0.0,
+        price_current=1.08,
+        symbol="EURUSD.m",
+        comment="",
+    )
 
 
 def make_deal(ticket: int, symbol: str = "EURUSD.m", profit: float = 12.5) -> SimpleNamespace:

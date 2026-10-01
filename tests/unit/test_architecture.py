@@ -6,7 +6,13 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[2] / "app"
 IMPORTS_MT5 = re.compile(r"^\s*(import MetaTrader5|from MetaTrader5 )", re.MULTILINE)
 ORDER_CALLS = re.compile(r"\border_(send|check)\b")
-READ_ONLY_MODULES = ("checklist.py", "diagnostics.py", "smoke_test.py", "connection.py")
+READ_ONLY_MODULES = (
+    "checklist.py",
+    "diagnostics.py",
+    "smoke_test.py",
+    "connection.py",
+    "history_sync.py",
+)
 
 
 def sources() -> dict[str, str]:
@@ -29,4 +35,14 @@ def test_the_app_never_imports_test_fakes() -> None:
 def test_read_only_tools_never_mention_order_functions() -> None:
     texts = sources()
     offenders = [name for name in READ_ONLY_MODULES if ORDER_CALLS.search(texts[f"mt5/{name}"])]
+    assert offenders == []
+
+
+def test_storage_and_the_domain_never_import_qt_or_metatrader5() -> None:
+    layers = ("storage/", "domain/")
+    offenders = [
+        name
+        for name, text in sources().items()
+        if name.startswith(layers) and ("PySide6" in text or IMPORTS_MT5.search(text))
+    ]
     assert offenders == []
