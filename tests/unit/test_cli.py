@@ -25,8 +25,16 @@ def _fake_importer(missing: set[str]) -> Callable[[str], ModuleType]:
 def test_parse_args_defaults() -> None:
     options = parse_args([])
     assert not options.self_check
+    assert not options.crash_test
     assert options.report_file is None
     assert options.profile == "default"
+
+
+def test_parse_args_crash_test() -> None:
+    options = parse_args(["--crash-test", "--report-file", "out.txt"])
+    assert options.crash_test
+    assert not options.self_check
+    assert options.report_file == Path("out.txt")
 
 
 def test_parse_args_leaves_qt_arguments_alone() -> None:

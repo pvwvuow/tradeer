@@ -21,8 +21,12 @@ from PySide6.QtWidgets import (
 from app.__version__ import __version__
 from app.core.ui_prefs import ThemeName, UiPrefs, ViewMode, save_prefs
 from app.domain.config import TradingDefaults
+from app.observability.controls import LogControls
+from app.observability.crash_handler import CrashTestError
 from app.ui.command_palette import CommandPalette
 from app.ui.commands import Command
+from app.ui.crash_dialog import CrashDialog
+from app.ui.logs_page import LogsPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
 from app.ui.pages import PlaceholderPage, SimpleHomePage, styled_label
 from app.ui.theme import build_qss, tokens_for
@@ -31,14 +35,28 @@ SIDEBAR_WIDTH = 232
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, prefs: UiPrefs, prefs_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        prefs: UiPrefs,
+        prefs_dir: Path | None = None,
+        log_controls: LogControls | None = None,
+    ) -> None:
         super().__init__()
         self.prefs = prefs
         self.defaults = TradingDefaults()
+        self.log_controls = log_controls
         self._prefs_dir = prefs_dir
         self._page_index: dict[str, int] = {}
         self._nav_buttons: dict[str, QPushButton] = {}
         self._palette: CommandPalette | None = None
+        self._crash_dialog: CrashDialog | None = None
+        # Plain data only: crash reports read this from other threads (never touch widgets).
+        self._crash_state: dict[str, str] = {
+            "page": "",
+            "view_mode": prefs.view_mode.value,
+            "theme": prefs.theme.value,
+            "operating_mode": self.defaults.mode.value,
+        }
         self.setWindowTitle(f"MT5 Trading Workstation {__version__}")
         self.resize(1280, 800)
         self.setMinimumSize(960, 600)
@@ -59,8 +77,12 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         self.home = SimpleHomePage()
         self._add_page(SIMPLE_HOME.page_id, self.home)
+        self.logs_page = LogsPage(log_controls) if log_controls is not None else None
         for spec in ADVANCED_PAGES:
-            self._add_page(spec.page_id, PlaceholderPage(spec))
+            if spec.page_id == "logs" and self.logs_page is not None:
+                self._add_page(spec.page_id, self.logs_page)
+            else:
+                self._add_page(spec.page_id, PlaceholderPage(spec))
         self._build_status_bar()
         self._shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         self._shortcut.activated.connect(self.open_command_palette)
@@ -75,14 +97,23 @@ class MainWindow(QMainWindow):
         current = self.pages.currentIndex()
         return next((key for key, index in self._page_index.items() if index == current), "")
 
+    @property
+    def crash_dialog(self) -> CrashDialog | None:
+        return self._crash_dialog
+
+    def crash_state(self) -> dict[str, str]:
+        return dict(self._crash_state)
+
     def show_page(self, page_id: str) -> None:
         self.pages.setCurrentIndex(self._page_index[page_id])
+        self._crash_state["page"] = page_id
         button = self._nav_buttons.get(page_id)
         if button is not None:
             button.setChecked(True)
 
     def set_view_mode(self, mode: ViewMode, persist: bool = True) -> None:
         self.prefs = self.prefs.model_copy(update={"view_mode": mode})
+        self._crash_state["view_mode"] = mode.value
         advanced = mode is ViewMode.ADVANCED
         self.sidebar.setVisible(advanced)
         self._shortcut.setEnabled(advanced)
@@ -97,7 +128,11 @@ class MainWindow(QMainWindow):
 
     def apply_theme(self, theme: ThemeName, persist: bool = True) -> None:
         self.prefs = self.prefs.model_copy(update={"theme": theme})
-        self.setStyleSheet(build_qss(tokens_for(theme)))
+        self._crash_state["theme"] = theme.value
+        tokens = tokens_for(theme)
+        self.setStyleSheet(build_qss(tokens))
+        if self.logs_page is not None:
+            self.logs_page.apply_tokens(tokens)
         next_theme = "light" if theme is ThemeName.DARK else "dark"
         self.theme_button.setText(f"Switch to {next_theme} theme")
         if persist:
@@ -114,7 +149,25 @@ class MainWindow(QMainWindow):
             items.append(Command(f"go:{spec.page_id}", f"Go to {spec.title}", spec.group, slot))
         items.append(Command("theme", "Toggle theme", "Appearance", self.toggle_theme))
         items.append(Command("view", "Switch to Simple view", "Appearance", self._to_simple))
+        if self.logs_page is not None:
+            page = self.logs_page
+            items.append(Command("debug", "Toggle debug mode", "Logs", page.toggle_debug))
+            items.append(Command("log_folder", "Open log folder", "Logs", page.open_log_folder))
+        items.append(Command("crash", "Test the crash reporter", "Logs", self.trigger_crash_test))
         return items
+
+    def trigger_crash_test(self) -> None:
+        """Raise on purpose: the crash hook must write a report and show the dialog."""
+        raise CrashTestError("Deliberate crash test from the command palette")
+
+    def show_crash_dialog(self, report_path: str, summary: str) -> None:
+        """Slot for `CrashNotifier.crashed`. Shows one dialog at a time."""
+        if self._crash_dialog is not None and self._crash_dialog.isVisible():
+            return
+        crash_dir = self.log_controls.crash_dir if self.log_controls else Path(report_path).parent
+        path = Path(report_path) if report_path else None
+        self._crash_dialog = CrashDialog(path, summary, crash_dir, self)
+        self._crash_dialog.open()
 
     def open_command_palette(self) -> CommandPalette | None:
         if self.prefs.view_mode is not ViewMode.ADVANCED:

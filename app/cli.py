@@ -31,6 +31,7 @@ class CliOptions:
     self_check: bool
     report_file: Path | None
     profile: str
+    crash_test: bool = False
 
 
 @dataclass(frozen=True)
@@ -57,10 +58,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="verify that MetaTrader5 and Qt load, then exit with code 0 (pass) or 1 (fail)",
     )
     parser.add_argument(
+        "--crash-test",
+        action="store_true",
+        help="force a crash in a worker thread, verify the masked crash report, exit 0 or 1",
+    )
+    parser.add_argument(
         "--report-file",
         type=Path,
         default=None,
-        help="also write the self-check report to this file",
+        help="also write the self-check or crash-test report to this file",
     )
     parser.add_argument(
         "--profile",
@@ -77,6 +83,7 @@ def parse_args(argv: Sequence[str]) -> CliOptions:
         self_check=bool(namespace.self_check),
         report_file=namespace.report_file,
         profile=str(namespace.profile),
+        crash_test=bool(namespace.crash_test),
     )
 
 
@@ -112,10 +119,15 @@ def run_self_check(
     return ok, "\n".join(lines)
 
 
+def emit_report(report: str, report_file: Path | None) -> None:
+    """Print a report and optionally save it (windowed builds have no console)."""
+    print(report)
+    if report_file is not None:
+        report_file.parent.mkdir(parents=True, exist_ok=True)
+        report_file.write_text(report + "\n", encoding="utf-8")
+
+
 def self_check_main(options: CliOptions) -> int:
     ok, report = run_self_check()
-    print(report)
-    if options.report_file is not None:
-        options.report_file.parent.mkdir(parents=True, exist_ok=True)
-        options.report_file.write_text(report + "\n", encoding="utf-8")
+    emit_report(report, options.report_file)
     return 0 if ok else 1
