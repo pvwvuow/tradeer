@@ -21,10 +21,13 @@ from PySide6.QtWidgets import (
 from app.__version__ import __version__
 from app.core.ui_prefs import ThemeName, UiPrefs, ViewMode, save_prefs
 from app.domain.config import TradingDefaults
+from app.mt5.connection import ConnectionState, ConnectionStatus
+from app.mt5.models import AccountKind
 from app.observability.controls import LogControls
 from app.observability.crash_handler import CrashTestError
 from app.ui.command_palette import CommandPalette
 from app.ui.commands import Command
+from app.ui.connection_page import ConnectionContext, ConnectionPage
 from app.ui.crash_dialog import CrashDialog
 from app.ui.logs_page import LogsPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
@@ -40,6 +43,7 @@ class MainWindow(QMainWindow):
         prefs: UiPrefs,
         prefs_dir: Path | None = None,
         log_controls: LogControls | None = None,
+        connection: ConnectionContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -56,6 +60,7 @@ class MainWindow(QMainWindow):
             "view_mode": prefs.view_mode.value,
             "theme": prefs.theme.value,
             "operating_mode": self.defaults.mode.value,
+            "mt5": ConnectionState.DISCONNECTED.value,
         }
         self.setWindowTitle(f"MT5 Trading Workstation {__version__}")
         self.resize(1280, 800)
@@ -78,12 +83,18 @@ class MainWindow(QMainWindow):
         self.home = SimpleHomePage()
         self._add_page(SIMPLE_HOME.page_id, self.home)
         self.logs_page = LogsPage(log_controls) if log_controls is not None else None
+        self.connection_page = ConnectionPage(connection) if connection is not None else None
         for spec in ADVANCED_PAGES:
             if spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
+            elif spec.page_id == "settings" and self.connection_page is not None:
+                self._add_page(spec.page_id, self.connection_page)
             else:
                 self._add_page(spec.page_id, PlaceholderPage(spec))
         self._build_status_bar()
+        if connection is not None and self.connection_page is not None:
+            self.connection_page.bridge.status.connect(self.set_connection_status)
+            self.set_connection_status(connection.service.status)
         self._shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         self._shortcut.activated.connect(self.open_command_palette)
         self.apply_theme(prefs.theme, persist=False)
@@ -154,7 +165,22 @@ class MainWindow(QMainWindow):
             items.append(Command("debug", "Toggle debug mode", "Logs", page.toggle_debug))
             items.append(Command("log_folder", "Open log folder", "Logs", page.open_log_folder))
         items.append(Command("crash", "Test the crash reporter", "Logs", self.trigger_crash_test))
+        if self.connection_page is not None:
+            items.append(Command("connect", "Connect to MT5", "Connection", self._connect))
+            items.append(
+                Command("diagnose", "Run connection diagnostics", "Connection", self._diagnose),
+            )
         return items
+
+    def set_connection_status(self, status: object) -> None:
+        """Slot: show the MT5 connection in the status bar and on the Simple home screen."""
+        if not isinstance(status, ConnectionStatus):
+            return
+        self._crash_state["mt5"] = status.state.value
+        self.connection_label.setText(f"\u25cf {status.status_bar_text()}")
+        badge = "ANALYSIS-ONLY" if status.analysis_only else self.defaults.mode.label.upper()
+        self.mode_badge.setText(badge)
+        self.home.status_line.setText(plain_status(status))
 
     def trigger_crash_test(self) -> None:
         """Raise on purpose: the crash hook must write a report and show the dialog."""
@@ -246,6 +272,39 @@ class MainWindow(QMainWindow):
     def _to_simple(self) -> None:
         self.set_view_mode(ViewMode.SIMPLE)
 
+    def _connect(self) -> None:
+        if self.connection_page is not None:
+            self.show_page("settings")
+            self.connection_page.connect_to_mt5()
+
+    def _diagnose(self) -> None:
+        if self.connection_page is not None:
+            self.show_page("settings")
+            self.connection_page.run_diagnostics()
+
     def _persist(self) -> None:
         if self._prefs_dir is not None:
             save_prefs(self._prefs_dir, self.prefs)
+
+
+def plain_status(status: ConnectionStatus) -> str:
+    """The status line in plain language for the Simple view (spec B3b)."""
+    account = status.account
+    if status.connected and account is not None:
+        kinds = {
+            AccountKind.DEMO: "practice (demo)",
+            AccountKind.CONTEST: "contest",
+            AccountKind.REAL: "REAL money",
+        }
+        kind = kinds.get(account.kind, "trading")
+        text = f"Status: connected to {account.company}, {kind} account {account.login}."
+        if status.analysis_only:
+            text += " Read-only login, so the app only watches and never trades."
+        return text
+    if status.state is ConnectionState.RECONNECTING:
+        return "Status: the connection to MetaTrader 5 was lost. Reconnecting..."
+    if status.state is ConnectionState.CONNECTING:
+        return "Status: connecting to MetaTrader 5..."
+    if status.state is ConnectionState.FAILED:
+        return "Status: could not connect to MetaTrader 5. Advanced view > Settings shows why."
+    return "Status: not connected"
