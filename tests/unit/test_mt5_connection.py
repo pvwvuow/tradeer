@@ -96,7 +96,7 @@ def test_a_lost_terminal_is_reconnected_with_backoff_and_open_positions_alert() 
         status = harness.service.status
         assert status.state is ConnectionState.RECONNECTING
         assert status.attempt == 1 and status.retry_in_seconds == 2.0
-        assert ("CRITICAL" in [level for level, _ in harness.events])
+        assert "CRITICAL" in [level for level, _ in harness.events]
         harness.advance(1)
         assert harness.service.status.attempt == 1
         harness.advance(1)

@@ -62,7 +62,7 @@ def test_origin_files_and_missing_folders_are_handled() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         assert read_origin(folder) is None
-        (folder / "origin.txt").write_bytes("C:\\MT5".encode("utf-8"))
+        (folder / "origin.txt").write_bytes(b"C:\\MT5")
         assert read_origin(folder) == "C:\\MT5"
         (folder / "origin.txt").write_bytes("D:\\Trading\\MT5".encode("utf-16"))
         assert read_origin(folder) == "D:\\Trading\\MT5"

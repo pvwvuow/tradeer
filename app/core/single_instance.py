@@ -1,7 +1,8 @@
 """One app instance per profile (spec D3.8), with an operating-system file lock.
 
 The lock disappears with the process, even after a crash, so a stale lock never blocks a
-restart.
+restart. The file holds the owner's process id. Windows locks are mandatory, so the locked
+byte lies far past that text and anyone can still read the process id.
 """
 
 from __future__ import annotations
@@ -14,12 +15,13 @@ from types import TracebackType
 from typing import IO
 
 LOCK_FILE_NAME = "instance.lock"
+LOCK_OFFSET = 1 << 20
 
 
 class InstanceLock:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._handle: IO[str] | None = None
+        self._handle: IO[bytes] | None = None
 
     @property
     def held(self) -> bool:
@@ -29,7 +31,8 @@ class InstanceLock:
         if self._handle is not None:
             return True
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = self.path.open("a+", encoding="utf-8")
+        # Kept open on purpose: the lock lives as long as this handle.
+        handle = self.path.open("a+b")  # noqa: SIM115
         try:
             _lock(handle)
         except OSError:
@@ -37,7 +40,7 @@ class InstanceLock:
             return False
         handle.seek(0)
         handle.truncate()
-        handle.write(str(os.getpid()))
+        handle.write(str(os.getpid()).encode("ascii"))
         handle.flush()
         self._handle = handle
         return True
@@ -63,11 +66,11 @@ class InstanceLock:
         self.release()
 
 
-def _lock(handle: IO[str]) -> None:
+def _lock(handle: IO[bytes]) -> None:
     if sys.platform == "win32":
         import msvcrt
 
-        handle.seek(0)
+        handle.seek(LOCK_OFFSET)
         msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
     else:
         import fcntl
@@ -75,11 +78,11 @@ def _lock(handle: IO[str]) -> None:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
-def _unlock(handle: IO[str]) -> None:
+def _unlock(handle: IO[bytes]) -> None:
     if sys.platform == "win32":
         import msvcrt
 
-        handle.seek(0)
+        handle.seek(LOCK_OFFSET)
         msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
     else:
         import fcntl

@@ -11,7 +11,7 @@ READ_ONLY_MODULES = ("checklist.py", "diagnostics.py", "smoke_test.py", "connect
 
 def sources() -> dict[str, str]:
     return {
-        str(path.relative_to(APP)): path.read_text(encoding="utf-8")
+        path.relative_to(APP).as_posix(): path.read_text(encoding="utf-8")
         for path in APP.rglob("*.py")
     }
 

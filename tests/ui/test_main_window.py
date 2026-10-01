@@ -107,6 +107,7 @@ def test_crash_state_is_plain_data_that_follows_the_ui(qtbot: QtBot, tmp_path: P
         "view_mode": "advanced",
         "theme": "light",
         "operating_mode": "paper",
+        "mt5": "disconnected",
     }
 
 
