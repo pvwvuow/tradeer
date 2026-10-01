@@ -201,9 +201,7 @@ class LogFileWriter:
             if path.suffix == PARTIAL_SUFFIX:
                 with contextlib.suppress(OSError):
                     path.unlink()
-            elif path.suffix == JSONL_SUFFIX and path.name != today:
-                self._archive(path, now)
-            elif path.suffix == TEXT_SUFFIX and path.name != ALL_LOG_NAME:
+            elif _is_leftover(path, today):
                 self._archive(path, now)
 
     def _apply_retention(self, now: datetime) -> None:
@@ -226,6 +224,13 @@ class LogFileWriter:
             with contextlib.suppress(OSError):
                 path.unlink()
                 total -= sizes.get(path, 0)
+
+
+def _is_leftover(path: Path, today: str) -> bool:
+    """A closed log file from an earlier day or an earlier rotation that should be zipped."""
+    if path.suffix == JSONL_SUFFIX:
+        return path.name != today
+    return path.suffix == TEXT_SUFFIX and path.name != ALL_LOG_NAME
 
 
 def _safe_category(category: str) -> str:
