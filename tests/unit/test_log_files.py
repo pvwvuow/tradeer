@@ -92,11 +92,12 @@ def test_leftovers_from_earlier_runs_are_compressed_but_today_is_kept_open() -> 
         root = Path(tmp) / "logs"
         (root / "app").mkdir(parents=True)
         old = root / "app" / "2026-09-18.jsonl"
-        old.write_text('{"old":true}\n', encoding="utf-8")
+        old.write_bytes(b'{"old":true}\n')
         today = root / "app" / "2026-09-20.jsonl"
-        today.write_text('{"earlier":true}\n', encoding="utf-8")
+        today.write_bytes(b'{"earlier":true}\n')
         all_log = root / ALL_LOG_NAME
-        all_log.write_text("yesterday\n", encoding="utf-8")
+        # Bytes, not write_text: on Windows write_text would store "\r\n" line endings.
+        all_log.write_bytes(b"yesterday\n")
         set_mtime(all_log, local(19))
         with LogFileWriter(root, KEEP_EVERYTHING, clock=FakeClock(local(20))) as writer:
             writer.write("risk", "{}", "today")
