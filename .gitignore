@@ -1,17 +1,35 @@
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tooling caches and reports
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
+coverage.xml
 htmlcov/
-.venv/
+
+# Build output
+build/
+dist/
+*.spec
+
+# Secrets and local data: never commit
 .env
+.env.*
+*.pem
+*.key
 *.db
+*.sqlite
 *.sqlite3
 logs/
-dist/
-build/
-*.spec
+crash_reports/
+debug_bundles/
+
+# Editors
 .idea/
 .vscode/

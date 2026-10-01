@@ -1,3 +1,5 @@
 """MT5 Trading Workstation application package."""
 
-__version__ = "0.1.0"
+from app.__version__ import __version__
+
+__all__ = ["__version__"]

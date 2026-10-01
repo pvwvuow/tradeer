@@ -1,0 +1,53 @@
+import re
+
+from app.core.ui_prefs import ThemeName
+from app.ui.theme import DARK, LIGHT, build_qss, contrast_ratio, tokens_for
+
+HEX_COLOR = re.compile(r"^#[0-9A-F]{6}$")
+WCAG_AA = 4.5
+
+
+def test_all_color_tokens_are_uppercase_hex() -> None:
+    for tokens in (DARK, LIGHT):
+        for name, value in tokens.colors().items():
+            assert HEX_COLOR.match(value), (tokens.name, name, value)
+
+
+def test_dark_theme_uses_the_spec_palette() -> None:
+    assert DARK.bg == "#0B0D12"
+    assert DARK.surface == "#12151C"
+    assert DARK.card == "#171B24"
+    assert DARK.border == "#232836"
+    assert DARK.text == "#E6E8EE"
+    assert DARK.text_secondary == "#8A91A5"
+    assert DARK.accent == "#5B8CFF"
+    assert DARK.profit == "#22C55E"
+    assert DARK.loss == "#EF4444"
+    assert DARK.warning == "#F59E0B"
+
+
+def test_text_colors_meet_wcag_aa_on_every_surface() -> None:
+    for tokens in (DARK, LIGHT):
+        foregrounds = (tokens.text, tokens.text_secondary, tokens.profit, tokens.loss)
+        for background in (tokens.bg, tokens.surface, tokens.card):
+            for foreground in (*foregrounds, tokens.warning):
+                ratio = contrast_ratio(foreground, background)
+                assert ratio >= WCAG_AA, (tokens.name, foreground, background, ratio)
+        assert contrast_ratio(tokens.accent_text, tokens.accent) >= WCAG_AA
+
+
+def test_contrast_of_black_on_white_is_21() -> None:
+    assert round(contrast_ratio("#000000", "#FFFFFF"), 1) == 21.0
+
+
+def test_stylesheet_is_generated_from_tokens() -> None:
+    dark_qss = build_qss(DARK)
+    assert DARK.bg in dark_qss
+    assert DARK.accent in dark_qss
+    assert LIGHT.bg in build_qss(LIGHT)
+    assert build_qss(LIGHT) != dark_qss
+
+
+def test_tokens_for_returns_the_requested_theme() -> None:
+    assert tokens_for(ThemeName.DARK) is DARK
+    assert tokens_for(ThemeName.LIGHT) is LIGHT
