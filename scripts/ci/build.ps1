@@ -23,6 +23,7 @@ Invoke-Step "PyInstaller" {
         --name MT5TradingWorkstation `
         --paths "$root" `
         --hidden-import MetaTrader5 `
+        --hidden-import keyring.backends.Windows `
         --collect-submodules MetaTrader5 `
         --collect-all numpy `
         --distpath "$root/dist" `

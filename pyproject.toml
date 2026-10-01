@@ -10,8 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = { text = "Proprietary. All rights reserved." }
 # Exact pins for direct dependencies. Each later phase adds its own pinned libraries
-# (keyring, httpx, psutil, pandas, pyqtgraph, lightgbm, scikit-learn, shap, supabase).
+# (httpx, psutil, pandas, pyqtgraph, lightgbm, scikit-learn, shap, supabase).
 dependencies = [
+  "keyring==25.7.0",
   "loguru==0.7.3",
   "MetaTrader5==5.0.6090; sys_platform == 'win32'",
   "numpy==2.2.6",
@@ -50,6 +51,11 @@ known-first-party = ["app"]
 python_version = "3.11"
 strict = true
 files = ["app"]
+
+[[tool.mypy.overrides]]
+# MetaTrader5 ships no type information; keyring is imported lazily on first use.
+module = ["MetaTrader5", "keyring", "keyring.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
