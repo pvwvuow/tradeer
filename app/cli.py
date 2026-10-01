@@ -23,6 +23,8 @@ REQUIRED_MODULES: tuple[tuple[str, str | None], ...] = (
     ("MetaTrader5", "__version__"),
     ("PySide6", "__version__"),
     ("PySide6.QtWidgets", None),
+    ("sqlite3", "sqlite_version"),
+    ("httpx", "__version__"),
 )
 
 
