@@ -10,13 +10,14 @@ app/
   analysis/        pure market analysis on closed bars: indicators, trend, structure, levels, card (phase 5)
   calendar/        economic calendar: events, CSV import, store, MQL5 exporter (phase 5)
   core/            per-user paths, UI preferences, account profiles, credentials, instance lock, broker clock, watchlist
-  domain/          pure logic: operating modes, validated defaults, trade history (no Qt, MT5 or I/O)
+  domain/          pure logic: operating modes, validated defaults, trade history, signals, sizing (no Qt, MT5 or I/O)
   engine/          background workers: the market-analysis thread (phase 5), signal filters and pipeline (phase 6)
   mt5/             the MT5 gateway thread, connection checklist, diagnostics, smoke test, market data
   observability/   logging, trace context, masking, crash reports, watchdog (phase 2)
+  risk/            risk settings and profiles, limits, currency exposure, limit state, risk manager (phase 7)
   storage/         SQLite database, migrations, outbox, cloud sync, history tracker (phase 4)
   strategies/      strategy interface, market context, the two example strategies (phase 6)
-  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, Market, chart, Signals, Strategies
+  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, Market, chart, Signals, Strategies, Risk
 supabase/          SQL to run in the Supabase SQL Editor: schema, RLS, views, cleanup (phase 4)
 tests/
   fakes/           FakeMT5 and FakeSupabase for tests only (never shipped)
@@ -202,8 +203,16 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 55. **The pipeline runs in the analysis thread.** `MarketWatch` calls it after a symbol was analysed on a new closed bar; the UI only queues a dismiss, which the next cycle applies. Reason: one writer thread, no locks around the database, and the trace order is the real order.
 56. **Signal ids are uuid5 of strategy, params hash and side, symbol, timeframe and bar time.** Reason: evaluating the same bar again (a restart, a second poll) gives the same id, so a signal is never duplicated and the save is idempotent.
 57. **No new column for the expiry.** The `signals` table of E2 has no `expires_at`; the expiry, bar close time, digits, params hash and state history are kept in `features_json`, and the trace records "expires at" as an execution step. Reason: no schema change and no migration in Phase 6.
-58. **Risk is a placeholder step until Phase 7.** Every trace has a `risk` step marked "not applied", so the acceptance check (every stage present) holds now and Phase 7 only replaces that step.
+58. **Risk is a placeholder step until Phase 7.** Every trace has a `risk` step marked "not applied", so the acceptance check (every stage present) holds now and Phase 7 only replaces that step. Replaced in Phase 7 (ADR 62).
 59. **Settings forms come from the params models.** `app/core/param_fields.py` reads the pydantic JSON schema (type, limits, choices, description), and the model validates what the user typed. Reason: a new parameter needs no UI code, and invalid values never reach a strategy.
+60. **Size from `order_calc_profit`, never from the tick value.** Reason: on a real FIBO account XAUUSD reported a tick value of 0.1 USD where its contract (100 oz) makes a point worth 1 USD, so tick-value sizing would risk 10x too much. `order_calc_profit(BUY or SELL, symbol, 1 lot, entry, SL)` returns the loss in the account currency and converts JPY, gold and cross-currency accounts itself. Stop and limit orders use BUY or SELL too (the calc functions accept only those). An architecture test keeps `tick_value` out of the sizing code.
+61. **Volume rounds down; the minimum lot never rounds up.** When the minimum lot would risk more than allowed, the trade is rejected (spec C6). The commission per lot is the history estimate (all commissions of the symbol's deals / lots opened) or the setting.
+62. **The risk manager runs in the analysis thread.** The pipeline calls it for every signal that passed the filters; `on_cycle` refreshes the usage every 30 s. Account, positions and today's deals come from one gateway call. The UI queues Stop and Re-enable, applied in that thread. Reason: one writer for the limit state, like ADR 55.
+63. **The limit state is local key-value JSON.** One `sync_state` key per account (`risk_state:<account id>`), no migration and nothing uploaded; events go to the synced `risk_events` table. A damaged value stops trading ("could not be read") instead of resetting a hit limit.
+64. **Daily loss = start-of-day equity + today's deposits - equity.** The trading day is the broker date (`BrokerClock.broker_date`). When the app saw the rollover (state updated within 15 minutes) the start is the equity then; otherwise balance - today's realized - today's deposits, marked "estimated" (it ignores positions opened earlier, so it can only overstate the loss). Deposits and withdrawals also move the drawdown basis.
+65. **Currency exposure is risk-weighted.** Each position is +risk on its base and -risk on its quote currency (`currency_margin`, `currency_profit`); the limit is the largest net value in % of capital on a currency the new trade touches (default 1% = two 0.5% trades in one direction). A position without a SL counts with its current loss.
+66. **One magic number per strategy, never reused.** `MAGIC_NUMBERS` in the registry; anything else (magic 0 or another EA) is "manual" for the limits and counts when `count_manual_trades` is on.
+67. **Profiles are presets of one settings model.** `risk.json` stores the profile name and all values; an edited preset becomes "custom". The model holds the hard caps (1% per trade, 5% open risk, 10% daily, 50% drawdown), so neither the file nor the form can go above them; an unreadable file gives Normal.
 
 ## Logging rules for new code
 
@@ -249,3 +258,11 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 - Every signal goes through `SignalPipeline`; never save a signal without its decision trace, and never change a state except through `Signal.with_state`.
 - A new filter returns a `TraceStep` with value, threshold and pass, fail or "not applied" (`None`) with the reason.
 - Strategy examples always carry `EXAMPLE_NOTE`: they are not proven to be profitable.
+
+## Risk rules
+
+- Every signal that passed the filters goes through `RiskManager.evaluate`; nothing may size, send or approve a trade around it. It never raises: an error rejects the trade.
+- Size only from `order_calc_profit` and the symbol's volume limits; never read `tick_value` (architecture test).
+- Sizing, limits, exposure and the limit state are pure (architecture test); MT5 reads live in `app/mt5/risk_reads.py` and run in the gateway thread.
+- Every limit is a `LimitCheck` with value, threshold and detail, and becomes one line of the decision trace. A new blocking check names its `risk_events` type.
+- The limit state is written only in the analysis thread and saved after every change; never clear a stop without the user's typed confirmation (except a daily stop at the next trading day).
