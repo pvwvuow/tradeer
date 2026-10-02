@@ -2,6 +2,7 @@ from app.mt5.checklist import ConnectRequest
 from app.mt5.diagnostics import (
     DIAGNOSTIC_TIMEFRAMES,
     estimate_broker_offset,
+    filling_text,
     offset_text,
     probe_counts,
     run_diagnostics,
@@ -42,9 +43,37 @@ def test_diagnostics_cover_history_specs_offset_and_permissions() -> None:
         "Ping: 35 ms",
         "Expert Advisors allowed: yes",
         "App running as administrator: unknown",
+        "filling FOK+IOC",
     ):
         assert expected in text, expected
     assert fake.trading_calls == []
+
+
+class SlowClock:
+    """Every reading is 30 s later, as when the history probes download for minutes."""
+
+    def __init__(self, start: float) -> None:
+        self.value = start
+
+    def __call__(self) -> float:
+        self.value += 30.0
+        return self.value
+
+
+def test_the_offset_is_measured_from_prices_read_after_slow_history_probes() -> None:
+    # A real run said "offset unknown" while the market was open: the prices were read before
+    # the history probes and the clock after them.
+    clock = SlowClock(NOW)
+    fake = FakeMT5(now=clock, server_offset_hours=3.0)
+    report = run_diagnostics(fake, request(), utc_now=clock, path_exists=lambda path: True)
+    assert clock.value - NOW > 600
+    assert report.broker_offset_hours == 3.0
+
+
+def test_filling_modes_are_named() -> None:
+    assert filling_text(3) == "FOK+IOC"
+    assert filling_text(2) == "IOC"
+    assert filling_text(0) == "0"
 
 
 def test_history_is_asked_again_with_fewer_bars_when_mt5_refuses_a_big_request() -> None:

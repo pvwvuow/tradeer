@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 
 from app.__version__ import __version__
 from app.mt5.api import TIMEFRAMES, MT5Api
-from app.mt5.checklist import ChecklistReport, ConnectRequest, run_checklist
+from app.mt5.checklist import ChecklistReport, ConnectRequest, read_quotes, run_checklist
 from app.mt5.models import SymbolSpec
 from app.observability.masking import MASKER
 
@@ -26,6 +26,8 @@ HISTORY_PROBE_LIMIT = 100_000
 # probe asks again for fewer bars before it reports that nothing is there.
 HISTORY_PROBE_STEPS: tuple[int, ...] = (50_000, 10_000, 1_000)
 OFFSET_TOLERANCE_SECONDS = 180.0
+# SYMBOL_FILLING_* flags of `filling_mode`.
+FILLING_FLAGS: tuple[tuple[int, str], ...] = ((1, "FOK"), (2, "IOC"), (4, "BOC"))
 
 
 @dataclass(frozen=True)
@@ -135,13 +137,19 @@ def offset_text(hours: float | None) -> str:
     return f"server time is UTC{sign}{whole}{suffix}"
 
 
+def filling_text(mode: int) -> str:
+    """The allowed filling modes by name, for example 3 is FOK+IOC."""
+    names = [name for flag, name in FILLING_FLAGS if mode & flag]
+    return "+".join(names) if names else str(mode)
+
+
 def spec_line(spec: SymbolSpec) -> str:
     return (
         f"{spec.name}: digits {spec.digits}, point {spec.point:g}, tick {spec.tick_size:g} = "
         f"{spec.tick_value:g} {spec.currency_profit}, contract {spec.contract_size:g}, volume "
         f"{spec.volume_min:g}-{spec.volume_max:g} step {spec.volume_step:g}, stops level "
-        f"{spec.stops_level}, freeze level {spec.freeze_level}, filling {spec.filling_mode}, "
-        f"trading {spec.trade_mode.value}"
+        f"{spec.stops_level}, freeze level {spec.freeze_level}, filling "
+        f"{filling_text(spec.filling_mode)}, trading {spec.trade_mode.value}"
     )
 
 
@@ -183,7 +191,9 @@ def run_diagnostics(
                 specs.append(SymbolSpec.from_mt5(info))
             for timeframe in DIAGNOSTIC_TIMEFRAMES:
                 history.append(probe_history(mt5, name, timeframe, history_limit, maxbars))
-        fresh = [quote for quote in checklist.quotes if quote.valid]
+        # Read the prices again: the history probes above can take minutes while MT5 downloads
+        # deep history, and a price read before them then looks stale next to the clock.
+        fresh = [quote for quote in read_quotes(mt5, checklist.symbols) if quote.valid]
         if fresh:
             newest = max(quote.server_time for quote in fresh)
             offset = estimate_broker_offset(newest, utc_now())
