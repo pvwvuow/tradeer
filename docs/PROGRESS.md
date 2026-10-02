@@ -9,6 +9,7 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 3: MT5 connection, pull request #13, CI green, waiting for review.
 - Phase 4: Storage, pull request #14, CI green, waiting for review.
 - Phase 5: Market data & analysis, pull request #15, CI green, waiting for review.
+- Phase 6: Strategies & signals, stacked on Phase 5, in review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -16,7 +17,51 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 5 Market data & analysis (branch `phase/05-market-analysis`, pull request #15)
+## Current phase: 6 Strategies & signals (branch `phase/06-strategies-signals`, pull request into `phase/05-market-analysis`)
+
+Status: built and tested on synthetic markets; not yet run on your PC. Signal only: nothing is sent to MT5.
+
+### What was built
+
+- **Strategy interface** (`app/strategies/base.py`, spec C4): name, version, params model, required history, entry timeframe, `evaluate(ctx)` with every rule as a condition (value, threshold, pass or fail) and a setup state (none, forming, ready) for the scanner. Strategies are pure; an architecture test enforces it.
+- **Two example strategies** with exact rules, labelled "not proven to be profitable": trend pullback (H1 EMA50/EMA200 trend with ADX, M15 pullback into the EMA20 zone, RSI back over 50, SL beyond the swing or 1.5 ATR, max 3 ATR, TP 2R) and London breakout (Asia range 00:00 to 07:00 London time, 0.5 to 1.5 ATR(D1, scaled to the range hours) wide, buy stop and sell stop as an OCO pair at 08:00, SL at the other side, max 1.5 ATR, TP 1.5R, cancelled at 11:00).
+- **Market context** (`app/strategies/context.py`): closed entry bars and only fully closed higher-timeframe bars at the moment the entry bar closed.
+- **Signals and the state machine** (`app/domain/signals.py`, spec C5): NEW, FILTERED_OUT, RISK_REJECTED, PENDING_APPROVAL, APPROVED, USER_REJECTED, EXPIRED, SENT, FILLED, FAILED, MANAGED, CLOSED. Any other transition raises an error.
+- **Probability baseline** (`app/domain/probability.py`): the strategy's win rate with a Wilson 95% interval, "unknown" below 30 resolved signals; expected value in R with the spread as a cost.
+- **Filters** (`app/engine/filters.py`): probability, EV, one pending signal per symbol, strategy and side, open position, cooldown after a loss, pause after losses, spread vs ATR and vs SL, session, rollover, Friday close, Monday open, news blackout, fresh data, market open, symbol trade mode, still valid.
+- **Pipeline** (`app/engine/signal_pipeline.py`): on each new closed entry bar, context, strategy, features, probability, EV, filters, risk (placeholder until Phase 7), decision, every step in the decision trace (`app/observability/decision_trace.py`). Runs in the analysis thread; dismiss and expiry are queued there, so all writes happen in one thread.
+- **Storage** (`app/storage/signal_store.py`): `strategy_configs`, `signals` and `decision_traces` rows in one transaction with stable ids; saved signals load again after a restart and expire on time.
+- **Scanner** (`app/analysis/scanner.py`): symbols ranked by setup state, then probability x EV (rules passed while no probability is known).
+- **Signals page**: feed with rejected signals and their reasons, state filter, decision trace, scanner tab, Dismiss; Approve is off until Phase 8.
+- **Strategies page**: one card per strategy with on/off, its rules, an auto-generated settings form (from the params model), and the signal filters; saved per profile in `strategies.json`, every change in the audit log.
+
+### Checklist
+
+- ✓ Strategy interface and 2 example strategies with exact rules (unit tests on synthetic markets, long and short)
+- ✓ Pipeline, state machine, filters, scanner (unit tests)
+- ✓ Every signal has a full decision trace (acceptance test `test_every_signal_has_a_full_decision_trace`: every stage present, saved and read back)
+- ✓ One signal per symbol, strategy and bar; restarts never duplicate a signal (unit test)
+- ✓ Dismiss and expiry are saved and survive a restart (unit test)
+- ✓ Signals and Strategies pages (UI tests run in CI)
+- ✗ Not yet run on your PC with live FIBO data
+- ✗ Probability stays "unknown" until 30 signals are resolved, which needs trades (Phase 8); the probability and EV filters are recorded as "not applied" until then
+- ✗ Risk sizing (Phase 7) and order execution (Phase 8) are not built; Approve stays off
+
+### Test on your PC
+
+1. Start the app, connect, open Advanced > Strategies: both strategies are on. Change a value, click Save, and check the audit entry in Logs.
+2. Leave the app running through a London morning (07:00 to 08:00 London time): at the open the London breakout shows a buy stop and a sell stop for each symbol whose Asia range fits, or a filtered-out signal with the reason.
+3. Open Advanced > Signals, select a signal and read its trace. Dismiss a waiting signal; it shows "dismissed" within a few seconds.
+4. Restart the app: the signals are still there, and waiting ones expire on time.
+5. If anything looks wrong, send the newest log files from the log folder.
+
+### Limitations
+
+- The strategies are examples. They are not proven to be profitable and must be backtested (Phase 10) before anyone relies on them.
+- Signals are checked every M15 close only for symbols in the watchlist.
+- A changed setting applies from the next closed bar; signals already made keep the settings they were made with (config id).
+
+## Phase 5: Market data & analysis (branch `phase/05-market-analysis`, pull request #15)
 
 Status: pull request #15 into `phase/04-storage`, waiting for review. Updated after four runs on your PC (see below).
 
@@ -201,6 +246,7 @@ Acceptance checklist (spec G3 phase 2):
 - Tick freshness and data checks arrived in Phase 5 (Market page); the connection checklist itself still only checks that history exists and warns when "Max bars in chart" is low.
 - "Start MT5 automatically" and "Start the app with Windows" (spec I5) are not built yet.
 - `--mt5-trade-test` arrives with execution in Phase 8.
+- Signals are signal only until Phase 8; the probability is "unknown" until 30 signals are resolved.
 - FIBO's XAUUSD tick value (0.1 USD) disagrees with its contract size and published point value (1 USD): Phase 7 sizes positions with `order_calc_profit`.
 - Profiles cannot be switched inside a running window; another profile opens in a new window.
 - Health checks, performance metrics, the debug bundle and the full Logs page (trace timeline, time filters, export) are Phase 14 items.
@@ -209,4 +255,5 @@ Acceptance checklist (spec G3 phase 2):
 
 1. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), Phase 4 (#14), then Phase 5 (#15). Each one is retargeted to `main` after the one before it is merged.
 2. Run "Test on your PC" from the Phase 3, 4 and 5 pull requests against your MT5 demo account and report the result.
-3. Phase 6 (strategies and signals, plus the opportunity scanner) after Phase 5 is reviewed.
+3. Run "Test on your PC" from the Phase 6 pull request during a London morning.
+4. Phase 7 (risk management and position sizing with `order_calc_profit`) after Phase 6 is reviewed.
