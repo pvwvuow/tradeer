@@ -74,3 +74,21 @@ def test_market_data_tools_never_trade() -> None:
     texts = sources()
     for name in ("mt5/market_data.py", "engine/market_watch.py"):
         assert not ORDER_CALLS.search(texts[name]), name
+
+
+def test_strategies_are_pure() -> None:
+    """Strategies see only the MarketContext: no MT5, storage, engine, UI, files or threads."""
+    forbidden = re.compile(r"app\.(mt5|storage|engine|ui)\b|(?<![\w.])open\(|threading|sqlite3")
+    offenders = [
+        f"{name}: {found.group(0)}"
+        for name, text in sources().items()
+        if name.startswith("strategies/")
+        for found in forbidden.finditer(text)
+    ]
+    assert offenders == []
+
+
+def test_signal_code_never_trades() -> None:
+    texts = sources()
+    names = ["engine/signal_pipeline.py", "engine/filters.py", "ui/signals_page.py"]
+    assert [name for name in names if ORDER_CALLS.search(texts[name])] == []

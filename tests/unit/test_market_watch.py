@@ -169,3 +169,26 @@ def test_the_thread_starts_and_stops() -> None:
         watcher.start()
         watcher.stop()
         assert watcher.snapshot.state in ("running", "waiting")
+
+
+class RecordingHook:
+    def __init__(self) -> None:
+        self.analysed: list[str] = []
+        self.cycles = 0
+
+    def on_analysis(self, analysis: object, **options: object) -> None:
+        self.analysed.append(getattr(analysis, "symbol", ""))
+        assert options["now"] == START and "clock" in options and "spread" in options
+
+    def on_cycle(self, now: float | None = None) -> None:
+        self.cycles += 1
+
+
+def test_the_signal_hook_runs_after_each_new_analysis() -> None:
+    hook = RecordingHook()
+    with watch(signals=hook) as (watcher, fake, clock, logs):
+        watcher.cycle()
+        assert sorted(hook.analysed) == sorted(SYMBOLS)
+        watcher.cycle()  # no new closed bar: strategies do not run again
+        assert sorted(hook.analysed) == sorted(SYMBOLS)
+        assert hook.cycles == 2
