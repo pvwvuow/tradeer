@@ -7,6 +7,8 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 1: Foundation, merged into `main` through pull request #1 on 2026-10-01.
 - Phase 2: Observability, pull request #10, CI green, waiting for review.
 - Phase 3: MT5 connection, pull request #13, CI green, waiting for review.
+- Phase 4: Storage, pull request #14, CI green, waiting for review.
+- Phase 5: Market data & analysis, pull request #15, CI green, waiting for review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -14,9 +16,54 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 4 Storage (branch `phase/04-storage`)
+## Current phase: 5 Market data & analysis (branch `phase/05-market-analysis`, pull request #15)
 
-Status: built on `phase/04-storage`, pull request into `phase/03-mt5-connection`, waiting for review.
+Status: pull request #15 into `phase/04-storage`, waiting for review.
+
+### What was built
+
+- Closed bars only: `copy_rates_from_pos(symbol, tf, 1, n)` for M5, M15, H1, H4 and D1, cached per symbol and timeframe, with only the new bars read after the first download (`app/mt5/market_data.py`).
+- One cheap MT5 request every 2 s reads each watched symbol's price and newest closed M5 bar. A symbol is analysed again only when a new M5 bar has closed (`app/engine/market_watch.py`, thread `market-analysis`, watched by the watchdog).
+- Broker time: the offset to UTC is measured from fresh ticks, with US or EU summer-time rules written out in code (Windows has no tz database). Everything is stored in UTC; the trading day is the broker day (`app/core/clock.py`). The measured clock is saved per server.
+- Data checks with logging: missing bars, zero-volume bars, spikes over 10x ATR, stale prices, symbols not trading, late bars and broker time jumps. Weekend gaps are normal. Errors skip the evaluation and the card says "data problem".
+- All C3 modules in `app/analysis/` (pure, numpy only): indicators, multi-timeframe trend matrix with a bias of -100 to +100 and reasons, market structure (confirmed swings, HH/HL/LH/LL, BOS and CHoCH, no look-ahead), key levels (swing clusters, previous day and week, session highs and lows, round numbers, distance in ATR), volatility (ATR percentile over 100 days, ADR used today, regime), sessions and the session clock, correlation matrix, currency strength meter, spread monitor, candle patterns (information only) and a plain-language analysis card per symbol.
+- Economic calendar: manual entry, CSV import, and `CalendarExporter.mq5` (full source, an MT5 service) that writes the MT5 calendar to `Common/Files/tradeer_calendar.csv` every 5 minutes in UTC. The app reads the file every 3 minutes when it changed and saves the events in `calendar_events`. High-impact news within an hour means "wait" on the card.
+- The Market page: watchlist (up to 10 symbols, saved per profile), analysis cards, trend matrix, an interactive pyqtgraph chart (timeframe switch, zoom and pan, crosshair, EMA 20/50/200, levels, swings, session shading), correlation, currency strength and the calendar with countdowns.
+- The status bar shows the session clock and the next high-impact news.
+- Phase 4 limitation fixed: history import now converts deal times with the broker's summer-time rules, and imports everything again once when those rules change.
+- The opportunity scanner (ranking by setup state and probability x EV) needs strategies and the probability model, so it arrives with Phase 6.
+
+### Checklist
+
+- ✓ Analysis cards for 3 symbols update on closed bars: `tests/unit/test_market_watch.py` runs the real loop against FakeMT5 through the gateway; the same bar is not analysed twice, and the next closed M5 bar renews all 3 cards.
+- ✓ Indicators match hand-calculated values and a step-by-step Wilder ADX reference.
+- ✓ Market structure never looks ahead: the result for the first k bars equals the full result cut at bar k.
+- ✓ Summer-time dates for the USA and the EU (2005, 2024, 2026), UTC conversion and the broker day are unit-tested.
+- ✓ Data checks, levels, volatility, sessions, correlation, currency strength, spread, patterns, card rules, calendar CSV and store are unit-tested.
+- ✓ Architecture tests: `analysis`, `calendar`, `engine` and `core` never import Qt or MetaTrader5, the analysis is pure, and the market-data code never trades.
+- ✓ In the sandbox: 291 unit tests passed, 3 skipped (the Market page UI tests run in CI).
+- ✓ CI on pull request #15: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows are green, including the Market page UI tests (pyqtgraph 0.14.0 with PySide6 6.10.3); the build job builds the app with the bundled `CalendarExporter.mq5` and runs the frozen `--self-check` and `--crash-test`. The first run found 2 mypy errors in `levels.py`; they were fixed.
+- ✗ `CalendarExporter.mq5` was not compiled here (no MetaEditor). Compile it on your PC (see below).
+- ✗ Not yet checked against a real MT5 account.
+
+### Test on your PC
+
+1. Start the app, connect MT5, switch to the Advanced view and open Market. Within a few seconds 3 cards (EURUSD, GBPUSD, XAUUSD) show a headline. Note the "Updated at the HH:MM M5 close" line; after the next 5-minute close it changes.
+2. Open the Chart tab: switch M5 to D1, drag to pan, use the wheel to zoom and move the mouse for the crosshair.
+3. Open the Calendar tab and click Install MT5 exporter. In MT5 press F4 (MetaEditor), open Services > CalendarExporter.mq5 and press F7 (Compile). Back in MT5, Navigator > Services, right-click CalendarExporter > Add service, then start it. Click Read MT5 calendar now: upcoming events appear with countdowns.
+4. Add a USD high-impact event 30 minutes from now by hand: the EURUSD and XAUUSD cards say "wait" after the next bar.
+5. Check the status bar: the session clock and the next news.
+
+### Limitations
+
+- The analysis card is information only and never a trade signal. Signals arrive in Phase 6.
+- The session clock uses FX hours (Sunday to Friday, New York 17:00). Symbols with their own hours (indices) show "not trading right now" when their prices stop.
+- The broker clock assumes UTC+2/+3 (New York close) until the first fresh price arrives; the card says so.
+- The chart draws the bars kept by the analysis (600 per timeframe); deeper history arrives with backtesting.
+
+## Phase 4: Storage (branch `phase/04-storage`, pull request #14)
+
+Status: pull request #14 into `phase/03-mt5-connection`, CI green, waiting for review.
 
 ### What was built
 
@@ -42,7 +89,7 @@ Status: built on `phase/04-storage`, pull request into `phase/03-mt5-connection`
 - ✗ Not tested with a real Supabase project (see "Test on your PC").
 - ✗ The SQL files have not been run on a real Postgres database.
 - ✗ History import not checked against a real MT5 account.
-- ✗ Server time to UTC uses today's broker offset, so trades from before a daylight-saving change can be one hour off.
+- ✓ (Fixed in Phase 5) Server time to UTC now follows the broker's summer-time rules.
 
 ### Test on your PC
 
@@ -55,7 +102,7 @@ Status: built on `phase/04-storage`, pull request into `phase/03-mt5-connection`
 ### Limitations
 
 - Sync goes one way, from the PC to the cloud. Restoring from the cloud is not built.
-- The daylight-saving limitation above stays until Phase 5.
+- The daylight-saving limitation was fixed in Phase 5.
 - Supabase is reached with httpx, not supabase-py (ADR 30).
 
 ## Phase 3: MT5 connection (branch `phase/03-mt5-connection`, stacked on pull request #10)
@@ -112,7 +159,7 @@ Acceptance checklist (spec G3 phase 2):
 
 - Resolved: the staged `ci/workflows/` folder is gone; `.github/workflows/` is maintained by the CI maintainer agent, so Brain does not need the `workflow` permission.
 - No lock file yet; direct dependencies are pinned exactly.
-- The deal and order history import arrived in Phase 4. Tick freshness checks belong to Phase 5; the checklist only checks that history exists and warns when "Max bars in chart" is low.
+- Tick freshness and data checks arrived in Phase 5 (Market page); the connection checklist itself still only checks that history exists and warns when "Max bars in chart" is low.
 - "Start MT5 automatically" and "Start the app with Windows" (spec I5) are not built yet.
 - `--mt5-trade-test` arrives with execution in Phase 8.
 - Profiles cannot be switched inside a running window; another profile opens in a new window.
@@ -120,7 +167,6 @@ Acceptance checklist (spec G3 phase 2):
 
 ## Next steps
 
-1. Done: the full pipeline is enabled on `main` (pull request #11) and merged into Phase 2; fix anything it reports on this pull request.
-2. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), then Phase 4. Each one is retargeted to `main` after the one before it is merged.
-3. Run "Test on your PC" from the Phase 3 and Phase 4 pull requests against your MT5 demo account and a free Supabase project, and report the result.
-4. Phase 5 from the spec's phase list (docs/SPEC.md, G3), after Phase 4 is reviewed.
+1. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), Phase 4 (#14), then Phase 5 (#15). Each one is retargeted to `main` after the one before it is merged.
+2. Run "Test on your PC" from the Phase 3, 4 and 5 pull requests against your MT5 demo account and report the result.
+3. Phase 6 (strategies and signals, plus the opportunity scanner) after Phase 5 is reviewed.
