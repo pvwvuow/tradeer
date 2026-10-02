@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from app.core.clock import BrokerClock
 from app.mt5.connection import ConnectionStatus
 from app.mt5.diagnostics import estimate_broker_offset
 from app.mt5.errors import MT5Error
@@ -64,6 +65,8 @@ class AccountTracker:
         self._listeners: list[HistoryListener] = []
         self.account_id: str | None = None
         self.last_history: HistoryResult | None = None
+        self.clock_source: Callable[[], BrokerClock | None] | None = None
+        self._guessed = False
 
     @property
     def can_import(self) -> bool:
@@ -115,9 +118,30 @@ class AccountTracker:
             self._notify(error)
             raise
         self.last_history = result
+        with self._lock:
+            self._guessed = result.offset_hours is None
         self._notify(result)
         self._emit("INFO", f"Trade history imported: {result.text()}")
+        if result.offset_hours is None and self._known_clock() is not None:
+            self.on_broker_clock()  # measured while this import ran
         return result
+
+    def on_broker_clock(self) -> None:
+        """The analysis measured the broker clock: import again if the last import had to guess."""
+        with self._lock:
+            again, self._guessed = self._guessed, False
+        if again and self._history is not None:
+            self._emit("INFO", "Broker time is known now: importing the history again")
+            self._background(self.import_in_background)
+
+    def _known_clock(self) -> BrokerClock | None:
+        source = self.clock_source
+        if source is None:
+            return None
+        with contextlib.suppress(Exception):
+            clock = source()
+            return clock if clock is not None and clock.measured else None
+        return None
 
     def _run_import(self) -> HistoryResult:
         if self._history is None:
@@ -125,7 +149,8 @@ class AccountTracker:
         status = self._status()
         if not status.connected or status.account is None:
             raise MT5Error("Not connected to MT5", "Connect to MT5 first, then import.")
-        return self._history.run(status.account, broker_offset(status, self._wall_clock()))
+        offset = broker_offset(status, self._wall_clock())
+        return self._history.run(status.account, offset, self._known_clock())
 
     def import_in_background(self) -> None:
         try:

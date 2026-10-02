@@ -48,7 +48,10 @@ class HistoryResult:
         offset = (
             f"broker time {self.clock_text or f'UTC{self.offset_hours:+g}'}"
             if self.offset_hours is not None
-            else "broker time offset unknown (market closed), times saved as server time"
+            else (
+                "broker time not measured yet (no fresh price), times saved as server time; "
+                "they are corrected by the next import"
+            )
         )
         return (
             f"Read {self.deals:,} deals ({self.new_deals:,} new) and {self.orders:,} orders; "
@@ -143,13 +146,26 @@ class HistoryImporter:
         self._clock = clock
         self._lock = threading.Lock()
 
-    def run(self, account: AccountSnapshot, offset_hours: float | None) -> HistoryResult:
-        """Import new history for `account`. Blocks: call it from a worker thread."""
+    def run(
+        self,
+        account: AccountSnapshot,
+        offset_hours: float | None,
+        known: BrokerClock | None = None,
+    ) -> HistoryResult:
+        """Import new history for `account`. Blocks: call it from a worker thread.
+
+        `offset_hours` comes from a fresh quote; without one, `known` (the clock the analysis
+        measured or saved earlier) is used.
+        """
         with self._lock:
             key = self._store.upsert_account(account)
             state_key = f"history_until:{key}"
             clock_key = f"history_clock:{key}"
-            clock = history_clock(offset_hours, self._clock())
+            if offset_hours is None and known is not None and known.measured:
+                clock = BrokerClock(known.winter_hours, known.scheme, measured=True)
+                offset_hours = clock.offset_at(self._clock())
+            else:
+                clock = history_clock(offset_hours, self._clock())
             rules = f"{clock.scheme.value}:{clock.winter_hours:g}"
             saved = self._store.get_state(state_key)
             if self._store.get_state(clock_key) != rules:

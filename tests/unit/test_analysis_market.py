@@ -5,7 +5,7 @@ import numpy as np
 from app.analysis.correlation import correlation_matrix
 from app.analysis.currency_strength import currency_strength, pair_move
 from app.analysis.patterns import find_patterns
-from app.analysis.spread import spread_status, typical_spread
+from app.analysis.spread import SpreadStatus, spread_status, typical_spread
 from app.analysis.volatility import regime_for, volatility
 from tests.unit.analysis_helpers import bars_from_closes, ohlc_bars, trending
 
@@ -50,14 +50,34 @@ def test_currency_strength_ranks_the_strongest_first() -> None:
     assert {item.currency for item in ranked} == {"EUR", "USD", "JPY"}
 
 
-def test_spread_against_the_typical_spread_of_this_hour() -> None:
+def _with_last_spread(last: int) -> list[int]:
+    return [10] * 47 + [last]
+
+
+def test_spread_compares_the_last_bar_with_the_typical_spread_of_this_hour() -> None:
     bars = bars_from_closes(trending(48, 0.0), spread=10)
     assert typical_spread(bars, 5) == 10.0
-    assert spread_status(12, bars, 5 * 3600).status == "normal"
-    assert spread_status(18, bars, 5 * 3600).status == "wide"
-    wide = spread_status(35, bars, 5 * 3600)
-    assert wide.status == "very wide" and "typical 10" in wide.text()
+    closes = trending(48, 0.0)
+
+    def status(live: float, last: int) -> SpreadStatus:
+        bars = bars_from_closes(closes, spread=_with_last_spread(last))
+        return spread_status(live, bars, 5 * 3600)
+
+    assert status(12, 12).status == "normal"
+    assert status(18, 18).status == "wide"
+    wide = status(40, 35)
+    assert wide.status == "very wide"
+    assert "typical 10" in wide.text() and "40 points now" in wide.text()
     assert spread_status(5, bars_from_closes([1.0], spread=0), 0).status == "unknown"
+
+
+def test_a_live_spread_above_the_bar_minimums_is_not_called_wide() -> None:
+    # Found on a real account: MT5 bars store the MINIMUM spread (3 points here) while the live
+    # spread is 15. The old rule said "very wide" all day; the bars themselves say normal.
+    bars = bars_from_closes(trending(48, 0.0), spread=3)
+    status = spread_status(15, bars, 5 * 3600)
+    assert status.status == "normal"
+    assert status.current_points == 15 and status.bar_points == 3
 
 
 def test_candle_patterns_on_the_last_closed_bar() -> None:

@@ -18,7 +18,7 @@ def bars_from_closes(
     symbol: str = "EURUSD",
     start: int = START,
     wick: float = 0.0005,
-    spread: int = 10,
+    spread: int | Sequence[int] = 10,
 ) -> Bars:
     close = np.asarray(closes, dtype=np.float64)
     open_ = np.r_[close[0], close[:-1]]
@@ -32,7 +32,7 @@ def bars_from_closes(
         low=np.minimum(open_, close) - wick,
         close=close,
         volume=np.full(len(close), 100),
-        spread=np.full(len(close), spread),
+        spread=np.full(len(close), spread) if isinstance(spread, int) else np.asarray(spread),
     )
 
 
