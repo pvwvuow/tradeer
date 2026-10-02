@@ -54,7 +54,8 @@ Qt parts live in `app/ui`: `logs_page.py`, `log_filter.py` (pure), `crash_dialog
 | Module | Role | Imports MetaTrader5 or Qt |
 |---|---|---|
 | `api.py` | `MT5Api` protocol (the subset of the package we use) and copied constants | no |
-| `gateway.py` | `MT5Gateway`: the only thread that touches MT5; queue, futures, timeouts, request log hook | MetaTrader5 (lazy, in `load_mt5()`) |
+| `gateway.py` | `MT5Gateway`: the only thread that sends MT5 calls; queue, futures, timeouts, `busy()`, request log hook | no |
+| `terminal_process.py` | `MT5Process`: the MT5 helper process that runs the package; pipe, call timeout, restart after a hang or crash (ADR 46) | MetaTrader5 (only inside the helper) |
 | `errors.py` | `last_error()` codes and messages mapped to plain-language fixes | no |
 | `models.py` | frozen snapshots: terminal, account, symbol spec, quote | no |
 | `symbols.py` | resolves broker suffixes (`EURUSD` to `EURUSD.m`) | no |
@@ -159,7 +160,7 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 14. **`--crash-test` as an executable acceptance test.** Reason: spec principle A8 says nothing is claimed without a test. The command logs two throwaway secrets, crashes a worker thread on purpose, and checks the report and the log files; `build.ps1` runs it on the frozen exe, and the user can run it on any build.
 15. **Watchdog with heartbeats, a restart callback and a stack dump.** Reason: a freeze is reported once (CRITICAL log plus a report without a dialog) with the stack of the stuck thread, which is what is needed to fix it. The UI thread sends a heartbeat every second from a `QTimer`; workers from Phase 3 register their own restart function.
 16. **Local dates in log file names, UTC in records.** Reason: files are found by the user's calendar day; every record stores UTC time (spec C2 and E3).
-17. **One gateway thread owns every MT5 call** (spec D3). Reason: the `MetaTrader5` package keeps one global connection per process and is not safe to call from several threads. A queue with futures and a timeout on every call means a hung terminal can never block the UI or another worker; the watchdog watches the thread under the name `mt5-gateway` (freeze limit 120 s, because `initialize()` may wait up to 60 s for a terminal to start). Only `gateway.py` imports the package, and an architecture test fails the build if another module does.
+17. **One gateway thread owns every MT5 call** (spec D3). Reason: the `MetaTrader5` package keeps one global connection per process and is not safe to call from several threads. A queue with futures and a timeout on every call means a hung terminal can never block the UI or another worker; the watchdog watches the thread under the name `mt5-gateway` (freeze limit 120 s, because `initialize()` may wait up to 60 s for a terminal to start). Since the first real run the package lives in a helper process (ADR 46): only `terminal_process.py` imports it, and an architecture test fails the build if another module does. The gateway thread is still the only sender.
 18. **`MT5Api` protocol with copied constants.** Reason: the package ships Windows wheels only, so Linux CI cannot import it. The constants the app needs live in `api.py`; a Windows-only test compares them with the real package, and `FakeMT5` implements the same protocol.
 19. **`initialize(path)` first, then `login()`**, instead of one `initialize(path, login, password, server)` call. Reason: the two steps fail for different reasons (terminal or IPC versus credentials), so the checklist can show the correct fix for each. The 60 s login timeout from spec I3 is kept.
 20. **Never retry a failed first connection automatically.** Reason: retrying a wrong password can lock the account at the broker. Automatic reconnection with exponential backoff (2 s to 120 s) only starts after a connection that worked was lost.
@@ -189,6 +190,9 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 43. **The card is rules, never a signal.** The headline follows a fixed pattern (higher-timeframe trend, H1 context and nearest level in ATR, volatility, session, next news, verdict). Verdicts are only wait, watch, no clear direction and data problem, and every card ends with "Information only, not a trade signal."
 44. **Calendar through an MQL5 service.** The Python package cannot read the MQL5 calendar (spec C3). `CalendarExporter.mq5` is a read-only service that writes `Common/Files/tradeer_calendar.csv` (UTF-8, UTC epoch times) through a temporary file and `FileMove`, every 5 minutes. The app installs the source into the terminal's `MQL5/Services`, reads the file when its time stamp or size changed, and stores events with a stable id (time, currency, title), so imports never duplicate. The `.mq5` is bundled with PyInstaller (`--add-data`) and checked by `--self-check`.
 45. **pyqtgraph 0.14.0, without subclassing.** 0.13.7 crashes with Qt 6.10 when experimental options are on; 0.14.0 supports Qt 6.8+. Candles are a `BarGraphItem` plus wick lines (`connect="pairs"`), the x axis counts bars (no weekend gaps) with local-time labels from `setTicks`. No pyqtgraph class is subclassed, because pyqtgraph has no type information and mypy strict refuses subclasses of `Any`.
+46. **MetaTrader5 runs in a helper process** (`app/mt5/terminal_process.py`). Reason: the first log from a real PC showed the window frozen for 12 s and 16 s exactly while MT5 answered slowly (connecting, the first history download), and the watchdog thread stopped too, so the package keeps Python's global lock while it waits. The helper is started with `multiprocessing` (spawn; `freeze_support()` in `run_app.py` and `app/__main__.py`). Each call is one message through a pipe; named results come back as named tuples with the same fields, numpy arrays unchanged. The waiting gateway thread beats the watchdog every second. A call longer than 120 s, or a helper that dies, restarts the helper; the heartbeat then sees the terminal as lost and logs in again. A heartbeat that waits behind another long request is postponed, not counted as a lost connection. `--self-check` starts the helper once, so the frozen build proves it works.
+47. **The spread check compares bar spread with bar spread.** Reason: MT5 stores the minimum spread of each bar (MQL5 book, `MqlRates.spread`). Comparing the live spread with those minimums made GBPUSD and XAUUSD "very wide" ("wait") all day on a real account. The status now uses the last closed M5 bar's spread against the median bar spread of the same UTC hour; the live spread is still shown.
+48. **Repeated Qt messages are collapsed** (`app/observability/repeats.py`). Reason: one harmless Qt font warning was 95% of a real log. A message is logged once, then counted for 60 s and logged again with the count; fatal messages always pass. The cause, font sizes in px (Qt then reports point size -1), was removed: the stylesheet uses pt.
 
 ## Logging rules for new code
 
@@ -201,7 +205,7 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 
 ## MT5 rules for new code
 
-- Call MT5 only through the gateway: `gateway.call(...)` for one function, `gateway.run(name, fn)` for several calls that belong together. Never import `MetaTrader5` outside `app/mt5/gateway.py`.
+- Call MT5 only through the gateway: `gateway.call(...)` for one function, `gateway.run(name, fn)` for several calls that belong together. Never import `MetaTrader5` outside `app/mt5/terminal_process.py`; results cross a process boundary, so read them by field name.
 - Never block the UI thread on a gateway future; deliver results with a queued Qt signal.
 - Check `None` results and read `last_error()` through `app/mt5/errors.py`, which maps it to a plain-language fix.
 - Use `resolve_symbol()` for every symbol a user types (brokers add suffixes), then `symbol_select()` it.
@@ -222,3 +226,4 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 - Evaluate on closed bars only. Never use bar position 0.
 - Store UTC. Convert server time only with `BrokerClock`.
 - A new data problem is a `quality.py` issue with a test, never a silent skip.
+- MT5 bar spreads are minimum spreads: compare them only with other bar spreads.
