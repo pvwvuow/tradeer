@@ -7,12 +7,15 @@ app/
   __version__.py   single source of the version (bumped by release-please)
   main.py          composition root: CLI, self-check, crash test, GUI start
   cli.py           argument parsing, --self-check build verification, report output
-  core/            per-user paths, UI preferences, account profiles, credentials, instance lock
+  analysis/        pure market analysis on closed bars: indicators, trend, structure, levels, card (phase 5)
+  calendar/        economic calendar: events, CSV import, store, MQL5 exporter (phase 5)
+  core/            per-user paths, UI preferences, account profiles, credentials, instance lock, broker clock, watchlist
   domain/          pure logic: operating modes, validated defaults, trade history (no Qt, MT5 or I/O)
-  mt5/             the MT5 gateway thread, connection checklist, diagnostics, smoke test (phase 3)
+  engine/          background workers: the market-analysis thread (phase 5)
+  mt5/             the MT5 gateway thread, connection checklist, diagnostics, smoke test, market data
   observability/   logging, trace context, masking, crash reports, watchdog (phase 2)
   storage/         SQLite database, migrations, outbox, cloud sync, history tracker (phase 4)
-  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, crash dialog
+  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, Market, chart
 supabase/          SQL to run in the Supabase SQL Editor: schema, RLS, views, cleanup (phase 4)
 tests/
   fakes/           FakeMT5 and FakeSupabase for tests only (never shipped)
@@ -62,6 +65,7 @@ Qt parts live in `app/ui`: `logs_page.py`, `log_filter.py` (pure), `crash_dialog
 | `terminals.py` | finds `terminal64.exe` installs and the servers each terminal knows | no |
 | `privileges.py` | whether the app runs elevated (same-privilege hint) | no |
 | `request_log.py` | writes every gateway request to the `mt5` log category | loguru |
+| `market_data.py` | closed bars per symbol and timeframe, incremental, in one gateway request per poll (phase 5) | no |
 
 `app/core` adds `profiles.py` (`profiles/<name>/account.json`, no password), `credentials.py` (Windows Credential Manager through `keyring`) and `single_instance.py` (an OS file lock per profile). The Qt part is `app/ui/connection_page.py`.
 
@@ -174,9 +178,17 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 33. **Supabase Auth with email, RLS on every table.** The user signs in with email and password using the anon (publishable) key only; service_role and secret keys are refused. Every remote table has `user_id default auth.uid()` and RLS policies `user_id = auth.uid()`, and the views use `security_invoker = true`. The password is never saved. The refresh token is kept in Windows Credential Manager under `<profile>/supabase-refresh-token`, and `cloud.json` holds only the URL, the anon key, the email and the on/off switch. Result: one project can hold several users safely, and the anon key alone cannot read anybody's rows.
 34. **Sync states and backoff.** The `cloud-sync` thread uploads batches of up to 200 rows, grouped by table, parent tables first. Failures back off from 2 s, doubling up to 300 s, and a paused project waits at least 600 s. A 401 refreshes the session once and then signs out. A refused batch is split in half until only the bad rows are parked. A missing table or column (404, PGRST204, PGRST205) means "setup needed" and keeps the rows. States: disabled, signed_out, up_to_date, syncing, offline, paused, setup_needed, error. Result: a paused free project or a bad network never loses rows, and the status bar always says what is going on.
 35. **Warnings and audit entries go to the database.** A `LogStore` sink on the log pipeline writes entries of level WARNING and higher to `app_logs` and audit entries to `audit_log`, so they reach the outbox too. The sink never logs about itself. Result: problems on the user's PC show up in the cloud, while DEBUG and INFO stay in the local log files.
-36. **Trades are rebuilt from deals.** History import reads deals and orders through the gateway: from 2000-01-01 the first time, then from 3 days before the newest stored deal. Trades are rebuilt from all deals of every position the import touched, in pure code (`app/domain/history.py`). Magic 0 means manual, the bot's magic numbers mean bot, and anything else is external. Server times are turned into UTC with the broker offset measured from fresh quotes, or 0 if it is unknown. Result: importing again is safe and gives the same trades. Known limitation: the offset is today's, so trades from the other side of a daylight-saving change can be one hour off until Phase 5.
+36. **Trades are rebuilt from deals.** History import reads deals and orders through the gateway: from 2000-01-01 the first time, then from 3 days before the newest stored deal. Trades are rebuilt from all deals of every position the import touched, in pure code (`app/domain/history.py`). Magic 0 means manual, the bot's magic numbers mean bot, and anything else is external. Server times are turned into UTC with the broker offset measured from fresh quotes, or 0 if it is unknown. Result: importing again is safe and gives the same trades. Since Phase 5 the conversion uses the broker clock with its summer-time rules (ADR 41), and a change of those rules imports everything again once.
 37. **Backups and cleanup.** The database is backed up once a day with the SQLite backup API, and the last 7 backups are kept. Local cleanup removes `app_logs` and `mt5_requests` rows after 90 days and `health_checks` and `performance_metrics` rows after 30 days. It never deletes trades or signals and never deletes a row that still waits in the outbox. `supabase/cleanup.sql` has an optional cleanup function for the cloud. Result: the database stays small without losing anything that matters.
 38. **One schema definition, checked three ways.** `app/storage/schema.py` lists every table and the kind of every column. `m0001_initial` and `supabase/schema.sql` were written from it, and a test checks that SQLite, `schema.py` and `supabase/schema.sql` agree. Result: the local and cloud schemas cannot drift apart silently.
+
+39. **Analysis is pure numpy, no pandas yet.** `app/analysis/` works on `Bars` (numpy columns, UTC and server times) and never touches MT5, files, threads or the database; an architecture test enforces it. Reason: the same function must give the same result in live, paper and backtest (spec D3.4), and numpy alone is enough for these indicators. pandas arrives when a phase needs it (ML features).
+40. **Closed bars only, one poll request.** Bars come from `copy_rates_from_pos(..., 1, n)`, so the forming bar is never used. Every 2 s a single gateway request reads each symbol's tick and newest closed M5 bar; only a new closed M5 bar triggers a full update and analysis of that symbol. Correlation and currency strength follow every new H1 bar. Result: about one MT5 request per 2 s while nothing closes, and evaluation strictly on closed candles (spec D3.3).
+41. **Own summer-time rules for broker time.** Windows has no tz database, so `app/core/clock.py` writes out the US rules (since 2007, and 1987-2006) and the EU rules. The offset is measured from fresh ticks in half-hour steps and changes only after two agreeing ticks. UTC+2/+3 on US dates is taken as New York close time, UTC+1/+2 on EU dates as Central European time, anything else as fixed. A change outside a summer-time date is logged as a broker time jump and blocks the analysis for an hour. Bars keep server time in the cache and are converted on every read, so a corrected clock fixes the whole cache. The trading day is the broker day.
+42. **Bad data skips the evaluation.** `app/analysis/quality.py` returns errors (no bars, broken bars, a spike over 10x ATR on the newest 3 bars, a stale price while bars move, a recent time jump) and warnings (missing bars, zero volume, late bars, a symbol not trading, an assumed clock). Weekend and holiday gaps are measured against FX opening hours and never reported. Any error makes the card "data problem" and is logged.
+43. **The card is rules, never a signal.** The headline follows a fixed pattern (higher-timeframe trend, H1 context and nearest level in ATR, volatility, session, next news, verdict). Verdicts are only wait, watch, no clear direction and data problem, and every card ends with "Information only, not a trade signal."
+44. **Calendar through an MQL5 service.** The Python package cannot read the MQL5 calendar (spec C3). `CalendarExporter.mq5` is a read-only service that writes `Common/Files/tradeer_calendar.csv` (UTF-8, UTC epoch times) through a temporary file and `FileMove`, every 5 minutes. The app installs the source into the terminal's `MQL5/Services`, reads the file when its time stamp or size changed, and stores events with a stable id (time, currency, title), so imports never duplicate. The `.mq5` is bundled with PyInstaller (`--add-data`) and checked by `--self-check`.
+45. **pyqtgraph 0.14.0, without subclassing.** 0.13.7 crashes with Qt 6.10 when experimental options are on; 0.14.0 supports Qt 6.8+. Candles are a `BarGraphItem` plus wick lines (`connect="pairs"`), the x axis counts bars (no weekend gaps) with local-time labels from `setTicks`. No pyqtgraph class is subclassed, because pyqtgraph has no type information and mypy strict refuses subclasses of `Any`.
 
 ## Logging rules for new code
 
@@ -203,3 +215,10 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 - Never delete trades or signals. Cleanup skips rows that still wait in the outbox.
 - Only the anon key may reach the app. Never add code that accepts a service key.
 - `app/storage` and `app/domain` never import Qt or MetaTrader5.
+
+## Analysis rules
+
+- `app/analysis`, `app/calendar`, `app/engine` and `app/core` never import Qt or MetaTrader5; `app/analysis` never imports `app.mt5`, `app.storage` or `app.engine`, and does no I/O.
+- Evaluate on closed bars only. Never use bar position 0.
+- Store UTC. Convert server time only with `BrokerClock`.
+- A new data problem is a `quality.py` issue with a test, never a silent skip.
