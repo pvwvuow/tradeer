@@ -18,7 +18,7 @@ Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer,
 
 ## Current phase: 5 Market data & analysis (branch `phase/05-market-analysis`, pull request #15)
 
-Status: pull request #15 into `phase/04-storage`, waiting for review. Updated after the first run on a real PC (see below).
+Status: pull request #15 into `phase/04-storage`, waiting for review. Updated after three runs on your PC (see below).
 
 ### Found in your first real run (fixed)
 
@@ -37,6 +37,12 @@ Confirmed on your PC: no font warnings at all, GBPUSD now says "watch" with a re
 2. **The first XAUUSD card judged bars two hours old.** MT5 answered with the bars it had on disk and caught up two seconds later; that first card said "wait, spread 3.2x typical". Fix: while a symbol's bars trail the live price, its card says LOADING and waits (ADR 49).
 3. **A card did not follow a new evaluation of the same bar** (for example news added by hand). Fix: cards follow every new analysis.
 4. **The log could not show that the MT5 helper runs.** Fix: one log line per start, with the pid and the MetaTrader5 version.
+
+### Third real run (2 October 2026, 11:52 UTC)
+
+Confirmed on your PC: the MT5 helper process starts (pid 29836, MetaTrader5 5.0.6090), the app connected in 0.06 s, the history import found nothing new (the trade times stay in UTC), and all 3 cards appeared 2 s after the start, each with a reason. With debug logging on, every MT5 call took under 20 ms. Not shown yet: the Diagnostics bar counts, the LOADING card (MT5 had every bar ready) and a slow MT5 call. Found and fixed:
+
+1. **MT5 call times showed only 0, 15 or 16 ms.** Before Python 3.13, `time.monotonic()` on Windows ticks in 15.6 ms steps. Fix: the gateway measures with `time.perf_counter()` and logs tenths of a millisecond.
 
 ### What was built
 
@@ -59,13 +65,14 @@ Confirmed on your PC: no font warnings at all, GBPUSD now says "watch" with a re
 - ✓ Summer-time dates for the USA and the EU (2005, 2024, 2026), UTC conversion and the broker day are unit-tested.
 - ✓ Data checks, levels, volatility, sessions, correlation, currency strength, spread, patterns, card rules, calendar CSV and store are unit-tested.
 - ✓ Architecture tests: `analysis`, `calendar`, `engine` and `core` never import Qt or MetaTrader5, the analysis is pure, and the market-data code never trades.
-- ✓ In the sandbox: 311 unit tests passed, 3 skipped (the Market page UI tests run in CI). New tests run the helper process for real: package shapes, a hanging call that restarts it, a crash, a missing package, the gateway beating while it waits, a postponed heartbeat, the repeat filter, the spread rule from your account and the history import running again. Second-run tests: a refused 100,000-bar request, bars that trail the price, the 60 s warning, a closed market, the LOADING card and a card that follows a calendar change.
-- ✓ CI on pull request #15: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows are green, including the Market page UI tests (pyqtgraph 0.14.0 with PySide6 6.10.3); the build job builds the app with the bundled `CalendarExporter.mq5` and runs the frozen `--self-check` and `--crash-test`. The first run found 2 mypy errors in `levels.py`; they were fixed. The fixes from your log (helper process, spread rule, font, history clock) are green on all three jobs too.
+- ✓ In the sandbox: 312 unit tests passed, 3 skipped (the Market page UI tests run in CI). New tests run the helper process for real: package shapes, a hanging call that restarts it, a crash, a missing package, the gateway beating while it waits, a postponed heartbeat, the repeat filter, the spread rule from your account and the history import running again. Second-run tests: a refused 100,000-bar request, bars that trail the price, the 60 s warning, a closed market, the LOADING card and a card that follows a calendar change. Third-run test: a 3 ms call is no longer reported as 0 ms.
+- ✓ CI on pull request #15: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows are green, including the Market page UI tests (pyqtgraph 0.14.0 with PySide6 6.10.3); the build job builds the app with the bundled `CalendarExporter.mq5` and runs the frozen `--self-check` and `--crash-test`. The first run found 2 mypy errors in `levels.py`; they were fixed. The fixes from your first and second log are green on all three jobs too.
 - ✗ `CalendarExporter.mq5` was not compiled here (no MetaEditor). Compile it on your PC (see below).
 - ✓ First run against a real MT5 demo account (your log): connection, history, broker time and 3 cards worked; the 4 problems above are fixed.
 - ✓ Second run on your PC: no font warnings, GBPUSD no longer stuck on "wait", trade times in UTC.
-- ✗ The freeze fix is not proven on your PC yet (no slow MT5 call happened in the second run).
-- ✗ The four second-run fixes are not checked on your PC yet. Please run the test below again and send the new log.
+- ✓ Third run on your PC: the helper process starts (pid in the log), every MT5 call took under 20 ms, the history import stayed in UTC, and 3 cards with reasons appeared 2 s after the start.
+- ✗ The freeze fix is not proven on your PC yet (no slow MT5 call happened in the second or third run). Step 6 below causes one.
+- ✗ Not checked on your PC yet: the Diagnostics bar counts (step 7) and the LOADING card (step 6).
 
 ### Test on your PC
 
@@ -74,7 +81,7 @@ Confirmed on your PC: no font warnings at all, GBPUSD now says "watch" with a re
 3. Open the Calendar tab and click Install MT5 exporter. In MT5 press F4 (MetaEditor), open Services > CalendarExporter.mq5 and press F7 (Compile). Back in MT5, Navigator > Services, right-click CalendarExporter > Add service, then start it. Click Read MT5 calendar now: upcoming events appear with countdowns.
 4. Add a USD high-impact event 30 minutes from now by hand: the EURUSD and XAUUSD cards say "wait" after the next bar.
 5. Check the status bar: the session clock and the next news.
-6. While the cards load for the first time, move the window and switch pages: it must not freeze. In Task Manager you see a second `MT5TradingWorkstation` process (the MT5 helper). Then send `all.log` again: no repeated font warnings, each card line ends with "Why: ...", and there is a line "MT5 helper process started: pid ...".
+6. Close MT5 completely (File > Exit), then start the app: it starts MT5 itself, so the first calls are slow. While the cards load for the first time, move the window and switch pages: it must not freeze. Cards may show LOADING for a few seconds. In Task Manager you see a second `MT5TradingWorkstation` process (the MT5 helper). Then send `all.log` again: lines like "MT5 ... was slow" are fine, but there must be no "Worker ... did not respond".
 7. Press Run diagnostics on the Connection page and copy the report: the History lines show real bar counts (for example "50,000+ bars"), not 0. If a card shows LOADING, it should turn into a normal card within a few seconds.
 
 ### Limitations
@@ -138,7 +145,7 @@ Built:
 - Account details shown: broker, server, login, name, `DEMO` / `REAL` / `CONTEST`, currency, balance, equity, leverage, hedging or netting, stop-out level and mode, terminal build.
 - Investor password: detected from `account_info().trade_allowed`, switches to Analysis-only (status bar badge `ANALYSIS-ONLY`).
 - Account profiles: `profiles/<name>/account.json` without the password; the password lives in Windows Credential Manager (`keyring`) and is registered with the log masker. One instance per profile (OS file lock); another profile opens in a new window. Auto-connect on start when a profile is saved.
-- Terminal discovery: program folders, `%APPDATA%\MetaQuotes\Terminal\*`, registry, running processes; a server dropdown from the terminal's known servers; Browse as fallback.
+- Terminal discovery: program folders, `%APPDATA%\\MetaQuotes\\Terminal\\*`, registry, running processes; a server dropdown from the terminal's known servers; Browse as fallback.
 - Connection service: heartbeat every 5 s, status bar text, reconnect with exponential backoff (2 s to 120 s) after a lost connection, a CRITICAL alert if positions are open while disconnected. A failed first connect is never retried on its own.
 - Connection page (Advanced view, System, Settings): profile, terminal and account cards, Connect, Re-check, Disconnect, live bid/ask of 3 symbols every second, Run diagnostics, Copy report.
 - Connection Diagnostics (spec I4): every checklist step plus ping, bars per symbol and timeframe, symbol specs, broker time offset and permission flags; the report never contains the password.
