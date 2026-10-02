@@ -268,7 +268,7 @@ class MarketWatch:
         if not analysis.quality.ok:
             self._log("WARNING", f"{name}: evaluation skipped, {analysis.quality.text()}")
         else:
-            self._log("INFO", analysis.card.headline)
+            self._log("INFO", f"{analysis.card.headline}. Why: {analysis.card.reason}.")
         return analysis
 
     def _update_cross_market(self, now: float) -> None:
