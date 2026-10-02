@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from app.domain.probability import ProbabilityEstimate, baseline
 from app.domain.signals import Direction, OrderType, Signal, SignalRecord, SignalState, signal_id
 from app.engine.filters import FilterSettings
-from app.engine.signal_pipeline import SignalPipeline
+from app.engine.signal_pipeline import RiskHook, SignalPipeline
 from app.observability.decision_trace import REQUIRED_STAGES, DecisionTrace
 from app.storage.signal_store import SignalRepository
 from app.strategies.base import Strategy
@@ -62,6 +62,7 @@ def pipeline(
     store: SignalRepository | None = None,
     logs: list[tuple[str, str]] | None = None,
     settings: FilterSettings | None = None,
+    risk: RiskHook | None = None,
 ) -> SignalPipeline:
     strategies: list[Strategy] = [create_strategy(name) for name in names]
     found = logs if logs is not None else []
@@ -69,6 +70,7 @@ def pipeline(
         lambda: strategies,
         lambda: settings or FilterSettings(),
         store=store,
+        risk=risk,
         log=lambda level, message: found.append((level, message)),
         utc_now=lambda: float(MORNING),
     )

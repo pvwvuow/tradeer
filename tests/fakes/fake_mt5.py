@@ -83,6 +83,9 @@ class FakeMT5:
     ping_us: int = 35_000
     server_offset_hours: float = 3.0
     open_positions: int = 0
+    positions: list[SimpleNamespace] = field(default_factory=list)
+    # Fail order_calc_profit / order_calc_margin (return None), as MT5 does for a bad symbol.
+    calc_fails: bool = False
     deals: list[SimpleNamespace] = field(default_factory=list)
     orders: list[SimpleNamespace] = field(default_factory=list)
     rates_count: int = 5000
@@ -262,7 +265,67 @@ class FakeMT5:
 
     def positions_total(self) -> int:
         self.calls.append("positions_total")
-        return self.open_positions if self._ready() else 0
+        if not self._ready():
+            return 0
+        return len(self.positions) if self.positions else self.open_positions
+
+    def positions_get(self, *args: Any, **kwargs: Any) -> tuple[SimpleNamespace, ...] | None:
+        self.calls.append("positions_get")
+        if not self._ready():
+            return None
+        return tuple(self.positions)
+
+    # Calculations (never trade) ----------------------------------------------------------
+    def order_calc_profit(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price_open: float,
+        price_close: float,
+    ) -> float | None:
+        """Profit in the account currency, converted with the fake's own quotes like MT5."""
+        self.calls.append("order_calc_profit")
+        found = self._find(symbol)
+        if found is None or not self._ready() or self.calc_fails:
+            return self._fail_none(api.RES_E_INVALID_PARAMS, "Invalid params")
+        sign = 1.0 if action == api.ORDER_TYPE_BUY else -1.0
+        profit = (price_close - price_open) * sign * found.contract_size * volume
+        return round(profit * self._to_account(symbol[3:6]), 2)
+
+    def order_calc_margin(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price_open: float,
+    ) -> float | None:
+        self.calls.append("order_calc_margin")
+        found = self._find(symbol)
+        account = self._account
+        if found is None or account is None or not self._ready() or self.calc_fails:
+            return self._fail_none(api.RES_E_INVALID_PARAMS, "Invalid params")
+        base = symbol[:3]
+        notional = found.contract_size * volume
+        if base == account.currency:
+            return round(notional / account.leverage, 2)
+        value = notional * price_open * self._to_account(symbol[3:6])
+        return round(value / account.leverage, 2)
+
+    def _to_account(self, currency: str) -> float:
+        """Rate from `currency` to the account currency, through USD with the fake's bids."""
+        account = self._account.currency if self._account is not None else "USD"
+        return self._to_usd(currency) / self._to_usd(account)
+
+    def _to_usd(self, currency: str) -> float:
+        if currency == "USD":
+            return 1.0
+        for symbol in self.symbols:
+            if symbol.name.startswith(currency + "USD"):
+                return symbol.bid
+            if symbol.name.startswith("USD" + currency):
+                return 1.0 / symbol.bid
+        raise AssertionError(f"FakeMT5 has no USD rate for {currency}")
 
     # Anything that trades must never be called by read-only code ------------------------
     def order_send(self, request: Any) -> None:
@@ -276,7 +339,7 @@ class FakeMT5:
     # Helpers ----------------------------------------------------------------------------
     @property
     def trading_calls(self) -> list[str]:
-        return [name for name in self.calls if name.startswith("order_")]
+        return [name for name in self.calls if name in ("order_send", "order_check")]
 
     def _ready(self) -> bool:
         return self._initialized and self.terminal_running
@@ -482,4 +545,30 @@ def make_deal(ticket: int, symbol: str = "EURUSD.m", profit: float = 12.5) -> Si
         profit=profit,
         symbol=symbol,
         comment="",
+    )
+
+
+def make_position(
+    ticket: int,
+    symbol: str = "EURUSD.m",
+    *,
+    long: bool = True,
+    volume: float = 0.1,
+    price_open: float = 1.08,
+    sl: float = 0.0,
+    profit: float = 0.0,
+    magic: int = 0,
+) -> SimpleNamespace:
+    """One open position as `positions_get` returns it."""
+    return SimpleNamespace(
+        ticket=ticket,
+        symbol=symbol,
+        type=api.POSITION_TYPE_BUY if long else api.POSITION_TYPE_SELL,
+        volume=volume,
+        price_open=price_open,
+        sl=sl,
+        tp=0.0,
+        profit=profit,
+        magic=magic,
+        identifier=ticket,
     )
