@@ -60,13 +60,13 @@ Qt parts live in `app/ui`: `logs_page.py`, `log_filter.py` (pure), `crash_dialog
 | `models.py` | frozen snapshots: terminal, account, symbol spec, quote | no |
 | `symbols.py` | resolves broker suffixes (`EURUSD` to `EURUSD.m`) | no |
 | `checklist.py` | the Test-connection checklist (spec C1, I3) | no |
-| `diagnostics.py` | Connection Diagnostics and the copyable, masked text report (spec I4) | no |
+| `diagnostics.py` | Connection Diagnostics and the copyable, masked text report (spec I4); asks for fewer bars when MT5 refuses a big request (ADR 50) | no |
 | `smoke_test.py` | `--mt5-smoke-test`: read-only account, quotes, bars and deals | no |
 | `connection.py` | `ConnectionService`: state, heartbeat, reconnect with backoff, open-position alert | no |
 | `terminals.py` | finds `terminal64.exe` installs and the servers each terminal knows | no |
 | `privileges.py` | whether the app runs elevated (same-privilege hint) | no |
 | `request_log.py` | writes every gateway request to the `mt5` log category | loguru |
-| `market_data.py` | closed bars per symbol and timeframe, incremental, in one gateway request per poll (phase 5) | no |
+| `market_data.py` | closed bars per symbol and timeframe, incremental, in one gateway request per poll; the poll tells when MT5 is still loading a symbol's bars (phase 5, ADR 49) | no |
 
 `app/core` adds `profiles.py` (`profiles/<name>/account.json`, no password), `credentials.py` (Windows Credential Manager through `keyring`) and `single_instance.py` (an OS file lock per profile). The Qt part is `app/ui/connection_page.py`.
 
@@ -193,6 +193,8 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 46. **MetaTrader5 runs in a helper process** (`app/mt5/terminal_process.py`). Reason: the first log from a real PC showed the window frozen for 12 s and 16 s exactly while MT5 answered slowly (connecting, the first history download), and the watchdog thread stopped too, so the package keeps Python's global lock while it waits. The helper is started with `multiprocessing` (spawn; `freeze_support()` in `run_app.py` and `app/__main__.py`). Each call is one message through a pipe; named results come back as named tuples with the same fields, numpy arrays unchanged. The waiting gateway thread beats the watchdog every second. A call longer than 120 s, or a helper that dies, restarts the helper; the heartbeat then sees the terminal as lost and logs in again. A heartbeat that waits behind another long request is postponed, not counted as a lost connection. `--self-check` starts the helper once, so the frozen build proves it works.
 47. **The spread check compares bar spread with bar spread.** Reason: MT5 stores the minimum spread of each bar (MQL5 book, `MqlRates.spread`). Comparing the live spread with those minimums made GBPUSD and XAUUSD "very wide" ("wait") all day on a real account. The status now uses the last closed M5 bar's spread against the median bar spread of the same UTC hour; the live spread is still shown.
 48. **Repeated Qt messages are collapsed** (`app/observability/repeats.py`). Reason: one harmless Qt font warning was 95% of a real log. A message is logged once, then counted for 60 s and logged again with the count; fatal messages always pass. The cause, font sizes in px (Qt then reports point size -1), was removed: the stylesheet uses pt.
+49. **The card waits while MT5 still loads a symbol's bars.** Reason: in the second real run MT5 answered the first XAUUSD request with bars two hours old (the same levels as the run before) and caught up two seconds later; the first card said "wait, spread 3.2x typical" from those old bars. A live price always sits in the forming M5 bar, so the poll reads positions 1 and 0 of M5 (`copy_rates_from_pos(symbol, M5, 0, 2)`): the newest closed bar as before, and the open time of the forming bar, only to compare it with the price; its prices are never used. When the forming bar is more than two bars older than the price while the FX market is open, the symbol is not analysed: the card says LOADING, the log says why, and after 60 s a warning asks the user to open a chart of the symbol in MT5. The symbol is analysed as soon as the bars arrive. A card now also follows every new analysis, not only a new bar time, so a calendar change shows at once.
+50. **The history probe asks again with fewer bars.** Reason: a real terminal (Max bars in chart 100,000) refused `copy_rates_from_pos(..., 0, 100000)` for every symbol and timeframe, so Diagnostics showed 0 bars. The probe asks for at most Max bars in chart, then 50,000, 10,000 and 1,000 bars, reports `N+` when it got all it asked for, and shows the MT5 error when nothing comes back. The MT5 helper also reports every start, so the log shows its pid and whether it restarted.
 
 ## Logging rules for new code
 
@@ -207,6 +209,7 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 
 - Call MT5 only through the gateway: `gateway.call(...)` for one function, `gateway.run(name, fn)` for several calls that belong together. Never import `MetaTrader5` outside `app/mt5/terminal_process.py`; results cross a process boundary, so read them by field name.
 - Never block the UI thread on a gateway future; deliver results with a queued Qt signal.
+- Never judge bars that trail the live price: check `PollResult.loading()` first (ADR 49). MT5 may refuse very large bar requests; ask again with fewer bars (ADR 50).
 - Check `None` results and read `last_error()` through `app/mt5/errors.py`, which maps it to a plain-language fix.
 - Use `resolve_symbol()` for every symbol a user types (brokers add suffixes), then `symbol_select()` it.
 - Test with `FakeMT5` from `tests/fakes/fake_mt5.py`; it never ships with the app.
