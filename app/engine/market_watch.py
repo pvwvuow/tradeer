@@ -5,6 +5,9 @@ bar. Only when a new M5 bar has closed is a symbol analysed again: its bars on e
 timeframe are brought up to date and `analyze_symbol` builds a fresh card. Correlation and
 currency strength follow every new H1 bar. Listeners receive a `MarketSnapshot` (plain data,
 safe to hand to the UI thread).
+
+While MT5 still loads a symbol's history (its bars trail the live price), the card waits
+instead of judging old bars (ADR 49).
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from dataclasses import dataclass, field
 from app.analysis.bars import ANALYSIS_TIMEFRAMES
 from app.analysis.correlation import CorrelationMatrix, correlation_matrix
 from app.analysis.currency_strength import STRENGTH_PAIRS, CurrencyStrength, currency_strength
+from app.analysis.sessions import market_open
 from app.analysis.symbol import SymbolAnalysis, Tick, analyze_symbol
 from app.calendar.models import CalendarEvent
 from app.core.clock import HOUR, BrokerClock
@@ -28,6 +32,7 @@ from app.mt5.models import Quote, SymbolSpec
 
 POLL_SECONDS = 2.0
 CALENDAR_SECONDS = 180.0
+HISTORY_PATIENCE_SECONDS = 60.0
 THREAD_NAME = "market-analysis"
 
 Log = Callable[[str, str], None]
@@ -46,6 +51,7 @@ class MarketSnapshot:
     events: tuple[CalendarEvent, ...] = ()
     clock_text: str = ""
     updated_at: float = 0.0
+    loading: Mapping[str, str] = field(default_factory=dict)  # symbol -> why its card waits
 
 
 def _quiet(level: str, message: str) -> None:
@@ -92,6 +98,9 @@ class MarketWatch:
         self._specs: dict[str, SymbolSpec] = {}
         self._pairs: dict[str, str] = {}
         self._last_bar: dict[str, int | None] = {}
+        self._loading: dict[str, tuple[float, str]] = {}  # broker symbol -> (since, why)
+        self._pending: set[str] = set()  # broker symbols to analyse on the next cycle
+        self._warned: set[str] = set()
         self._analyses: dict[str, SymbolAnalysis] = {}
         self._quotes: dict[str, Quote] = {}
         self._missing: tuple[str, ...] = ()
@@ -166,6 +175,7 @@ class MarketWatch:
         self._specs.clear()
         self._pairs.clear()
         self._last_bar.clear()
+        self._forget_loading()
         self._strength_hour = None
         if self._load_clock is not None:
             saved = self._load_clock()
@@ -175,7 +185,13 @@ class MarketWatch:
 
     def _reset(self) -> None:
         self._analyses.clear()
+        self._forget_loading()
         self._watched = ()
+
+    def _forget_loading(self) -> None:
+        self._loading.clear()
+        self._pending.clear()
+        self._warned.clear()
 
     def _update_calendar(self, now: float) -> None:
         if self._refresh_calendar is None:
@@ -205,6 +221,7 @@ class MarketWatch:
                 self._specs[broker] = spec
         self._analyses = {name: item for name, item in self._analyses.items() if name in wanted}
         self._last_bar.clear()
+        self._forget_loading()
         self._strength_hour = None
         self._log("INFO", f"Watching {', '.join(f'{k}={v}' for k, v in self._mapping.items())}")
 
@@ -219,14 +236,46 @@ class MarketWatch:
         for quote in self._quotes.values():
             self._observe(quote, now)
         events = list(self._events(now))
+        is_open = market_open(now)  # a closed market has no new bars to wait for
         for name, broker in self._mapping.items():
             newest = poll.newest_m5.get(broker)
-            if not force and name in self._analyses and newest == self._last_bar.get(broker):
+            why = poll.loading(broker) if is_open else None
+            if self._history_loading(name, broker, why, now):
                 continue
+            due = force or name not in self._analyses or broker in self._pending
+            if not due and newest == self._last_bar.get(broker):
+                continue
+            self._pending.discard(broker)
             for timeframe in ANALYSIS_TIMEFRAMES:
                 self.market.update(broker, timeframe)
             self._last_bar[broker] = newest
             self._analyses[name] = self._analyze(name, broker, now, events)
+
+    def _history_loading(self, name: str, broker: str, why: str | None, now: float) -> bool:
+        """True while MT5 still loads this symbol's bars: the card waits for them."""
+        since = self._loading.get(broker)
+        if why is None:
+            if since is not None:
+                del self._loading[broker]
+                self._warned.discard(broker)
+                waited = now - since[0]
+                self._log("INFO", f"{name}: MT5 has loaded the newest bars after {waited:.0f} s")
+            return False
+        self._pending.add(broker)  # analyse as soon as the bars arrive
+        if since is None:
+            self._loading[broker] = (now, why)
+            self._log("INFO", f"{name}: waiting for MT5 to load the newest bars ({why})")
+            return True
+        self._loading[broker] = (since[0], why)
+        if now - since[0] >= HISTORY_PATIENCE_SECONDS and broker not in self._warned:
+            self._warned.add(broker)
+            self._log(
+                "WARNING",
+                f"{name}: MT5 has not loaded the newest bars after "
+                f"{HISTORY_PATIENCE_SECONDS:.0f} s ({why}). Open a {broker} chart in MT5 so it "
+                "loads the history.",
+            )
+        return True
 
     def _observe(self, quote: Quote, now: float) -> None:
         clock = self.market.clock
@@ -292,6 +341,9 @@ class MarketWatch:
         text = f"Analysing {count} symbol{'s' if count != 1 else ''} on closed bars"
         if skipped:
             text += f"; data problem on {', '.join(skipped)}"
+        loading = self._loading_names()
+        if loading:
+            text += f"; MT5 is loading bars for {', '.join(loading)}"
         if self._missing:
             text += f"; not at this broker: {', '.join(self._missing)}"
         return text
@@ -310,7 +362,12 @@ class MarketWatch:
             events=events,
             clock_text=self.market.clock.text(),
             updated_at=now,
+            loading={names.get(broker, broker): why for broker, (_, why) in self._loading.items()},
         )
+
+    def _loading_names(self) -> list[str]:
+        names = {broker: name for name, broker in self._mapping.items()}
+        return [names.get(broker, broker) for broker in self._loading]
 
     def _publish(self, snapshot: MarketSnapshot) -> MarketSnapshot:
         with self._lock:

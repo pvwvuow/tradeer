@@ -76,6 +76,51 @@ def test_three_cards_update_on_each_closed_bar() -> None:
         assert sum(1 for level, _ in logs if level == "INFO" and "\u2192" in _) == 6
 
 
+def test_a_card_waits_while_mt5_still_loads_the_history() -> None:
+    reason = "the newest M5 bar is 2 h older than the price"
+    with watch() as (watcher, fake, clock, logs):
+        # Right after a connect a real terminal answered with XAUUSD bars two hours old.
+        fake.stale_history["XAUUSD.m"] = 2 * 3600
+        first = watcher.cycle()
+        assert sorted(first.analyses) == ["EURUSD", "GBPUSD"]
+        assert first.loading == {"XAUUSD": reason}
+        assert "MT5 is loading bars for XAUUSD" in first.message
+        assert ("INFO", f"XAUUSD: waiting for MT5 to load the newest bars ({reason})") in logs
+        clock.now += 2
+        fake.stale_history.clear()
+        second = watcher.cycle()
+        assert sorted(second.analyses) == sorted(SYMBOLS) and second.loading == {}
+        assert ("INFO", "XAUUSD: MT5 has loaded the newest bars after 2 s") in logs
+        gold, euro = second.analyses["XAUUSD"], second.analyses["EURUSD"]
+        assert gold.bar_time == euro.bar_time  # judged on the fresh bars
+        assert euro is first.analyses["EURUSD"]  # the other cards were not redone
+
+
+def test_a_warning_says_what_to_do_when_the_history_does_not_arrive() -> None:
+    with watch(["XAUUSD"]) as (watcher, fake, clock, logs):
+        fake.stale_history["XAUUSD.m"] = 3 * 3600
+        watcher.cycle()
+        clock.now += 59
+        watcher.cycle()
+        assert not [message for level, message in logs if level == "WARNING"]
+        clock.now += 2
+        watcher.cycle()
+        snapshot = watcher.cycle()
+        warnings = [message for level, message in logs if level == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert "XAUUSD: MT5 has not loaded the newest bars after 60 s" in warnings[0]
+        assert "Open a XAUUSD.m chart in MT5" in warnings[0]
+        assert snapshot.analyses == {} and "XAUUSD" in snapshot.loading
+
+
+def test_a_closed_market_has_no_new_bars_to_wait_for() -> None:
+    with watch(["EURUSD"]) as (watcher, fake, clock, logs):
+        clock.now = datetime(2026, 10, 3, 12, 0, tzinfo=UTC).timestamp()  # a Saturday
+        fake.stale_history["EURUSD.m"] = 3 * 3600
+        snapshot = watcher.cycle()
+        assert snapshot.loading == {} and "EURUSD" in snapshot.analyses
+
+
 def test_cross_market_views_and_the_broker_clock() -> None:
     saved: list[BrokerClock] = []
     with watch(save_clock=saved.append) as (watcher, fake, clock, logs):
