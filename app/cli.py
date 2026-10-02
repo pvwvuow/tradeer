@@ -17,6 +17,7 @@ from app.__version__ import __version__
 Importer = Callable[[str], ModuleType]
 
 REQUIRED_PYTHON = (3, 11)
+HELPER_CHECK_SECONDS = 60.0
 
 # (module to import, attribute that holds its version or None)
 REQUIRED_MODULES: tuple[tuple[str, str | None], ...] = (
@@ -125,16 +126,35 @@ def _check_file(name: str, path: Path) -> CheckResult:
     return CheckResult(name, False, f"{path} is missing from the build")
 
 
+def check_mt5_helper() -> CheckResult:
+    """Start the MT5 helper process once, exactly as the app does (ADR 46)."""
+    from app.mt5.errors import MT5Error
+    from app.mt5.terminal_process import MT5Process
+
+    name = "MT5 helper process"
+    process = MT5Process(start_timeout=HELPER_CHECK_SECONDS)
+    try:
+        pid, version = process.ping()
+    except MT5Error as error:
+        detail = f"{error.title}: {error.detail}" if error.detail else error.title
+        return CheckResult(name, False, detail)
+    finally:
+        process.close()
+    return CheckResult(name, True, f"started as process {pid}, MetaTrader5 {version} loaded")
+
+
 def run_self_check(
     importer: Importer = importlib.import_module,
     pointer_bits: int | None = None,
     python_version: tuple[int, int] | None = None,
+    extra_checks: Sequence[Callable[[], CheckResult]] = (),
 ) -> tuple[bool, str]:
     bits = struct.calcsize("P") * 8 if pointer_bits is None else pointer_bits
     version = python_version or (sys.version_info[0], sys.version_info[1])
     results = [_check_python(bits, version)]
     results.extend(_check_module(importer, name, attr) for name, attr in REQUIRED_MODULES)
     results.extend(_check_file(name, path) for name, path in bundled_files())
+    results.extend(check() for check in extra_checks)
     ok = all(result.ok for result in results)
     lines = [f"MT5 Trading Workstation {__version__} self-check on {platform.platform()}"]
     lines.extend(result.line() for result in results)
@@ -151,6 +171,6 @@ def emit_report(report: str, report_file: Path | None) -> None:
 
 
 def self_check_main(options: CliOptions) -> int:
-    ok, report = run_self_check()
+    ok, report = run_self_check(extra_checks=(check_mt5_helper,))
     emit_report(report, options.report_file)
     return 0 if ok else 1

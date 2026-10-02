@@ -20,7 +20,7 @@ from enum import StrEnum
 
 from app.mt5.api import MT5Api
 from app.mt5.checklist import ChecklistReport, ConnectRequest, run_checklist
-from app.mt5.errors import MT5Error, error_from_last
+from app.mt5.errors import MT5Error, MT5Timeout, error_from_last
 from app.mt5.gateway import MT5Gateway
 from app.mt5.models import AccountSnapshot, TerminalSnapshot
 
@@ -131,6 +131,7 @@ class ConnectionService:
         log: EventLog | None = None,
         backoff: Backoff | None = None,
         heartbeat_seconds: float = HEARTBEAT_SECONDS,
+        heartbeat_timeout: float = HEARTBEAT_TIMEOUT_SECONDS,
         clock: Callable[[], float] = time.monotonic,
         elevated: bool | None = None,
         path_exists: Callable[[str], bool] = os.path.exists,
@@ -141,6 +142,7 @@ class ConnectionService:
         self._log = log
         self._backoff = backoff or Backoff()
         self._heartbeat_seconds = heartbeat_seconds
+        self._heartbeat_timeout = heartbeat_timeout
         self._clock = clock
         self._elevated = elevated
         self._lock = threading.RLock()
@@ -269,8 +271,20 @@ class ConnectionService:
             beat = self.gateway.run(
                 "heartbeat",
                 _read_heartbeat,
-                timeout=HEARTBEAT_TIMEOUT_SECONDS,
+                timeout=self._heartbeat_timeout,
             )
+        except MT5Timeout as error:
+            busy = self.gateway.busy()
+            if busy is not None and busy.name != "heartbeat":
+                # Another long request holds the gateway (a first history download can take
+                # 15 s). MT5 is working; the helper process ends a call that hangs (ADR 46).
+                self._emit(
+                    "DEBUG",
+                    f"Heartbeat postponed: MT5 is busy with {busy.name} ({busy.seconds:.0f} s)",
+                )
+                return
+            self._lost(status, now, error.title)
+            return
         except MT5Error as error:
             self._lost(status, now, error.title)
             return
