@@ -178,8 +178,13 @@ def _start_connection(
 
     watchdog = observability.watchdog
     watchdog.register("mt5-gateway", GATEWAY_FREEZE_SECONDS)
+
+    def helper_started(start: int, pid: int | None, version: str) -> None:
+        how = "started" if start == 1 else f"restarted ({start} starts)"
+        log_event("INFO", f"MT5 helper process {how}: pid {pid}, MetaTrader5 {version}")
+
     gateway = MT5Gateway(
-        load_mt5,
+        partial(load_mt5, on_start=helper_started),
         on_request=log_request,
         heartbeat=partial(watchdog.beat, "mt5-gateway"),
     )

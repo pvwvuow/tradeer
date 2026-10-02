@@ -121,13 +121,22 @@ def test_a_hanging_call_restarts_the_helper_and_the_next_call_works() -> None:
 
 
 def test_a_crashed_helper_is_reported_and_replaced() -> None:
-    process = MT5Process(PACKAGE, wait_slice=0.05)
+    started: list[tuple[int, int | None, str]] = []
+    process = MT5Process(
+        PACKAGE,
+        wait_slice=0.05,
+        on_start=lambda start, pid, version: started.append((start, pid, version)),
+    )
     try:
         first = process.process_id()
         with pytest.raises(MT5Error) as caught:
             process.crash()
         assert "stopped" in str(caught.value)
-        assert process.process_id() != first
+        second = process.process_id()
+        assert second != first
+        # Every start is reported, so the log shows that the helper runs and when it restarted.
+        assert [(start, pid) for start, pid, _ in started] == [(1, first), (2, second)]
+        assert all(version for _, _, version in started)
     finally:
         process.close()
 
