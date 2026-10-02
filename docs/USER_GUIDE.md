@@ -1,8 +1,8 @@
 # User guide
 
-## What works today (Phase 6)
+## What works today (Phase 7)
 
-Phase 6 adds strategies and signals: the Signals page and the Strategies page (see below). Signals are suggestions only; nothing is sent to MT5 yet. Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
+Phase 7 adds risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Signals are suggestions only; nothing is sent to MT5 yet. Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
 
 - **Simple view** (default): a calm Home screen in plain language. It says you are in practice mode and whether the app is connected to MetaTrader 5. The "Stop trading now" button is always visible; it becomes active once trading exists.
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
@@ -108,10 +108,11 @@ Advanced view > Market. Everything here is information only and never a trade si
 
 ## Signals page
 
-Advanced view > Signals. A signal is a trade idea from a strategy. Nothing is sent to MT5: risk sizing arrives in Phase 7 and orders in Phase 8, so **Approve** is off.
+Advanced view > Signals. A signal is a trade idea from a strategy. Nothing is sent to MT5: orders arrive in Phase 8, so **Approve** is off.
 
 - **Feed**: every signal, also the filtered-out ones with the reason. Pick "Waiting for approval", "Filtered out" or "Expired or dismissed" to narrow it.
 - **Decision trace**: select a signal to see every step: the closed bar, each strategy rule with its value and limit, the features, the probability, the EV, each filter (✓ passed, ✗ failed, · not applied), risk and the decision.
+- **Lot and Risk**: the lot size and the money the trade would lose at its stop loss (commission included), for signals within every risk limit. A signal that breaks a limit says "rejected by risk" and which limit.
 - **Probability**: "unknown" until the strategy has 30 resolved signals; the app never shows a made-up number.
 - **Dismiss**: rejects a waiting signal. Waiting signals also expire by themselves (trend pullback after 2 bars, London breakout at 11:00 London time).
 - **Scanner**: symbols ranked by setup (ready before forming), then by probability x EV, or by rules passed while no probability exists.
@@ -123,6 +124,19 @@ Advanced view > Strategies. Both strategies are **examples with exact rules, not
 - Tick **On** to let a strategy make signals, change its settings (limits are checked), then click **Save strategy settings**. Changes apply from the next closed bar and are written to the audit log.
 - **Signal filters**: minimum probability and EV, cooldown and pause after losses, spread limits, sessions, rollover, Friday close, Monday open and the news blackout.
 - Settings are saved per profile in `strategies.json`.
+
+## Risk page
+
+Advanced view > Risk. The limits are enforced by the app on every signal; this page shows them and lets you change them.
+
+- **Status**: "Trading allowed", or why new entries are stopped. Below it, in plain words, how much one new trade can lose at most.
+- **Limit usage**: daily loss, drawdown, open risk, open trades, trades today and margin level, each with its allowed value.
+- **Currency exposure**: your net risk per currency over all open positions (manual ones too, unless you turn that off). Long EURUSD and long GBPUSD are both short USD, so a third USD-short trade can be blocked.
+- **Risk events**: limits hit, trades blocked, stops and re-enables.
+- **Profile**: pick Conservative (0.25% per trade), Normal (0.5%) or Prop-firm (0.5%, 4% daily loss, 8% static drawdown), click **Use this profile**, then **Save risk settings**. You can change any value; the profile then shows as Custom. No value can go above the safety caps (for example 1% per trade).
+- **Stop new entries**: no new signal passes until you re-enable. The full kill switch (closing positions) arrives with orders in Phase 8.
+- **Re-enable trading**: needed after the drawdown limit or a stop; type ENABLE to confirm. The drawdown then counts from your current equity. A daily-loss stop ends by itself at the next trading day.
+- Lots are calculated with MetaTrader 5's own profit calculator, so gold, JPY pairs and non-USD accounts are sized correctly.
 
 ## Trade history
 

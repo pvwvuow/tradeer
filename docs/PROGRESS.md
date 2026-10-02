@@ -9,7 +9,8 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 3: MT5 connection, pull request #13, CI green, waiting for review.
 - Phase 4: Storage, pull request #14, CI green, waiting for review.
 - Phase 5: Market data & analysis, pull request #15, CI green, waiting for review.
-- Phase 6: Strategies & signals, stacked on Phase 5, in review.
+- Phase 6: Strategies & signals, pull request #16, CI green, waiting for review.
+- Phase 7: Risk, stacked on Phase 6, in review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -17,7 +18,49 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 6 Strategies & signals (branch `phase/06-strategies-signals`, pull request into `phase/05-market-analysis`)
+## Current phase: 7 Risk (branch `phase/07-risk`, pull request into `phase/06-strategies-signals`)
+
+Status: built and tested against the FakeMT5; not yet run on your PC. Still signal only: the risk manager decides which signals wait for approval, and nothing is sent to MT5.
+
+### What was built
+
+- **Position sizing** (`app/domain/sizing.py`, spec C6): lot = capital (equity or balance) x risk% / (loss per lot at the SL + expected commission per lot), rounded down to the volume step and clamped to the maximum. If even the minimum lot risks more than allowed, the trade is rejected. The loss per lot comes from MT5's `order_calc_profit` (`app/mt5/risk_reads.py`), so JPY, gold and EUR accounts are converted by MT5 itself; the tick value is never used (ADR 60). Every line of the calculation goes into the decision trace and the `risk` log.
+- **Commission**: estimated from your imported deals of the symbol (all commissions / lots opened); without history, the "commission per lot" setting (0 by default).
+- **Limits** (`app/risk/limits.py`): trading stopped, daily loss (realized + floating vs start-of-day equity), drawdown (trailing from the equity high, or static), open trades total / per symbol / per strategy, trades today, total open risk, currency exposure, the broker's stops level, and the margin level after the trade (`order_calc_margin`). Manual trades and other EAs count when "count manual trades" is on (default); the bot never touches them.
+- **Currency exposure** (`app/risk/exposure.py`): each position is long its base and short its quote currency, weighted by the money it risks (long EURUSD + long GBPUSD = 2x short USD).
+- **Persisted limit state** (`app/risk/limits_state.py`): trading day, start-of-day equity, equity high, stop state; saved per account in the local database and loaded after a restart. A daily-loss stop ends with the next trading day; a drawdown stop and a manual stop stay until you type ENABLE. A damaged saved state stops trading instead of resetting it. Deposits and withdrawals move the drawdown basis, so they are not counted as profit or loss.
+- **Risk manager** (`app/risk/risk_manager.py`): runs in the analysis thread, reads account, positions and today's deals in one gateway call, refreshes the usage every 30 s, records `risk_events` (daily_limit, dd_limit, exposure_block, margin_block, kill_switch, re_enabled).
+- **Pipeline**: the risk step replaced the Phase 6 placeholder. A signal that breaks a limit is `RISK_REJECTED` with the reason; one within every limit waits for approval with its lot and risk money (shown in the Signals feed and saved with the signal).
+- **Profiles** (`app/risk/settings.py`, `risk.json`): Conservative (0.25%), Normal (0.5%, the spec defaults), Prop-firm (0.5%, 4% daily, 8% static drawdown). Hard caps: at most 1% per trade, the risk per trade never above the total open risk.
+- **Magic numbers** per strategy (`app/strategies/registry.py`): trend pullback 26070001, London breakout 26070002.
+- **Risk page**: status, plain-language risk ("each new trade can lose about X"), limit usage, currency exposure, risk events, profile picker, the settings form, Stop new entries, Re-enable trading (typed ENABLE). Every change in the audit log.
+
+### Checklist
+
+- ✓ Sizing tests pass for all symbol types: EURUSD, USDJPY, XAUUSD (with FIBO's wrong tick value), a EUR account, min-lot rejection, commission, rounding down, max lot (`tests/unit/test_sizing.py`)
+- ✓ Limits survive a restart: a hit daily limit still blocks after a new risk manager loads the state (`test_a_hit_daily_limit_survives_a_restart`), and a damaged state stops trading
+- ✓ Limits, exposure, margin, stops level, daily rollover, drawdown stop and re-enable (unit tests)
+- ✓ Pipeline: passing signals are sized and saved with their lot; breaking a limit gives `RISK_REJECTED` with a full trace (unit tests)
+- ✓ Profiles and hard caps (unit tests); Risk page (UI test runs in CI)
+- ✓ Architecture tests: risk math is pure, risk code never sends or checks orders, sizing never reads the tick value
+- ✗ Not yet run on your PC with live FIBO data
+- ✗ `order_check`, the full kill switch (close bot positions, cancel orders) and the approval re-check arrive with orders in Phase 8; "Stop new entries" only stops new signals today
+
+### Test on your PC
+
+1. Start the app, connect, open Advanced > Risk: the status says "Trading allowed", the usage table shows your daily loss, drawdown, open risk and margin level, and "Each new trade can lose about X" matches 0.5% of your equity.
+2. Open a small manual trade with a stop loss in MT5: within 30 s Open trades and Open risk include it, and Currency exposure shows its currencies.
+3. Wait for a signal (or a London morning): its trace shows "loss per lot at SL", "lot size" with the full calculation and every limit. For XAUUSD the loss per lot must match MT5's own profit calculator, not the tick value.
+4. Click Stop new entries, restart the app: the page still says "New entries stopped". Click Re-enable trading and type ENABLE.
+5. If anything looks wrong, send the newest files from `logs/risk/` and `logs/all.log`.
+
+### Limitations
+
+- The start-of-day equity is exact only when the app ran through the broker's midnight; otherwise it is estimated from the balance (marked "estimated"), which can only count more loss, never less.
+- A position without a stop loss counts with its current loss as its risk.
+- The commission estimate needs imported deals of the symbol; set "commission per lot" for a raw-spread account without history.
+
+## Phase 6: Strategies & signals (branch `phase/06-strategies-signals`, pull request #16)
 
 Status: built and tested on synthetic markets; not yet run on your PC. Signal only: nothing is sent to MT5.
 
@@ -45,7 +88,7 @@ Status: built and tested on synthetic markets; not yet run on your PC. Signal on
 - ✓ Signals and Strategies pages (UI tests run in CI)
 - ✗ Not yet run on your PC with live FIBO data
 - ✗ Probability stays "unknown" until 30 signals are resolved, which needs trades (Phase 8); the probability and EV filters are recorded as "not applied" until then
-- ✗ Risk sizing (Phase 7) and order execution (Phase 8) are not built; Approve stays off
+- ✗ Order execution (Phase 8) is not built; Approve stays off (risk sizing arrived in Phase 7)
 
 ### Test on your PC
 
@@ -247,7 +290,7 @@ Acceptance checklist (spec G3 phase 2):
 - "Start MT5 automatically" and "Start the app with Windows" (spec I5) are not built yet.
 - `--mt5-trade-test` arrives with execution in Phase 8.
 - Signals are signal only until Phase 8; the probability is "unknown" until 30 signals are resolved.
-- FIBO's XAUUSD tick value (0.1 USD) disagrees with its contract size and published point value (1 USD): Phase 7 sizes positions with `order_calc_profit`.
+- FIBO's XAUUSD tick value (0.1 USD) disagrees with its contract size and published point value (1 USD): Phase 7 sizes positions with `order_calc_profit` and never reads the tick value (ADR 60).
 - Profiles cannot be switched inside a running window; another profile opens in a new window.
 - Health checks, performance metrics, the debug bundle and the full Logs page (trace timeline, time filters, export) are Phase 14 items.
 
@@ -255,5 +298,5 @@ Acceptance checklist (spec G3 phase 2):
 
 1. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), Phase 4 (#14), then Phase 5 (#15). Each one is retargeted to `main` after the one before it is merged.
 2. Run "Test on your PC" from the Phase 3, 4 and 5 pull requests against your MT5 demo account and report the result.
-3. Run "Test on your PC" from the Phase 6 pull request during a London morning.
-4. Phase 7 (risk management and position sizing with `order_calc_profit`) after Phase 6 is reviewed.
+3. Run "Test on your PC" from the Phase 6 pull request during a London morning, and from the Phase 7 pull request (Risk page).
+4. Phase 8 (execution: orders with server-side SL, retcode policy, position management, the full kill switch) after Phase 7 is reviewed.
