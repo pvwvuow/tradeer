@@ -76,3 +76,11 @@ def test_self_check_main_writes_the_report_file() -> None:
 def test_real_self_check_passes_on_windows() -> None:
     options = parse_args(["--self-check"])
     assert self_check_main(options) == 0
+
+
+def test_self_check_needs_pyqtgraph_and_the_calendar_exporter() -> None:
+    ok, report = run_self_check(_fake_importer(set()), pointer_bits=64, python_version=(3, 11))
+    assert "[OK] pyqtgraph: version 9.9.9" in report
+    assert "[OK] calendar exporter: CalendarExporter.mq5 included" in report
+    missing = run_self_check(_fake_importer({"pyqtgraph"}), pointer_bits=64, python_version=(3, 11))
+    assert not missing[0]

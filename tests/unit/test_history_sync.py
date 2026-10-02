@@ -126,3 +126,39 @@ def test_read_history_raises_a_clear_error_when_mt5_fails() -> None:
         fake.terminal_running = False
         fake._error = (api.RES_E_INTERNAL_FAIL_TIMEOUT, "IPC timeout")
         read_history(fake, HISTORY_START, int(NOW))
+
+
+def test_winter_deals_use_the_winter_offset_of_a_new_york_close_broker() -> None:
+    fake = connected_fake()
+    # 2024-01-10 12:00 server time = 10:00 UTC at UTC+2 (US winter).
+    fake.deals = make_closed_trade(300, opened=1_704_888_000, closed=1_704_891_600, profit=5.0)
+    account = AccountSnapshot.from_mt5(fake.account_info())
+    with temporary_store() as store:
+        importer, gateway = importer_for(fake, store)
+        try:
+            result = importer.run(account, 3.0)  # measured in September: US summer time
+        finally:
+            gateway.stop()
+        key = account_id(account.server, account.login)
+        trade = store.get("trades", trade_id(key, 300))
+        assert trade is not None
+        assert trade["open_time"] == "2024-01-10T10:00:00.000Z"
+        assert "US summer time" in result.text()
+
+
+def test_new_time_rules_import_everything_again_once() -> None:
+    fake = connected_fake()
+    account = AccountSnapshot.from_mt5(fake.account_info())
+    with temporary_store() as store:
+        importer, gateway = importer_for(fake, store)
+        try:
+            importer.run(account, 0.0)
+            same_rules = importer.run(account, 0.0)
+            new_rules = importer.run(account, 3.0)
+            again = importer.run(account, 3.0)
+        finally:
+            gateway.stop()
+        # Normal imports re-read the last 3 days only; new rules re-read everything since 2000.
+        assert same_rules.deals == again.deals == 4
+        assert new_rules.deals == 5
+        assert new_rules.changed_trades == 2
