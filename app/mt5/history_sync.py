@@ -4,6 +4,11 @@ Runs after every connection and when the user presses "Import now". The first im
 everything since 2000; later imports re-read the last 3 days (brokers can book deals late).
 Deals are saved by ticket and trades are rebuilt from all deals of each touched position, with
 ids derived from the account and position, so importing twice never creates a duplicate.
+
+Deal times are broker server time. They are converted to UTC with the broker clock, which
+knows the broker's daylight-saving rules (New York close brokers are UTC+2 in winter and
+UTC+3 in summer). When the clock rules change, everything is imported again once so that
+older trades get the right UTC times too.
 """
 
 from __future__ import annotations
@@ -14,7 +19,8 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any
 
-from app.domain.history import Deal, Order, summarize_positions
+from app.core.clock import BrokerClock, DstScheme, guess_scheme
+from app.domain.history import Deal, Order, server_time_to_utc, summarize_positions
 from app.mt5 import api
 from app.mt5.api import MT5Api
 from app.mt5.errors import error_from_last
@@ -36,10 +42,11 @@ class HistoryResult:
     trades: int
     changed_trades: int
     offset_hours: float | None
+    clock_text: str = ""
 
     def text(self) -> str:
         offset = (
-            f"broker time UTC{self.offset_hours:+g}"
+            f"broker time {self.clock_text or f'UTC{self.offset_hours:+g}'}"
             if self.offset_hours is not None
             else "broker time offset unknown (market closed), times saved as server time"
         )
@@ -106,6 +113,14 @@ def _records(mt5: MT5Api, result: Any) -> tuple[Any, ...]:
     return tuple(result)
 
 
+def history_clock(offset_hours: float | None, utc_now: float) -> BrokerClock:
+    """The clock for deal times: the measured offset with its likely summer-time rules."""
+    if offset_hours is None:
+        return BrokerClock(0.0, DstScheme.FIXED, measured=True)
+    scheme, winter = guess_scheme(offset_hours, utc_now)
+    return BrokerClock(winter, scheme, measured=True)
+
+
 def read_history(mt5: MT5Api, date_from: int, date_to: int) -> tuple[list[Deal], list[Order]]:
     """Runs in the gateway thread. Read-only: never an order function."""
     deals = _records(mt5, mt5.history_deals_get(date_from, date_to))
@@ -133,7 +148,12 @@ class HistoryImporter:
         with self._lock:
             key = self._store.upsert_account(account)
             state_key = f"history_until:{key}"
+            clock_key = f"history_clock:{key}"
+            clock = history_clock(offset_hours, self._clock())
+            rules = f"{clock.scheme.value}:{clock.winter_hours:g}"
             saved = self._store.get_state(state_key)
+            if self._store.get_state(clock_key) != rules:
+                saved = None  # new time rules: rebuild every trade once
             since = max(HISTORY_START, int(saved) - OVERLAP_SECONDS) if saved else HISTORY_START
             until = int(self._clock()) + AHEAD_SECONDS
             deals, orders = self._gateway.run(
@@ -149,12 +169,13 @@ class HistoryImporter:
             changed = self._store.upsert_trades(
                 key,
                 summaries,
-                offset_hours=offset_hours or 0.0,
+                to_utc=lambda server: server_time_to_utc(clock.to_utc(server), 0.0),
                 bot_magics=self._bot_magics,
             )
             newest = max((deal.time for deal in deals), default=None)
             if newest is not None:
                 self._store.set_state(state_key, str(max(newest, int(saved or 0))))
+            self._store.set_state(clock_key, rules)
             return HistoryResult(
                 deals=len(deals),
                 new_deals=new_deals,
@@ -162,4 +183,5 @@ class HistoryImporter:
                 trades=len(summaries),
                 changed_trades=changed,
                 offset_hours=offset_hours,
+                clock_text=clock.text() if offset_hours is not None else "",
             )

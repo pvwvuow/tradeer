@@ -16,7 +16,6 @@ from app.domain.history import (
     Deal,
     Order,
     PositionSummary,
-    server_time_to_utc,
     trade_source,
 )
 from app.mt5.models import AccountSnapshot
@@ -264,14 +263,17 @@ class Store:
         account: str,
         summaries: Sequence[PositionSummary],
         *,
-        offset_hours: float,
+        to_utc: Callable[[int], str],
         bot_magics: Collection[int] = (),
     ) -> int:
-        """Save rebuilt trades. Returns how many were new or changed."""
+        """Save rebuilt trades. Returns how many were new or changed.
+
+        `to_utc` turns a broker server time into UTC text (it knows the summer-time rules).
+        """
         changed = 0
         with self.db.transaction() as connection:
             for summary in summaries:
-                row = _trade_row(account, summary, offset_hours, bot_magics)
+                row = _trade_row(account, summary, to_utc, bot_magics)
                 changed += self.upsert_in(connection, "trades", row)
         return changed
 
@@ -308,7 +310,7 @@ def _deal_from_row(row: Mapping[str, Any]) -> Deal:
 def _trade_row(
     account: str,
     summary: PositionSummary,
-    offset_hours: float,
+    to_utc: Callable[[int], str],
     bot_magics: Collection[int],
 ) -> dict[str, Any]:
     close_time = summary.close_time
@@ -324,8 +326,8 @@ def _trade_row(
         "direction": summary.direction,
         "volume": summary.volume,
         "open_price": summary.open_price,
-        "open_time": server_time_to_utc(summary.open_time, offset_hours),
-        "close_time": server_time_to_utc(close_time, offset_hours) if close_time else None,
+        "open_time": to_utc(summary.open_time),
+        "close_time": to_utc(close_time) if close_time else None,
         "close_price": summary.close_price,
         "profit": summary.profit,
         "commission": summary.commission,
