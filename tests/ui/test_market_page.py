@@ -14,7 +14,7 @@ from app.calendar.store import CalendarStore
 from app.core.clock import BrokerClock
 from app.core.ui_prefs import UiPrefs
 from app.core.watchlist import load_watchlist
-from app.engine.market_watch import MarketWatch
+from app.engine.market_watch import MarketSnapshot, MarketWatch
 from app.mt5.gateway import MT5Gateway
 from app.mt5.market_data import MarketData
 from app.storage.migrate import migrate
@@ -76,6 +76,33 @@ def test_three_cards_fill_from_a_snapshot(qtbot: QtBot, context: MarketContext) 
     page.chart.show_sessions.setChecked(False)
     assert "closed bars" in page.chart.info.text()
     assert page.next_news_text(START).startswith("Next news: USD CPI m/m in 1h 30m")
+
+
+def test_cards_show_loading_and_follow_a_new_evaluation_of_the_same_bar(
+    qtbot: QtBot,
+    context: MarketContext,
+) -> None:
+    page = MarketPage(context)
+    qtbot.addWidget(page)
+    why = "the newest M5 bar is 2 h older than the price"
+    page.show_snapshot(MarketSnapshot("running", "Analysing", loading={"XAUUSD": why}))
+    gold = page.cards["XAUUSD"]
+    assert gold.verdict.text() == "LOADING"
+    assert gold.headline.text() == f"MT5 is still loading the newest bars ({why}). The card waits."
+    first = context.watch.cycle()
+    page.show_snapshot(first)
+    euro = page.cards["EURUSD"]
+    assert euro.analysis is first.analyses["EURUSD"] and euro.verdict.text() != "WAIT"
+    assert gold.verdict.text() != "LOADING"
+    # News within the hour: the same bar is judged again, and the card follows at once.
+    assert context.calendar is not None
+    context.calendar.save([CalendarEvent(int(START) + 1200, "USD", Impact.HIGH, "NFP")])
+    context.watch.refresh()
+    again = context.watch.cycle()
+    page.show_snapshot(again)
+    assert again.analyses["EURUSD"] is not first.analyses["EURUSD"]
+    assert euro.analysis is again.analyses["EURUSD"]
+    assert euro.verdict.text() == "WAIT"
 
 
 def test_the_watchlist_is_saved_and_the_cards_follow(qtbot: QtBot, context: MarketContext) -> None:

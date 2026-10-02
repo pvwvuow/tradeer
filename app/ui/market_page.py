@@ -2,7 +2,8 @@
 currency strength and the economic calendar.
 
 The analysis runs in its own thread (`MarketWatch`); snapshots arrive here through a queued
-Qt signal, so this page never waits for MT5. Cards change only when a bar has closed.
+Qt signal, so this page never waits for MT5. A card changes when its symbol is evaluated
+again (a closed bar, a calendar change) and says so while MT5 still loads its bars.
 """
 
 from __future__ import annotations
@@ -124,11 +125,11 @@ class SymbolCard(QFrame):
         layout.addWidget(self.headline)
         layout.addWidget(self.details)
         layout.addWidget(self.updated)
-        self.bar_time = 0
+        self.analysis: SymbolAnalysis | None = None
 
     def show_analysis(self, analysis: SymbolAnalysis) -> None:
         card = analysis.card
-        self.bar_time = analysis.bar_time
+        self.analysis = analysis
         arrow = ARROWS[analysis.trend.direction]
         self.title.setText(f"{analysis.symbol}  {arrow} {card.bias:+.0f}")
         self.verdict.setText(card.verdict.value.upper())
@@ -136,6 +137,11 @@ class SymbolCard(QFrame):
         self.details.setText("\n".join([*card.lines, NOT_A_SIGNAL]))
         closed = datetime.fromtimestamp(analysis.bar_time + 300).strftime("%H:%M")
         self.updated.setText(f"Updated at the {closed} M5 close \u00b7 {analysis.broker_symbol}")
+
+    def show_loading(self, why: str) -> None:
+        """MT5 still loads this symbol's history: say so instead of judging old bars."""
+        self.verdict.setText("LOADING")
+        self.headline.setText(f"MT5 is still loading the newest bars ({why}). The card waits.")
 
 
 class MarketPage(QWidget):
@@ -255,10 +261,14 @@ class MarketPage(QWidget):
         self.last_snapshot = snapshot
         clock = f" Broker time: {snapshot.clock_text}." if snapshot.clock_text else ""
         self.status.setText(f"{snapshot.message}.{clock}")
-        for name, analysis in snapshot.analyses.items():
-            card = self.cards.get(name)
-            if card is not None and card.bar_time != analysis.bar_time:
-                card.show_analysis(analysis)
+        for name, card in self.cards.items():
+            analysis = snapshot.analyses.get(name)
+            if analysis is not None:
+                # A new object means a new evaluation, also of the same bar (calendar change).
+                if card.analysis is not analysis:
+                    card.show_analysis(analysis)
+            elif name in snapshot.loading:
+                card.show_loading(snapshot.loading[name])
         changed = previous is None or any(
             previous.analyses.get(name) is not item for name, item in snapshot.analyses.items()
         )
