@@ -36,16 +36,24 @@ def minutes_of(text: str) -> int:
 class LondonBreakoutParams(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    clock: Literal["london", "broker", "utc"] = Field("london", description="Clock of the times")
-    range_start: str = Field("00:00", pattern=HHMM, description="Asia range starts")
-    range_end: str = Field("07:00", pattern=HHMM, description="Asia range ends")
-    entry_time: str = Field("08:00", pattern=HHMM, description="London open: stop orders")
-    cancel_time: str = Field("11:00", pattern=HHMM, description="Cancel untriggered orders")
-    min_range_atr: float = Field(0.5, ge=0, le=5, description="Narrowest range in ATR")
-    max_range_atr: float = Field(1.5, gt=0, le=10, description="Widest range in ATR")
-    buffer_atr: float = Field(0.1, ge=0, le=2, description="Stop order beyond the range, ATR")
-    max_sl_atr: float = Field(1.5, gt=0, le=10, description="Maximum stop distance in ATR")
-    reward_r: float = Field(1.5, gt=0, le=10, description="Take profit in R")
+    clock: Literal["london", "broker", "utc"] = Field(
+        default="london",
+        description="Clock of the times",
+    )
+    range_start: str = Field(default="00:00", pattern=HHMM, description="Asia range starts")
+    range_end: str = Field(default="07:00", pattern=HHMM, description="Asia range ends")
+    entry_time: str = Field(default="08:00", pattern=HHMM, description="London open: stop orders")
+    cancel_time: str = Field(default="11:00", pattern=HHMM, description="Cancel untriggered orders")
+    min_range_atr: float = Field(default=0.5, ge=0, le=5, description="Narrowest range in ATR")
+    max_range_atr: float = Field(default=1.5, gt=0, le=10, description="Widest range in ATR")
+    buffer_atr: float = Field(
+        default=0.1,
+        ge=0,
+        le=2,
+        description="Stop order beyond the range, ATR",
+    )
+    max_sl_atr: float = Field(default=1.5, gt=0, le=10, description="Maximum stop distance in ATR")
+    reward_r: float = Field(default=1.5, gt=0, le=10, description="Take profit in R")
 
     @model_validator(mode="after")
     def _times_in_order(self) -> LondonBreakoutParams:

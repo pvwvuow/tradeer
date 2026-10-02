@@ -34,11 +34,15 @@ def _default_entries() -> dict[str, StrategyEntry]:
     return {name: StrategyEntry() for name in STRATEGIES}
 
 
+def _default_filters() -> FilterSettings:
+    return FilterSettings()
+
+
 class StrategySettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     strategies: dict[str, StrategyEntry] = Field(default_factory=_default_entries)
-    filters: FilterSettings = Field(default_factory=FilterSettings)
+    filters: FilterSettings = Field(default_factory=_default_filters)
 
     def entry(self, name: str) -> StrategyEntry:
         return self.strategies.get(name) or StrategyEntry()

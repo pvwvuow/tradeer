@@ -23,20 +23,40 @@ from app.strategies.context import MarketContext
 class TrendPullbackParams(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    fast_ema_h1: int = Field(50, ge=5, le=400, description="H1 fast EMA")
-    slow_ema_h1: int = Field(200, ge=10, le=500, description="H1 slow EMA")
-    min_adx_h1: float = Field(20.0, ge=0, le=60, description="Minimum ADX(14) on H1")
-    ema_m15: int = Field(20, ge=5, le=100, description="M15 EMA of the pullback zone")
-    zone_atr: float = Field(0.25, ge=0, le=2, description="Half width of the EMA zone in ATR")
-    pullback_bars: int = Field(5, ge=1, le=30, description="Bars in which the zone is touched")
-    rsi_period: int = Field(14, ge=2, le=50, description="RSI period on M15")
-    rsi_level: float = Field(50.0, ge=10, le=90, description="RSI level to cross back over")
-    sl_atr: float = Field(1.5, gt=0, le=10, description="Minimum stop distance in ATR")
-    max_sl_atr: float = Field(3.0, gt=0, le=20, description="Maximum stop distance in ATR")
-    swing_buffer_atr: float = Field(0.1, ge=0, le=2, description="Stop beyond the swing, ATR")
-    reward_r: float = Field(2.0, gt=0, le=10, description="Take profit in R")
-    level_block_r: float = Field(1.0, ge=0, le=5, description="No key level within this R")
-    expiry_bars: int = Field(2, ge=1, le=20, description="Bars until an unused signal expires")
+    fast_ema_h1: int = Field(default=50, ge=5, le=400, description="H1 fast EMA")
+    slow_ema_h1: int = Field(default=200, ge=10, le=500, description="H1 slow EMA")
+    min_adx_h1: float = Field(default=20.0, ge=0, le=60, description="Minimum ADX(14) on H1")
+    ema_m15: int = Field(default=20, ge=5, le=100, description="M15 EMA of the pullback zone")
+    zone_atr: float = Field(
+        default=0.25,
+        ge=0,
+        le=2,
+        description="Half width of the EMA zone in ATR",
+    )
+    pullback_bars: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="Bars in which the zone is touched",
+    )
+    rsi_period: int = Field(default=14, ge=2, le=50, description="RSI period on M15")
+    rsi_level: float = Field(default=50.0, ge=10, le=90, description="RSI level to cross back over")
+    sl_atr: float = Field(default=1.5, gt=0, le=10, description="Minimum stop distance in ATR")
+    max_sl_atr: float = Field(default=3.0, gt=0, le=20, description="Maximum stop distance in ATR")
+    swing_buffer_atr: float = Field(
+        default=0.1,
+        ge=0,
+        le=2,
+        description="Stop beyond the swing, ATR",
+    )
+    reward_r: float = Field(default=2.0, gt=0, le=10, description="Take profit in R")
+    level_block_r: float = Field(default=1.0, ge=0, le=5, description="No key level within this R")
+    expiry_bars: int = Field(
+        default=2,
+        ge=1,
+        le=20,
+        description="Bars until an unused signal expires",
+    )
 
 
 class TrendPullback(Strategy):
@@ -97,10 +117,10 @@ class TrendPullback(Strategy):
         window = slice(len(m15) - cfg.pullback_bars, len(m15))
         zone_edge = ema[window] + sign * cfg.zone_atr * atr[window]
         if direction is Direction.LONG:
-            reach = float(min(m15.low[window] - zone_edge))  # <= 0: a low touched the zone
+            reach = float((m15.low[window] - zone_edge).min())  # <= 0: a low touched the zone
             beyond = float(ema[-1] - cfg.zone_atr * atr_now - close)  # > 0: closed below
         else:
-            reach = float(min(zone_edge - m15.high[window]))
+            reach = float((zone_edge - m15.high[window]).min())
             beyond = float(close - (ema[-1] + cfg.zone_atr * atr_now))
         touched = reach <= 0 and beyond <= 0
         broke = "" if beyond <= 0 else "; the close broke through the zone"

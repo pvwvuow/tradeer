@@ -30,32 +30,71 @@ class FilterSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     min_probability_percent: float = Field(
-        _DEFAULTS.min_win_probability_percent,
+        default=_DEFAULTS.min_win_probability_percent,
         ge=0,
         le=100,
         description="Minimum win probability (%)",
     )
-    min_ev_r: float = Field(_DEFAULTS.min_expected_value_r, description="Minimum EV in R")
+    min_ev_r: float = Field(default=_DEFAULTS.min_expected_value_r, description="Minimum EV in R")
     require_probability: bool = Field(
-        False,
+        default=False,
         description="Filter out signals whose probability is still unknown",
     )
     baseline_min_samples: int = Field(
-        BASELINE_MIN_SAMPLES,
+        default=BASELINE_MIN_SAMPLES,
         ge=10,
         le=1000,
         description="Resolved signals needed for a baseline",
     )
-    cooldown_bars_after_loss: int = Field(3, ge=0, le=100, description="Bars to wait after a loss")
-    pause_after_losses: int = Field(3, ge=1, le=20, description="Pause after this many losses")
-    max_spread_atr: float = Field(0.25, gt=0, le=5, description="Max spread as a share of ATR")
-    max_spread_sl: float = Field(0.15, gt=0, le=1, description="Max spread as a share of the SL")
-    check_sessions: bool = Field(True, description="Only enter in the strategy's sessions")
-    rollover_start: str = Field("23:00", pattern=HHMM, description="Rollover starts (server)")
-    rollover_end: str = Field("01:00", pattern=HHMM, description="Rollover ends (server)")
-    friday_close_hours: float = Field(2.0, ge=0, le=12, description="No entries before the close")
-    monday_open_hours: float = Field(2.0, ge=0, le=12, description="No entries after the open")
-    news_minutes: int = Field(30, ge=0, le=240, description="News blackout before and after")
+    cooldown_bars_after_loss: int = Field(
+        default=3,
+        ge=0,
+        le=100,
+        description="Bars to wait after a loss",
+    )
+    pause_after_losses: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Pause after this many losses",
+    )
+    max_spread_atr: float = Field(
+        default=0.25,
+        gt=0,
+        le=5,
+        description="Max spread as a share of ATR",
+    )
+    max_spread_sl: float = Field(
+        default=0.15,
+        gt=0,
+        le=1,
+        description="Max spread as a share of the SL",
+    )
+    check_sessions: bool = Field(default=True, description="Only enter in the strategy's sessions")
+    rollover_start: str = Field(
+        default="23:00",
+        pattern=HHMM,
+        description="Rollover starts (server)",
+    )
+    rollover_end: str = Field(default="01:00", pattern=HHMM, description="Rollover ends (server)")
+    friday_close_hours: float = Field(
+        default=2.0,
+        ge=0,
+        le=12,
+        description="No entries before the close",
+    )
+    monday_open_hours: float = Field(
+        default=2.0,
+        ge=0,
+        le=12,
+        description="No entries after the open",
+    )
+    news_minutes: int = Field(
+        default=30,
+        ge=0,
+        le=240,
+        description="News blackout before and after",
+    )
 
 
 @dataclass(frozen=True)
