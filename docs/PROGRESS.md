@@ -29,6 +29,15 @@ Your log (FIBO Group demo, 2 October 2026) showed the connection, the history im
 3. **GBPUSD and XAUUSD always said "wait".** MT5 stores the minimum spread of each bar, and the check compared the live spread with those minimums. Fix: the last closed M5 bar's spread is compared with the typical bar spread of this hour (ADR 47). The log line of each card now also says why.
 4. **Trade times were saved in server time**, because no fresh price had arrived when the history import ran ("offset unknown (market closed)" although the market was open). Fix: the import uses the broker clock the analysis measured or saved, and runs again by itself once the clock is measured.
 
+### Second real run (2 October 2026, 10:42 UTC)
+
+Confirmed on your PC: no font warnings at all, GBPUSD now says "watch" with a reason instead of always "wait", and the history import used the saved broker clock (5 trades corrected to UTC). The freeze fix could not be judged: MT5 answered fast this time (connected in 0.07 s), so there was no slow call. Found and fixed:
+
+1. **Diagnostics showed 0 bars everywhere.** The terminal refused one request for 100,000 bars. Fix: the probe asks again with fewer bars and shows the MT5 error if nothing comes back (ADR 50).
+2. **The first XAUUSD card judged bars two hours old.** MT5 answered with the bars it had on disk and caught up two seconds later; that first card said "wait, spread 3.2x typical". Fix: while a symbol's bars trail the live price, its card says LOADING and waits (ADR 49).
+3. **A card did not follow a new evaluation of the same bar** (for example news added by hand). Fix: cards follow every new analysis.
+4. **The log could not show that the MT5 helper runs.** Fix: one log line per start, with the pid and the MetaTrader5 version.
+
 ### What was built
 
 - Closed bars only: `copy_rates_from_pos(symbol, tf, 1, n)` for M5, M15, H1, H4 and D1, cached per symbol and timeframe, with only the new bars read after the first download (`app/mt5/market_data.py`).
@@ -50,11 +59,13 @@ Your log (FIBO Group demo, 2 October 2026) showed the connection, the history im
 - ✓ Summer-time dates for the USA and the EU (2005, 2024, 2026), UTC conversion and the broker day are unit-tested.
 - ✓ Data checks, levels, volatility, sessions, correlation, currency strength, spread, patterns, card rules, calendar CSV and store are unit-tested.
 - ✓ Architecture tests: `analysis`, `calendar`, `engine` and `core` never import Qt or MetaTrader5, the analysis is pure, and the market-data code never trades.
-- ✓ In the sandbox: 304 unit tests passed, 3 skipped (the Market page UI tests run in CI). New tests run the helper process for real: package shapes, a hanging call that restarts it, a crash, a missing package, the gateway beating while it waits, a postponed heartbeat, the repeat filter, the spread rule from your account and the history import running again.
+- ✓ In the sandbox: 311 unit tests passed, 3 skipped (the Market page UI tests run in CI). New tests run the helper process for real: package shapes, a hanging call that restarts it, a crash, a missing package, the gateway beating while it waits, a postponed heartbeat, the repeat filter, the spread rule from your account and the history import running again. Second-run tests: a refused 100,000-bar request, bars that trail the price, the 60 s warning, a closed market, the LOADING card and a card that follows a calendar change.
 - ✓ CI on pull request #15: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows are green, including the Market page UI tests (pyqtgraph 0.14.0 with PySide6 6.10.3); the build job builds the app with the bundled `CalendarExporter.mq5` and runs the frozen `--self-check` and `--crash-test`. The first run found 2 mypy errors in `levels.py`; they were fixed. The fixes from your log (helper process, spread rule, font, history clock) are green on all three jobs too.
 - ✗ `CalendarExporter.mq5` was not compiled here (no MetaEditor). Compile it on your PC (see below).
 - ✓ First run against a real MT5 demo account (your log): connection, history, broker time and 3 cards worked; the 4 problems above are fixed.
-- ✗ The fixes are not yet checked on your PC. Please run the test below again and send the new log.
+- ✓ Second run on your PC: no font warnings, GBPUSD no longer stuck on "wait", trade times in UTC.
+- ✗ The freeze fix is not proven on your PC yet (no slow MT5 call happened in the second run).
+- ✗ The four second-run fixes are not checked on your PC yet. Please run the test below again and send the new log.
 
 ### Test on your PC
 
@@ -63,7 +74,8 @@ Your log (FIBO Group demo, 2 October 2026) showed the connection, the history im
 3. Open the Calendar tab and click Install MT5 exporter. In MT5 press F4 (MetaEditor), open Services > CalendarExporter.mq5 and press F7 (Compile). Back in MT5, Navigator > Services, right-click CalendarExporter > Add service, then start it. Click Read MT5 calendar now: upcoming events appear with countdowns.
 4. Add a USD high-impact event 30 minutes from now by hand: the EURUSD and XAUUSD cards say "wait" after the next bar.
 5. Check the status bar: the session clock and the next news.
-6. While the cards load for the first time, move the window and switch pages: it must not freeze. In Task Manager you see a second `MT5TradingWorkstation` process (the MT5 helper). Then send `all.log` again: no repeated font warnings, and each card line ends with "Why: ...".
+6. While the cards load for the first time, move the window and switch pages: it must not freeze. In Task Manager you see a second `MT5TradingWorkstation` process (the MT5 helper). Then send `all.log` again: no repeated font warnings, each card line ends with "Why: ...", and there is a line "MT5 helper process started: pid ...".
+7. Press Run diagnostics on the Connection page and copy the report: the History lines show real bar counts (for example "50,000+ bars"), not 0. If a card shows LOADING, it should turn into a normal card within a few seconds.
 
 ### Limitations
 
