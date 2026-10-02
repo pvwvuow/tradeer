@@ -40,6 +40,8 @@ from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
 from app.ui.pages import PlaceholderPage, SimpleHomePage, styled_label
+from app.ui.signals_page import SignalsContext, SignalsPage
+from app.ui.strategies_page import StrategiesPage
 from app.ui.theme import build_qss, tokens_for
 
 SIDEBAR_WIDTH = 232
@@ -54,6 +56,7 @@ class MainWindow(QMainWindow):
         connection: ConnectionContext | None = None,
         storage: StorageRuntime | None = None,
         market: MarketContext | None = None,
+        signals: SignalsContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -96,10 +99,16 @@ class MainWindow(QMainWindow):
         self.connection_page = ConnectionPage(connection) if connection is not None else None
         self.data_page = DataPage(storage) if storage is not None else None
         self.market_page = MarketPage(market)
+        self.signals_page = SignalsPage(signals)
+        self.strategies_page = StrategiesPage(signals.settings if signals is not None else None)
         self.settings_tabs: QTabWidget | None = None
         for spec in ADVANCED_PAGES:
             if spec.page_id == "market":
                 self._add_page(spec.page_id, self.market_page)
+            elif spec.page_id == "signals":
+                self._add_page(spec.page_id, self.signals_page)
+            elif spec.page_id == "strategies":
+                self._add_page(spec.page_id, self.strategies_page)
             elif spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
             elif spec.page_id == "settings" and self.data_page is not None:
