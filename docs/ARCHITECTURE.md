@@ -11,11 +11,12 @@ app/
   calendar/        economic calendar: events, CSV import, store, MQL5 exporter (phase 5)
   core/            per-user paths, UI preferences, account profiles, credentials, instance lock, broker clock, watchlist
   domain/          pure logic: operating modes, validated defaults, trade history (no Qt, MT5 or I/O)
-  engine/          background workers: the market-analysis thread (phase 5)
+  engine/          background workers: the market-analysis thread (phase 5), signal filters and pipeline (phase 6)
   mt5/             the MT5 gateway thread, connection checklist, diagnostics, smoke test, market data
   observability/   logging, trace context, masking, crash reports, watchdog (phase 2)
   storage/         SQLite database, migrations, outbox, cloud sync, history tracker (phase 4)
-  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, Market, chart
+  strategies/      strategy interface, market context, the two example strategies (phase 6)
+  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, Market, chart, Signals, Strategies
 supabase/          SQL to run in the Supabase SQL Editor: schema, RLS, views, cleanup (phase 4)
 tests/
   fakes/           FakeMT5 and FakeSupabase for tests only (never shipped)
@@ -182,7 +183,6 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 36. **Trades are rebuilt from deals.** History import reads deals and orders through the gateway: from 2000-01-01 the first time, then from 3 days before the newest stored deal. Trades are rebuilt from all deals of every position the import touched, in pure code (`app/domain/history.py`). Magic 0 means manual, the bot's magic numbers mean bot, and anything else is external. Server times are turned into UTC with the broker offset measured from fresh quotes, or 0 if it is unknown. Result: importing again is safe and gives the same trades. Since Phase 5 the conversion uses the broker clock with its summer-time rules (ADR 41), and a change of those rules imports everything again once.
 37. **Backups and cleanup.** The database is backed up once a day with the SQLite backup API, and the last 7 backups are kept. Local cleanup removes `app_logs` and `mt5_requests` rows after 90 days and `health_checks` and `performance_metrics` rows after 30 days. It never deletes trades or signals and never deletes a row that still waits in the outbox. `supabase/cleanup.sql` has an optional cleanup function for the cloud. Result: the database stays small without losing anything that matters.
 38. **One schema definition, checked three ways.** `app/storage/schema.py` lists every table and the kind of every column. `m0001_initial` and `supabase/schema.sql` were written from it, and a test checks that SQLite, `schema.py` and `supabase/schema.sql` agree. Result: the local and cloud schemas cannot drift apart silently.
-
 39. **Analysis is pure numpy, no pandas yet.** `app/analysis/` works on `Bars` (numpy columns, UTC and server times) and never touches MT5, files, threads or the database; an architecture test enforces it. Reason: the same function must give the same result in live, paper and backtest (spec D3.4), and numpy alone is enough for these indicators. pandas arrives when a phase needs it (ML features).
 40. **Closed bars only, one poll request.** Bars come from `copy_rates_from_pos(..., 1, n)`, so the forming bar is never used. Every 2 s a single gateway request reads each symbol's tick and newest closed M5 bar; only a new closed M5 bar triggers a full update and analysis of that symbol. Correlation and currency strength follow every new H1 bar. Result: about one MT5 request per 2 s while nothing closes, and evaluation strictly on closed candles (spec D3.3).
 41. **Own summer-time rules for broker time.** Windows has no tz database, so `app/core/clock.py` writes out the US rules (since 2007, and 1987-2006) and the EU rules. The offset is measured from fresh ticks in half-hour steps and changes only after two agreeing ticks. UTC+2/+3 on US dates is taken as New York close time, UTC+1/+2 on EU dates as Central European time, anything else as fixed. A change outside a summer-time date is logged as a broker time jump and blocks the analysis for an hour. Bars keep server time in the cache and are converted on every read, so a corrected clock fixes the whole cache. The trading day is the broker day.
@@ -195,6 +195,15 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 48. **Repeated Qt messages are collapsed** (`app/observability/repeats.py`). Reason: one harmless Qt font warning was 95% of a real log. A message is logged once, then counted for 60 s and logged again with the count; fatal messages always pass. The cause, font sizes in px (Qt then reports point size -1), was removed: the stylesheet uses pt.
 49. **The card waits while MT5 still loads a symbol's bars.** Reason: in the second real run MT5 answered the first XAUUSD request with bars two hours old (the same levels as the run before) and caught up two seconds later; the first card said "wait, spread 3.2x typical" from those old bars. A live price always sits in the forming M5 bar, so the poll reads positions 1 and 0 of M5 (`copy_rates_from_pos(symbol, M5, 0, 2)`): the newest closed bar as before, and the open time of the forming bar, only to compare it with the price; its prices are never used. When the forming bar is more than two bars older than the price while the FX market is open, the symbol is not analysed: the card says LOADING, the log says why, and after 60 s a warning asks the user to open a chart of the symbol in MT5. The symbol is analysed as soon as the bars arrive. A card now also follows every new analysis, not only a new bar time, so a calendar change shows at once.
 50. **The history probe asks again with fewer bars.** Reason: a real terminal (Max bars in chart 100,000) refused `copy_rates_from_pos(..., 0, 100000)` for every symbol and timeframe, so Diagnostics showed 0 bars. The probe asks for at most Max bars in chart, then 50,000, 10,000 and 1,000 bars, reports `N+` when it got all it asked for, and shows the MT5 error when nothing comes back. The MT5 helper also reports every start, so the log shows its pid and whether it restarted.
+51. **London breakout times are London local time.** Reason: the spec names "Asia range" and "London open" without a clock. In London time the session keeps its meaning through both summer-time changes; `clock` can be set to `broker` or `utc`. Range 00:00 to 07:00, stop orders at 08:00, cancel at 11:00.
+52. **"ATR (D1-normalized)" means ATR14(D1) x sqrt(range hours / 24).** Reason: the Asia range covers 7 hours, not a day; volatility grows with the square root of time, so the D1 ATR is scaled to the range length. The width must be 0.5 to 1.5 of it; buffer 0.1, SL cap 1.5.
+53. **The breakout is one OCO pair: two signals.** A buy stop and a sell stop share `features["oco_group"]`; the signal id contains the direction, so "one signal per symbol, strategy and bar" counts per side. Phase 8 cancels the other order when one fills.
+54. **Probability is a baseline until a model exists.** The strategy's win rate from resolved signals with a Wilson 95% interval, "unknown" below 30 samples. With `require_probability` off (default) the probability and EV filters are recorded as "not applied" instead of passing silently.
+55. **The pipeline runs in the analysis thread.** `MarketWatch` calls it after a symbol was analysed on a new closed bar; the UI only queues a dismiss, which the next cycle applies. Reason: one writer thread, no locks around the database, and the trace order is the real order.
+56. **Signal ids are uuid5 of strategy, params hash and side, symbol, timeframe and bar time.** Reason: evaluating the same bar again (a restart, a second poll) gives the same id, so a signal is never duplicated and the save is idempotent.
+57. **No new column for the expiry.** The `signals` table of E2 has no `expires_at`; the expiry, bar close time, digits, params hash and state history are kept in `features_json`, and the trace records "expires at" as an execution step. Reason: no schema change and no migration in Phase 6.
+58. **Risk is a placeholder step until Phase 7.** Every trace has a `risk` step marked "not applied", so the acceptance check (every stage present) holds now and Phase 7 only replaces that step.
+59. **Settings forms come from the params models.** `app/core/param_fields.py` reads the pydantic JSON schema (type, limits, choices, description), and the model validates what the user typed. Reason: a new parameter needs no UI code, and invalid values never reach a strategy.
 
 ## Logging rules for new code
 
@@ -204,12 +213,14 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 - Register every secret the moment it is read: `MASKER.register(value)`.
 - Wrap work for one signal in `with trace(signal_id=..., symbol=...):`, and pass work to other threads with `propagate(fn)`.
 - Setting changes go through `audit(action, before=..., after=...)`.
+- Measure durations with `time.perf_counter()`. Before Python 3.13, `time.monotonic()` on Windows ticks in 15.6 ms steps.
 
 ## MT5 rules for new code
 
 - Call MT5 only through the gateway: `gateway.call(...)` for one function, `gateway.run(name, fn)` for several calls that belong together. Never import `MetaTrader5` outside `app/mt5/terminal_process.py`; results cross a process boundary, so read them by field name.
 - Never block the UI thread on a gateway future; deliver results with a queued Qt signal.
 - Never judge bars that trail the live price: check `PollResult.loading()` first (ADR 49). MT5 may refuse very large bar requests; ask again with fewer bars (ADR 50).
+- Never size a position from `trade_tick_value`: FIBO reports 0.1 USD for XAUUSD although a point is worth 1 USD. Use `order_calc_profit` (Phase 7).
 - Check `None` results and read `last_error()` through `app/mt5/errors.py`, which maps it to a plain-language fix.
 - Use `resolve_symbol()` for every symbol a user types (brokers add suffixes), then `symbol_select()` it.
 - Test with `FakeMT5` from `tests/fakes/fake_mt5.py`; it never ships with the app.
@@ -230,3 +241,11 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 - Store UTC. Convert server time only with `BrokerClock`.
 - A new data problem is a `quality.py` issue with a test, never a silent skip.
 - MT5 bar spreads are minimum spreads: compare them only with other bar spreads.
+
+## Strategy and signal rules
+
+- A strategy is pure: it reads only its `MarketContext` and returns an `Evaluation` with every rule as a `Condition`. No MT5, storage, engine, UI, files or threads (architecture test).
+- Bump a strategy's `version` when its logic changes; a params change gives a new params hash and config id by itself.
+- Every signal goes through `SignalPipeline`; never save a signal without its decision trace, and never change a state except through `Signal.with_state`.
+- A new filter returns a `TraceStep` with value, threshold and pass, fail or "not applied" (`None`) with the reason.
+- Strategy examples always carry `EXAMPLE_NOTE`: they are not proven to be profitable.
