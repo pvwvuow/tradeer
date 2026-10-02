@@ -46,3 +46,31 @@ def test_storage_and_the_domain_never_import_qt_or_metatrader5() -> None:
         if name.startswith(layers) and ("PySide6" in text or IMPORTS_MT5.search(text))
     ]
     assert offenders == []
+
+
+def test_analysis_calendar_engine_and_core_never_import_qt_or_metatrader5() -> None:
+    layers = ("analysis/", "calendar/", "engine/", "core/")
+    offenders = [
+        name
+        for name, text in sources().items()
+        if name.startswith(layers) and ("PySide6" in text or IMPORTS_MT5.search(text))
+    ]
+    assert offenders == []
+
+
+def test_the_analysis_is_pure() -> None:
+    """No MT5 layer, no storage, no files, no threads: the same bars give the same result."""
+    forbidden = re.compile(r"app\.(mt5|storage|engine|ui)\b|(?<![\w.])open\(|threading|sqlite3")
+    offenders = [
+        f"{name}: {found.group(0)}"
+        for name, text in sources().items()
+        if name.startswith("analysis/")
+        for found in forbidden.finditer(text)
+    ]
+    assert offenders == []
+
+
+def test_market_data_tools_never_trade() -> None:
+    texts = sources()
+    for name in ("mt5/market_data.py", "engine/market_watch.py"):
+        assert not ORDER_CALLS.search(texts[name]), name
