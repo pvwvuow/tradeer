@@ -1,8 +1,8 @@
 # User guide
 
-## What works today (Phase 5)
+## What works today (Phase 6)
 
-Phase 5 adds the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
+Phase 6 adds strategies and signals: the Signals page and the Strategies page (see below). Signals are suggestions only; nothing is sent to MT5 yet. Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
 
 - **Simple view** (default): a calm Home screen in plain language. It says you are in practice mode and whether the app is connected to MetaTrader 5. The "Stop trading now" button is always visible; it becomes active once trading exists.
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
@@ -105,6 +105,24 @@ Advanced view > Market. Everything here is information only and never a trade si
   2. In MT5 press F4 to open MetaEditor, open Services > CalendarExporter.mq5 and press F7 (Compile).
   3. In MT5, Navigator > Services, right-click CalendarExporter > Add service, then start it.
   4. The app reads the calendar every 3 minutes; click Read MT5 calendar now to read it at once.
+
+## Signals page
+
+Advanced view > Signals. A signal is a trade idea from a strategy. Nothing is sent to MT5: risk sizing arrives in Phase 7 and orders in Phase 8, so **Approve** is off.
+
+- **Feed**: every signal, also the filtered-out ones with the reason. Pick "Waiting for approval", "Filtered out" or "Expired or dismissed" to narrow it.
+- **Decision trace**: select a signal to see every step: the closed bar, each strategy rule with its value and limit, the features, the probability, the EV, each filter (✓ passed, ✗ failed, · not applied), risk and the decision.
+- **Probability**: "unknown" until the strategy has 30 resolved signals; the app never shows a made-up number.
+- **Dismiss**: rejects a waiting signal. Waiting signals also expire by themselves (trend pullback after 2 bars, London breakout at 11:00 London time).
+- **Scanner**: symbols ranked by setup (ready before forming), then by probability x EV, or by rules passed while no probability exists.
+
+## Strategies page
+
+Advanced view > Strategies. Both strategies are **examples with exact rules, not proven to be profitable**.
+
+- Tick **On** to let a strategy make signals, change its settings (limits are checked), then click **Save strategy settings**. Changes apply from the next closed bar and are written to the audit log.
+- **Signal filters**: minimum probability and EV, cooldown and pause after losses, spread limits, sessions, rollover, Friday close, Monday open and the news blackout.
+- Settings are saved per profile in `strategies.json`.
 
 ## Trade history
 
