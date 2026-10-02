@@ -4,6 +4,11 @@ Bars come from `copy_rates_from_pos(symbol, timeframe, 1, n)`: position 0 is the
 still forming and is never used. After the first download only the new bars are read and
 appended. Bars keep the broker's server time; `bars()` converts it to UTC with the broker
 clock every time, so a corrected clock fixes the whole cache at once.
+
+Right after a connect MT5 can answer with the bars it has on disk while it still downloads
+the rest (seen on a real account: XAUUSD bars two hours old, fixed two seconds later). The poll
+therefore also reads the open time of the forming M5 bar, only to compare it with the live
+price (ADR 49). Its prices are never used.
 """
 
 from __future__ import annotations
@@ -11,7 +16,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -28,6 +33,10 @@ from app.mt5.symbols import resolve_symbol
 
 BAR_COUNTS: dict[str, int] = {"M5": 600, "M15": 600, "H1": 600, "H4": 400, "D1": 300}
 REQUEST_TIMEOUT_SECONDS = 30.0
+M5_SECONDS = 300
+# A live price always sits in the forming M5 bar. More than two bars between them means MT5 is
+# still loading the history (one bar of slack covers a price that changed only on the ask).
+HISTORY_SLACK_SECONDS = 2 * M5_SECONDS
 COLUMNS = ("time", "open", "high", "low", "close", "tick_volume", "spread")
 INTEGER_COLUMNS = ("time", "tick_volume", "spread")
 
@@ -66,23 +75,56 @@ def read_closed_rates(mt5: MT5Api, symbol: str, timeframe: str, count: int) -> C
     return _to_columns(rates)
 
 
+def duration_text(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, rest = divmod(minutes, 60)
+    return f"{hours} h {rest} min" if rest else f"{hours} h"
+
+
 @dataclass(frozen=True)
 class PollResult:
-    """One cheap request per cycle: each symbol's tick and newest closed M5 bar."""
+    """One cheap request per cycle: each symbol's tick and newest closed M5 bar.
+
+    `forming_m5` is the open time of the M5 bar that is still forming. It is only compared with
+    the live price; its prices are never read.
+    """
 
     quotes: Mapping[str, Quote | None]
     newest_m5: Mapping[str, int | None]
+    forming_m5: Mapping[str, int | None] = field(default_factory=dict)
+
+    def loading(self, symbol: str) -> str | None:
+        """Why MT5 is still loading this symbol's bars, or None when they reach the price."""
+        quote = self.quotes.get(symbol)
+        if quote is None or not quote.valid or quote.server_time <= 0:
+            return None  # no live price to compare with; the data checks report it
+        if symbol not in self.forming_m5:
+            return None  # not polled
+        forming = self.forming_m5[symbol]
+        if forming is None:
+            return "no M5 bars yet"
+        expected = quote.server_time - quote.server_time % M5_SECONDS
+        behind = expected - forming
+        if behind <= HISTORY_SLACK_SECONDS:
+            return None
+        return f"the newest M5 bar is {duration_text(behind)} older than the price"
 
 
 def read_poll(mt5: MT5Api, symbols: Sequence[str], digits: Mapping[str, int]) -> PollResult:
     quotes: dict[str, Quote | None] = {}
     newest: dict[str, int | None] = {}
+    forming: dict[str, int | None] = {}
     for name in symbols:
         tick = mt5.symbol_info_tick(name)
         quotes[name] = Quote.from_mt5(name, tick, digits.get(name, 5)) if tick is not None else None
-        rates = mt5.copy_rates_from_pos(name, TIMEFRAMES["M5"], 1, 1)
-        newest[name] = int(rates["time"][-1]) if rates is not None and len(rates) else None
-    return PollResult(quotes, newest)
+        # Positions 1 and 0, oldest first: the newest closed bar, then the forming bar.
+        rates = mt5.copy_rates_from_pos(name, TIMEFRAMES["M5"], 0, 2)
+        times = [int(value) for value in rates["time"]] if rates is not None else []
+        newest[name] = times[-2] if len(times) >= 2 else None
+        forming[name] = times[-1] if times else None
+    return PollResult(quotes, newest, forming)
 
 
 def read_symbol(mt5: MT5Api, name: str) -> SymbolSpec | None:

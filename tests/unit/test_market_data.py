@@ -8,7 +8,7 @@ import pytest
 from app.core.clock import BrokerClock
 from app.mt5.errors import MT5Error
 from app.mt5.gateway import MT5Gateway
-from app.mt5.market_data import MarketData, merge_columns, read_closed_rates
+from app.mt5.market_data import MarketData, PollResult, merge_columns, read_closed_rates
 from tests.fakes.fake_mt5 import FakeMT5
 
 START = datetime(2026, 10, 1, 10, 2, 30, tzinfo=UTC).timestamp()
@@ -74,6 +74,31 @@ def test_symbols_are_resolved_and_polled_in_one_request() -> None:
         assert poll.newest_m5["EURUSD.m"] == int(START + 3 * 3600) // 300 * 300 - 300
         data.forget()
         assert len(data.bars("EURUSD.m", "M5")) == 0
+
+
+def test_the_poll_tells_when_mt5_is_still_loading_the_bars() -> None:
+    with market() as (data, fake, clock):
+        poll = data.poll(["EURUSD.m", "XAUUSD.m"])
+        server_now = int(START + 3 * 3600)
+        assert poll.forming_m5["EURUSD.m"] == server_now // 300 * 300
+        assert poll.newest_m5["EURUSD.m"] == server_now // 300 * 300 - 300
+        assert poll.loading("EURUSD.m") is None and poll.loading("XAUUSD.m") is None
+        # Right after a connect a real terminal answered with XAUUSD bars two hours old.
+        fake.stale_history["XAUUSD.m"] = 2 * 3600 + 7 * 60
+        poll = data.poll(["EURUSD.m", "XAUUSD.m"])
+        assert poll.loading("EURUSD.m") is None
+        assert poll.loading("XAUUSD.m") == "the newest M5 bar is 2 h 5 min older than the price"
+        fake.stale_history["XAUUSD.m"] = 300  # one bar behind is normal
+        assert data.poll(["XAUUSD.m"]).loading("XAUUSD.m") is None
+        fake.stale_history["XAUUSD.m"] = 900
+        assert data.poll(["XAUUSD.m"]).loading("XAUUSD.m") == (
+            "the newest M5 bar is 15 min older than the price"
+        )
+        fake.rates_count = 0
+        assert data.poll(["XAUUSD.m"]).loading("XAUUSD.m") == "no M5 bars yet"
+        # No live price (or not polled): nothing to compare with.
+        assert data.poll(["AUDUSD.m"]).loading("AUDUSD.m") is None
+        assert PollResult(poll.quotes, poll.newest_m5).loading("XAUUSD.m") is None
 
 
 def test_merging_replaces_overlapping_bars() -> None:
