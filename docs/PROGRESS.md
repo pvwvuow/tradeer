@@ -37,8 +37,8 @@ Status: built on `phase/04-storage`, pull request into `phase/03-mt5-connection`
 - ✓ Migrations on a new and an existing database, running twice, changed checksum and a newer database (unit tests).
 - ✓ Importing history twice creates no duplicates (unit tests with FakeMT5).
 - ✓ SQLite, `schema.py` and `supabase/schema.sql` agree (unit test).
-- ✓ In the sandbox: 225 unit tests passed, 3 skipped. The httpx client, UI and integration tests run only in CI.
-- ✗ CI on this pull request: not known yet when this was written.
+- ✓ In the sandbox: 225 unit tests passed, 3 skipped (the httpx client, UI and integration tests run in CI).
+- ✓ CI is green on this pull request: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows, including the httpx client, Data page and log storage tests; the build job builds the app and runs the frozen `--self-check` and `--crash-test`. The first run had found 4 mypy errors and a Windows-only file lock on a damaged database; both were fixed.
 - ✗ Not tested with a real Supabase project (see "Test on your PC").
 - ✗ The SQL files have not been run on a real Postgres database.
 - ✗ History import not checked against a real MT5 account.
