@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -17,7 +18,9 @@ if TYPE_CHECKING:
 
     from app.calendar.exporter import CalendarFileWatcher
     from app.calendar.store import CalendarStore
+    from app.core.strategy_settings import StrategySettingsSource
     from app.engine.market_watch import MarketWatch
+    from app.engine.signal_pipeline import SignalPipeline
     from app.mt5.checklist import ConnectRequest
     from app.mt5.connection import ConnectionService
     from app.mt5.gateway import MT5Gateway
@@ -31,6 +34,15 @@ GATEWAY_FREEZE_SECONDS = 120.0
 SYNC_FREEZE_SECONDS = 600.0
 MARKET_FREEZE_SECONDS = 180.0
 SMOKE_TEST_TIMEOUT_SECONDS = 180.0
+
+
+@dataclass(frozen=True)
+class MarketParts:
+    watch: MarketWatch
+    calendar: CalendarStore
+    calendar_file: CalendarFileWatcher
+    pipeline: SignalPipeline
+    settings: StrategySettingsSource
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -242,7 +254,7 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
 
     gateway, service = _start_connection(observability, options.profile)
     storage: StorageRuntime | None = None
-    market: tuple[MarketWatch, CalendarStore, CalendarFileWatcher] | None = None
+    market: MarketParts | None = None
     try:
         storage = _open_storage(observability, options.profile, gateway, service)
         market = _start_market(observability, options.profile, gateway, service, storage)
@@ -253,7 +265,7 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
         return 1
     finally:
         if market is not None:
-            market[0].stop()
+            market.watch.stop()
             observability.watchdog.unregister("market-analysis")
         service.stop_monitor()
         if storage is not None:
@@ -325,19 +337,23 @@ def _start_market(
     gateway: MT5Gateway,
     service: ConnectionService,
     storage: StorageRuntime,
-) -> tuple[MarketWatch, CalendarStore, CalendarFileWatcher]:
-    """The closed-bar analysis thread and the calendar (spec C2, C3)."""
+) -> MarketParts:
+    """The closed-bar analysis thread, the calendar and the signals (spec C2, C3, C5)."""
     import json
 
     from app.calendar.exporter import CalendarFileWatcher
     from app.calendar.store import CalendarStore, import_exporter_file
     from app.core.clock import BrokerClock
+    from app.core.strategy_settings import StrategySettingsSource
     from app.core.watchlist import WatchlistSource
     from app.engine.market_watch import MarketWatch
+    from app.engine.signal_pipeline import SignalPipeline
     from app.mt5.market_data import MarketData
     from app.observability.logger import get_logger
+    from app.storage.signal_store import SignalRepository
 
     analysis_log = get_logger(LogCategory.ANALYSIS)
+    strategy_log = get_logger(LogCategory.STRATEGY)
     store = storage.store
     calendar = CalendarStore(store)
     calendar_file = CalendarFileWatcher()
@@ -371,6 +387,24 @@ def _start_market(
     def log(level: str, message: str) -> None:
         analysis_log.log(level, "{}", message)
 
+    def signal_log(level: str, message: str) -> None:
+        strategy_log.log(level, "{}", message)
+
+    settings = StrategySettingsSource(
+        app_data_dir(profile),
+        note=lambda text: signal_log("WARNING", text),
+    )
+    pipeline = SignalPipeline(
+        settings.strategies,
+        settings.filters,
+        store=SignalRepository(store),
+        account=storage.current_account,
+        log=signal_log,
+    )
+    loaded = pipeline.load()
+    enabled = ", ".join(settings.settings.enabled()) or "none"
+    signal_log("INFO", f"Strategies on: {enabled}; {loaded} saved signals loaded (signal only)")
+
     watchdog = observability.watchdog
     watchdog.register("market-analysis", MARKET_FREEZE_SECONDS)
     watch = MarketWatch(
@@ -383,6 +417,7 @@ def _start_market(
         save_clock=save_clock,
         log=log,
         heartbeat=partial(watchdog.beat, "market-analysis"),
+        signals=pipeline,
     )
 
     def known_clock() -> BrokerClock | None:
@@ -392,7 +427,7 @@ def _start_market(
     if storage.tracker is not None:
         storage.tracker.clock_source = known_clock
     watch.start()
-    return watch, calendar, calendar_file
+    return MarketParts(watch, calendar, calendar_file, pipeline, settings)
 
 
 def _show_window(
@@ -402,7 +437,7 @@ def _show_window(
     gateway: MT5Gateway,
     service: ConnectionService,
     storage: StorageRuntime,
-    market: tuple[MarketWatch, CalendarStore, CalendarFileWatcher],
+    market: MarketParts,
 ) -> int:
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtWidgets import QMessageBox
@@ -416,6 +451,7 @@ def _show_window(
     from app.ui.crash_dialog import CrashNotifier
     from app.ui.main_window import MainWindow
     from app.ui.market_page import MarketContext
+    from app.ui.signals_page import SignalsContext
 
     ui_log = get_logger(LogCategory.UI)
     reporter = observability.crash_reporter
@@ -425,7 +461,7 @@ def _show_window(
         terminal = service.status.terminal
         return terminal.data_path if terminal is not None else ""
 
-    watch, calendar, calendar_file = market
+    watch, calendar, calendar_file = market.watch, market.calendar, market.calendar_file
     try:
         context = ConnectionContext(
             profile=options.profile,
@@ -443,6 +479,7 @@ def _show_window(
             context,
             storage,
             MarketContext(watch, prefs_dir, calendar, calendar_file, data_path),
+            SignalsContext(market.pipeline, market.settings),
         )
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")
