@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from app.mt5.connection import ConnectionService
     from app.mt5.gateway import MT5Gateway
     from app.observability.runtime import Observability
+    from app.risk.risk_manager import RiskManager
+    from app.risk.settings import RiskSettingsSource
     from app.storage.runtime import StorageRuntime
 
 APP_NAME = "MT5 Trading Workstation"
@@ -43,6 +45,8 @@ class MarketParts:
     calendar_file: CalendarFileWatcher
     pipeline: SignalPipeline
     settings: StrategySettingsSource
+    risk: RiskManager
+    risk_settings: RiskSettingsSource
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -349,11 +353,17 @@ def _start_market(
     from app.engine.market_watch import MarketWatch
     from app.engine.signal_pipeline import SignalPipeline
     from app.mt5.market_data import MarketData
+    from app.mt5.risk_reads import GatewayRiskBroker
     from app.observability.logger import get_logger
+    from app.risk.risk_manager import RiskManager
+    from app.risk.settings import RiskSettingsSource
+    from app.storage.risk_store import RiskRepository
     from app.storage.signal_store import SignalRepository
+    from app.strategies.registry import strategy_for_magic
 
     analysis_log = get_logger(LogCategory.ANALYSIS)
     strategy_log = get_logger(LogCategory.STRATEGY)
+    risk_log = get_logger(LogCategory.RISK)
     store = storage.store
     calendar = CalendarStore(store)
     calendar_file = CalendarFileWatcher()
@@ -394,11 +404,29 @@ def _start_market(
         app_data_dir(profile),
         note=lambda text: signal_log("WARNING", text),
     )
+
+    def log_risk(level: str, message: str) -> None:
+        risk_log.log(level, "{}", message)
+
+    risk_settings = RiskSettingsSource(
+        app_data_dir(profile),
+        note=lambda text: log_risk("WARNING", text),
+    )
+    risk = RiskManager(
+        lambda: risk_settings.config,
+        GatewayRiskBroker(gateway, strategy_for_magic),
+        store=RiskRepository(store),
+        account=storage.current_account,
+        connected=lambda: service.status.connected,
+        log=log_risk,
+    )
+    log_risk("INFO", f"Risk profile: {risk_settings.config.profile_title()}")
     pipeline = SignalPipeline(
         settings.strategies,
         settings.filters,
         store=SignalRepository(store),
         account=storage.current_account,
+        risk=risk,
         log=signal_log,
     )
     loaded = pipeline.load()
@@ -426,8 +454,9 @@ def _start_market(
 
     if storage.tracker is not None:
         storage.tracker.clock_source = known_clock
+    risk.clock_source = lambda: watch.clock
     watch.start()
-    return MarketParts(watch, calendar, calendar_file, pipeline, settings)
+    return MarketParts(watch, calendar, calendar_file, pipeline, settings, risk, risk_settings)
 
 
 def _show_window(
@@ -451,6 +480,7 @@ def _show_window(
     from app.ui.crash_dialog import CrashNotifier
     from app.ui.main_window import MainWindow
     from app.ui.market_page import MarketContext
+    from app.ui.risk_page import RiskContext
     from app.ui.signals_page import SignalsContext
 
     ui_log = get_logger(LogCategory.UI)
@@ -480,6 +510,7 @@ def _show_window(
             storage,
             MarketContext(watch, prefs_dir, calendar, calendar_file, data_path),
             SignalsContext(market.pipeline, market.settings),
+            RiskContext(market.risk, market.risk_settings),
         )
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")

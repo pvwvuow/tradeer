@@ -82,6 +82,19 @@ def _read(editor: Editor) -> Any:
     return editor.text().strip()
 
 
+def _write(editor: Editor, value: Any) -> None:
+    if isinstance(editor, QCheckBox):
+        editor.setChecked(bool(value))
+    elif isinstance(editor, QComboBox):
+        editor.setCurrentText(str(value))
+    elif isinstance(editor, QSpinBox):
+        editor.setValue(int(value))
+    elif isinstance(editor, QDoubleSpinBox):
+        editor.setValue(float(value))
+    else:
+        editor.setText(str(value))
+
+
 class ParamsForm(QWidget):
     """Inputs for every field of a settings model, with the model's limits."""
 
@@ -100,6 +113,11 @@ class ParamsForm(QWidget):
 
     def values(self) -> dict[str, Any]:
         return {name: _read(editor) for name, editor in self.editors.items()}
+
+    def set_values(self, values: Mapping[str, Any]) -> None:
+        for name, editor in self.editors.items():
+            if name in values:
+                _write(editor, values[name])
 
     def validated(self) -> tuple[BaseModel | None, list[str]]:
         return validate_params(self.model, self.values())
