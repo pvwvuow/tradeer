@@ -22,9 +22,9 @@ def sources() -> dict[str, str]:
     }
 
 
-def test_only_the_gateway_imports_metatrader5() -> None:
+def test_only_the_helper_process_imports_metatrader5() -> None:
     importers = sorted(name for name, text in sources().items() if IMPORTS_MT5.search(text))
-    assert importers == ["mt5/gateway.py"]
+    assert importers == ["mt5/terminal_process.py"]
 
 
 def test_the_app_never_imports_test_fakes() -> None:

@@ -1,8 +1,10 @@
-"""The MT5 gateway thread (spec D3.1): the ONLY place in the app that imports MetaTrader5.
+"""The MT5 gateway thread (spec D3.1): every MT5 call of the app goes through it.
 
 The `MetaTrader5` package is not thread-safe, so one dedicated thread owns every call. Other
 threads submit work through a queue and get a `Future` back; every request has a timeout and
-is reported to `on_request` (the app logs it to the `mt5` category).
+is reported to `on_request` (the app logs it to the `mt5` category). The package itself runs
+in the MT5 helper process (`terminal_process.py`, ADR 46), so a slow call never blocks the
+app's other threads.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from typing import Any, TypeVar, cast
 
 from app.mt5.api import MT5Api
 from app.mt5.errors import MT5Error, MT5Timeout, MT5Unavailable
+from app.mt5.terminal_process import MT5Process
 from app.observability.masking import MASKER
 
 T = TypeVar("T")
@@ -28,11 +31,14 @@ SLOW_REQUEST_MS = 1000.0
 THREAD_NAME = "mt5-gateway"
 
 
-def load_mt5() -> MT5Api:
-    """Import the real package. Called inside the gateway thread only."""
-    import MetaTrader5
+SKIPPED_ERRORS = ("cancelled before it started", "expired in the queue")
 
-    return cast(MT5Api, MetaTrader5)
+
+def load_mt5() -> MT5Api:
+    """Start the MT5 helper process with the real package. Called in the gateway thread."""
+    process = MT5Process()
+    process.start()
+    return cast(MT5Api, process)
 
 
 @dataclass(frozen=True)
@@ -43,6 +49,17 @@ class RequestRecord:
     error: str | None
     arguments: Mapping[str, Any]
     queued_ms: float
+
+    @property
+    def skipped(self) -> bool:
+        """The request never ran: its caller gave up, or it waited too long behind others."""
+        return self.error in SKIPPED_ERRORS
+
+
+@dataclass(frozen=True)
+class ActiveRequest:
+    name: str
+    seconds: float
 
 
 @dataclass
@@ -80,10 +97,18 @@ class MT5Gateway:
         self._lock = threading.Lock()
         self._load_error: MT5Error | None = None
         self._running = False
+        self._active: tuple[str, float] | None = None
 
     @property
     def running(self) -> bool:
         return self._running
+
+    def busy(self) -> ActiveRequest | None:
+        """The request that runs right now and for how long, or None when the gateway is idle."""
+        active = self._active
+        if active is None:
+            return None
+        return ActiveRequest(active[0], self._clock() - active[1])
 
     def start(self) -> None:
         with self._lock:
@@ -167,12 +192,15 @@ class MT5Gateway:
         if api is not None:
             with contextlib.suppress(Exception):
                 api.shutdown()
+            helper = cast(object, api)
+            if isinstance(helper, MT5Process):
+                helper.close()
         self._running = False
         self._fail_pending()
 
     def _load(self) -> MT5Api | None:
         try:
-            return self._api_factory()
+            api = self._api_factory()
         except Exception as error:
             self._load_error = MT5Unavailable(
                 "The MetaTrader5 package could not be loaded",
@@ -181,6 +209,10 @@ class MT5Gateway:
                 detail=f"{type(error).__name__}: {error}",
             )
             return None
+        helper = cast(object, api)
+        if isinstance(helper, MT5Process):
+            helper.on_wait = self._beat  # beat while a slow call runs in the helper
+        return api
 
     def _execute(self, api: MT5Api | None, request: _Request) -> None:
         started = self._clock()
@@ -197,13 +229,16 @@ class MT5Gateway:
             request.future.set_exception(self._load_error or MT5Unavailable("No MT5", ""))
             self._report(request, 0.0, False, "MetaTrader5 package not loaded", queued_ms)
             return
+        self._active = (request.name, started)
         try:
             result = request.work(api)
         except BaseException as error:
+            self._active = None
             request.future.set_exception(error)
             duration = (self._clock() - started) * 1000.0
             self._report(request, duration, False, f"{type(error).__name__}: {error}", queued_ms)
             return
+        self._active = None
         request.future.set_result(result)
         self._report(request, (self._clock() - started) * 1000.0, True, None, queued_ms)
 

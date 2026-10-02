@@ -16,7 +16,10 @@ def log_request(record: RequestRecord) -> None:
         queued_ms=round(record.queued_ms, 1),
         arguments=dict(record.arguments),
     )
-    if not record.ok:
+    if record.skipped:
+        # Not an MT5 failure: another request held the gateway (ADR 46).
+        log.debug("MT5 {} skipped: {}", record.name, record.error)
+    elif not record.ok:
         log.warning(
             "MT5 {} failed after {:.0f} ms: {}",
             record.name,
