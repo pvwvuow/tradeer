@@ -43,15 +43,19 @@ class LevelSet:
     @property
     def nearest_support(self) -> Level | None:
         below = [level for level in self.levels if level.distance_atr <= 0]
-        return max(below, key=lambda level: level.distance_atr, default=None)
+        return max(below, key=_distance) if below else None
 
     @property
     def nearest_resistance(self) -> Level | None:
         above = [level for level in self.levels if level.distance_atr > 0]
-        return min(above, key=lambda level: level.distance_atr, default=None)
+        return min(above, key=_distance) if above else None
 
     def near(self, max_atr: float = NEAR_ATR) -> list[Level]:
         return [level for level in self.levels if abs(level.distance_atr) <= max_atr]
+
+
+def _distance(level: Level) -> float:
+    return level.distance_atr
 
 
 def cluster_swings(swings: Iterable[Swing], tolerance: float) -> list[Level]:
