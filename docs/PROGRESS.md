@@ -18,7 +18,7 @@ Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer,
 
 ## Current phase: 5 Market data & analysis (branch `phase/05-market-analysis`, pull request #15)
 
-Status: pull request #15 into `phase/04-storage`, waiting for review. Updated after three runs on your PC (see below).
+Status: pull request #15 into `phase/04-storage`, waiting for review. Updated after four runs on your PC (see below).
 
 ### Found in your first real run (fixed)
 
@@ -44,6 +44,14 @@ Confirmed on your PC: the MT5 helper process starts (pid 29836, MetaTrader5 5.0.
 
 1. **MT5 call times showed only 0, 15 or 16 ms.** Before Python 3.13, `time.monotonic()` on Windows ticks in 15.6 ms steps. Fix: the gateway measures with `time.perf_counter()` and logs tenths of a millisecond.
 
+### Fourth real run (2 October 2026, 12:32 UTC, Diagnostics report)
+
+Confirmed on your PC: the History lines show real bar counts (EURUSD M15 50,000+, H1 48,189, H4 15,110, D1 5,921; GBPUSD and XAUUSD alike), so asking again with fewer bars works (ADR 50). Found:
+
+1. **Fixed: "Broker time: offset unknown" while the market was open.** The prices were read before the history probes and compared with the clock after them, and the probes now download deep history, which can take minutes. Fix: the prices are read again right before the offset is measured.
+2. **For Phase 7: XAUUSD reports a tick value of 0.1 USD** for a 0.01 tick with contract size 100, while FIBO's published specification says 1 USD per point. Sizing from the tick value would risk 10 times too much on gold. Position sizing must use `order_calc_profit`, as the spec says, never the tick value.
+3. **For Phase 8: XAUUSD allows only IOC filling** (EURUSD and GBPUSD allow FOK and IOC). The report now names the filling modes.
+
 ### What was built
 
 - Closed bars only: `copy_rates_from_pos(symbol, tf, 1, n)` for M5, M15, H1, H4 and D1, cached per symbol and timeframe, with only the new bars read after the first download (`app/mt5/market_data.py`).
@@ -65,14 +73,15 @@ Confirmed on your PC: the MT5 helper process starts (pid 29836, MetaTrader5 5.0.
 - ✓ Summer-time dates for the USA and the EU (2005, 2024, 2026), UTC conversion and the broker day are unit-tested.
 - ✓ Data checks, levels, volatility, sessions, correlation, currency strength, spread, patterns, card rules, calendar CSV and store are unit-tested.
 - ✓ Architecture tests: `analysis`, `calendar`, `engine` and `core` never import Qt or MetaTrader5, the analysis is pure, and the market-data code never trades.
-- ✓ In the sandbox: 312 unit tests passed, 3 skipped (the Market page UI tests run in CI). New tests run the helper process for real: package shapes, a hanging call that restarts it, a crash, a missing package, the gateway beating while it waits, a postponed heartbeat, the repeat filter, the spread rule from your account and the history import running again. Second-run tests: a refused 100,000-bar request, bars that trail the price, the 60 s warning, a closed market, the LOADING card and a card that follows a calendar change. Third-run test: a 3 ms call is no longer reported as 0 ms.
-- ✓ CI on pull request #15: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows are green, including the Market page UI tests (pyqtgraph 0.14.0 with PySide6 6.10.3); the build job builds the app with the bundled `CalendarExporter.mq5` and runs the frozen `--self-check` and `--crash-test`. The first run found 2 mypy errors in `levels.py`; they were fixed. The fixes from your first and second log are green on all three jobs too.
+- ✓ In the sandbox: 314 unit tests passed, 3 skipped (the Market page UI tests run in CI). New tests run the helper process for real: package shapes, a hanging call that restarts it, a crash, a missing package, the gateway beating while it waits, a postponed heartbeat, the repeat filter, the spread rule from your account and the history import running again. Second-run tests: a refused 100,000-bar request, bars that trail the price, the 60 s warning, a closed market, the LOADING card and a card that follows a calendar change. Third-run test: a 3 ms call is no longer reported as 0 ms. Fourth-run test: the broker offset is found after history probes that take minutes.
+- ✓ CI on pull request #15: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows are green, including the Market page UI tests (pyqtgraph 0.14.0 with PySide6 6.10.3); the build job builds the app with the bundled `CalendarExporter.mq5` and runs the frozen `--self-check` and `--crash-test`. The first run found 2 mypy errors in `levels.py`; they were fixed. The fixes from your first three runs are green on all three jobs too.
 - ✗ `CalendarExporter.mq5` was not compiled here (no MetaEditor). Compile it on your PC (see below).
 - ✓ First run against a real MT5 demo account (your log): connection, history, broker time and 3 cards worked; the 4 problems above are fixed.
 - ✓ Second run on your PC: no font warnings, GBPUSD no longer stuck on "wait", trade times in UTC.
 - ✓ Third run on your PC: the helper process starts (pid in the log), every MT5 call took under 20 ms, the history import stayed in UTC, and 3 cards with reasons appeared 2 s after the start.
 - ✗ The freeze fix is not proven on your PC yet (no slow MT5 call happened in the second or third run). Step 6 below causes one.
-- ✗ Not checked on your PC yet: the Diagnostics bar counts (step 7) and the LOADING card (step 6).
+- ✓ Fourth run on your PC: Diagnostics shows real bar counts (50,000+ M15 bars per symbol).
+- ✗ Not checked on your PC yet: the LOADING card (step 6) and the broker time in Diagnostics after this fix (step 7).
 
 ### Test on your PC
 
@@ -82,7 +91,7 @@ Confirmed on your PC: the MT5 helper process starts (pid 29836, MetaTrader5 5.0.
 4. Add a USD high-impact event 30 minutes from now by hand: the EURUSD and XAUUSD cards say "wait" after the next bar.
 5. Check the status bar: the session clock and the next news.
 6. Close MT5 completely (File > Exit), then start the app: it starts MT5 itself, so the first calls are slow. While the cards load for the first time, move the window and switch pages: it must not freeze. Cards may show LOADING for a few seconds. In Task Manager you see a second `MT5TradingWorkstation` process (the MT5 helper). Then send `all.log` again: lines like "MT5 ... was slow" are fine, but there must be no "Worker ... did not respond".
-7. Press Run diagnostics on the Connection page and copy the report: the History lines show real bar counts (for example "50,000+ bars"), not 0. If a card shows LOADING, it should turn into a normal card within a few seconds.
+7. Press Run diagnostics on the Connection page and copy the report: the History lines show real bar counts (for example "50,000+ bars"), and while the market is open the Broker time line says "server time is UTC+3". The first run can take longer while MT5 downloads deep history.
 
 ### Limitations
 
@@ -192,6 +201,7 @@ Acceptance checklist (spec G3 phase 2):
 - Tick freshness and data checks arrived in Phase 5 (Market page); the connection checklist itself still only checks that history exists and warns when "Max bars in chart" is low.
 - "Start MT5 automatically" and "Start the app with Windows" (spec I5) are not built yet.
 - `--mt5-trade-test` arrives with execution in Phase 8.
+- FIBO's XAUUSD tick value (0.1 USD) disagrees with its contract size and published point value (1 USD): Phase 7 sizes positions with `order_calc_profit`.
 - Profiles cannot be switched inside a running window; another profile opens in a new window.
 - Health checks, performance metrics, the debug bundle and the full Logs page (trace timeline, time filters, export) are Phase 14 items.
 
