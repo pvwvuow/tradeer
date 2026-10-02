@@ -18,6 +18,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from app.analysis.bars import ANALYSIS_TIMEFRAMES
 from app.analysis.correlation import CorrelationMatrix, correlation_matrix
@@ -37,6 +38,22 @@ THREAD_NAME = "market-analysis"
 
 Log = Callable[[str, str], None]
 Listener = Callable[["MarketSnapshot"], None]
+
+
+class SignalHook(Protocol):
+    """The signal pipeline (Phase 6), run after a symbol was analysed on a new closed bar."""
+
+    def on_analysis(
+        self,
+        analysis: SymbolAnalysis,
+        *,
+        clock: BrokerClock,
+        spec: SymbolSpec | None,
+        spread: float,
+        now: float | None = None,
+    ) -> object: ...
+
+    def on_cycle(self, now: float | None = None) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -71,6 +88,7 @@ class MarketWatch:
         save_clock: Callable[[BrokerClock], None] | None = None,
         log: Log = _quiet,
         heartbeat: Callable[[], None] | None = None,
+        signals: SignalHook | None = None,
         utc_now: Callable[[], float] = time.time,
         interval: float = POLL_SECONDS,
         calendar_interval: float = CALENDAR_SECONDS,
@@ -84,6 +102,7 @@ class MarketWatch:
         self._save_clock = save_clock
         self._log = log
         self._heartbeat = heartbeat
+        self._signals = signals
         self._now = utc_now
         self._interval = interval
         self._calendar_interval = calendar_interval
@@ -102,6 +121,7 @@ class MarketWatch:
         self._pending: set[str] = set()  # broker symbols to analyse on the next cycle
         self._warned: set[str] = set()
         self._analyses: dict[str, SymbolAnalysis] = {}
+        self._fresh: list[str] = []  # symbols analysed in this cycle
         self._quotes: dict[str, Quote] = {}
         self._missing: tuple[str, ...] = ()
         self._correlation: CorrelationMatrix | None = None
@@ -150,6 +170,7 @@ class MarketWatch:
         """One poll. Runs in the analysis thread (tests call it directly)."""
         self._beat()
         now = self._now()
+        self._run_signals(now)
         if not self._connected():
             if self._was_connected:
                 self._log("INFO", "Market analysis paused: MT5 is not connected")
@@ -163,6 +184,7 @@ class MarketWatch:
             self._update_calendar(now)
             self._update_symbols(now)
             self._update_cross_market(now)
+            self._new_signals(now)
         except MT5Error as error:
             self._log("WARNING", f"Market analysis: MT5 request failed: {error}")
             return self._publish(self._build("error", f"MT5 request failed: {error.title}", now))
@@ -185,6 +207,7 @@ class MarketWatch:
 
     def _reset(self) -> None:
         self._analyses.clear()
+        self._fresh.clear()
         self._forget_loading()
         self._watched = ()
 
@@ -250,6 +273,7 @@ class MarketWatch:
                 self.market.update(broker, timeframe)
             self._last_bar[broker] = newest
             self._analyses[name] = self._analyze(name, broker, now, events)
+            self._fresh.append(name)
 
     def _history_loading(self, name: str, broker: str, why: str | None, now: float) -> bool:
         """True while MT5 still loads this symbol's bars: the card waits for them."""
@@ -333,6 +357,37 @@ class MarketWatch:
         self._strength = currency_strength(pairs)
         hourly = {name: self.market.bars(b, "H1", name) for name, b in self._mapping.items()}
         self._correlation = correlation_matrix(hourly)
+
+    def _run_signals(self, now: float) -> None:
+        if self._signals is None:
+            return
+        try:
+            self._signals.on_cycle(now)
+        except Exception as error:
+            self._log("ERROR", f"Signal check failed: {type(error).__name__}: {error}")
+
+    def _new_signals(self, now: float) -> None:
+        """Strategies run only on symbols analysed on a new closed bar, with good data."""
+        fresh, self._fresh = self._fresh, []
+        if self._signals is None:
+            return
+        for name in fresh:
+            analysis = self._analyses.get(name)
+            broker = self._mapping.get(name, "")
+            if analysis is None or not analysis.quality.ok:
+                continue
+            quote = self._quotes.get(broker)
+            spread = quote.ask - quote.bid if quote is not None else math.nan
+            try:
+                self._signals.on_analysis(
+                    analysis,
+                    clock=self.market.clock,
+                    spec=self._specs.get(broker),
+                    spread=spread,
+                    now=now,
+                )
+            except Exception as error:
+                self._log("ERROR", f"{name}: strategies failed: {type(error).__name__}: {error}")
 
     # Helpers -----------------------------------------------------------------------------
     def _status_text(self) -> str:
