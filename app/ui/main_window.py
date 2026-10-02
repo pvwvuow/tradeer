@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.__version__ import __version__
+from app.analysis.sessions import duration_text, next_change, session_label
 from app.core.ui_prefs import ThemeName, UiPrefs, ViewMode, save_prefs
 from app.domain.config import TradingDefaults
 from app.mt5.connection import ConnectionState, ConnectionStatus
@@ -34,6 +37,7 @@ from app.ui.connection_page import ConnectionContext, ConnectionPage
 from app.ui.crash_dialog import CrashDialog
 from app.ui.data_page import DataPage
 from app.ui.logs_page import LogsPage
+from app.ui.market_page import MarketContext, MarketPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
 from app.ui.pages import PlaceholderPage, SimpleHomePage, styled_label
 from app.ui.theme import build_qss, tokens_for
@@ -49,6 +53,7 @@ class MainWindow(QMainWindow):
         log_controls: LogControls | None = None,
         connection: ConnectionContext | None = None,
         storage: StorageRuntime | None = None,
+        market: MarketContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -90,9 +95,12 @@ class MainWindow(QMainWindow):
         self.logs_page = LogsPage(log_controls) if log_controls is not None else None
         self.connection_page = ConnectionPage(connection) if connection is not None else None
         self.data_page = DataPage(storage) if storage is not None else None
+        self.market_page = MarketPage(market)
         self.settings_tabs: QTabWidget | None = None
         for spec in ADVANCED_PAGES:
-            if spec.page_id == "logs" and self.logs_page is not None:
+            if spec.page_id == "market":
+                self._add_page(spec.page_id, self.market_page)
+            elif spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
             elif spec.page_id == "settings" and self.data_page is not None:
                 self.settings_tabs = QTabWidget()
@@ -112,6 +120,10 @@ class MainWindow(QMainWindow):
         if self.data_page is not None:
             self.data_page.bridge.sync.connect(self.set_sync_status)
             self.set_sync_status(self.data_page.last_status)
+        self._clock_timer = QTimer(self)
+        self._clock_timer.timeout.connect(self.update_session_clock)
+        self._clock_timer.start(1000)
+        self.update_session_clock()
         self._shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         self._shortcut.activated.connect(self.open_command_palette)
         self.apply_theme(prefs.theme, persist=False)
@@ -161,6 +173,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(build_qss(tokens))
         if self.logs_page is not None:
             self.logs_page.apply_tokens(tokens)
+        self.market_page.apply_tokens(tokens)
         next_theme = "light" if theme is ThemeName.DARK else "dark"
         self.theme_button.setText(f"Switch to {next_theme} theme")
         if persist:
@@ -201,6 +214,14 @@ class MainWindow(QMainWindow):
         badge = "ANALYSIS-ONLY" if status.analysis_only else self.defaults.mode.label.upper()
         self.mode_badge.setText(badge)
         self.home.status_line.setText(plain_status(status))
+
+    def update_session_clock(self, now: float | None = None) -> None:
+        """Status bar (spec F2): the current session, the next open or close, the next news."""
+        moment = time.time() if now is None else now
+        change, seconds = next_change(moment)
+        upcoming = f" \u00b7 {change} in {duration_text(seconds)}" if change else ""
+        self.session_clock_label.setText(f"{session_label(moment)}{upcoming}")
+        self.news_label.setText(self.market_page.next_news_text(moment))
 
     def set_sync_status(self, status: object) -> None:
         """Slot: show the cloud sync state in the status bar."""
@@ -281,10 +302,16 @@ class MainWindow(QMainWindow):
         self.kill_switch.setToolTip("Nothing is running yet. The kill switch arrives in Phase 8.")
         self.sync_label = styled_label("Cloud: off", "status")
         self.sync_label.setObjectName("SyncLabel")
+        self.session_clock_label = styled_label("", "status")
+        self.session_clock_label.setObjectName("SessionClock")
+        self.news_label = styled_label("", "status")
+        self.news_label.setObjectName("NextNews")
         bar.addWidget(self.connection_label)
         bar.addWidget(self.mode_badge)
         bar.addWidget(self.bot_state_label)
         bar.addWidget(self.sync_label)
+        bar.addWidget(self.session_clock_label)
+        bar.addWidget(self.news_label)
         bar.addPermanentWidget(styled_label(f"v{__version__}", "status"))
         bar.addPermanentWidget(self.kill_switch)
         self.setStatusBar(bar)

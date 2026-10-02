@@ -293,5 +293,5 @@ class CandleChart(QWidget):
         self.info.setText(
             f"{moment}  O {bars.open[index]:,.{digits}f}  H {bars.high[index]:,.{digits}f}  "
             f"L {bars.low[index]:,.{digits}f}  C {bars.close[index]:,.{digits}f}  "
-            f"\\u00b7 cursor {point.y():,.{digits}f}",
+            f"\u00b7 cursor {point.y():,.{digits}f}",
         )
