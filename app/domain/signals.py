@@ -178,6 +178,8 @@ class SignalRecord:
     spread: float = math.nan
     atr: float = math.nan
     reject_reason: str = ""
+    volume: float | None = None  # lots from the risk manager (Phase 7)
+    risk_money: float | None = None  # account currency lost at the SL, commission included
 
     @property
     def id(self) -> str:

@@ -165,6 +165,8 @@ def signal_row(record: SignalRecord, account: str | None) -> dict[str, Any]:
         "probability_samples": estimate.samples,
         "probability_min_samples": estimate.min_samples,
         "history": history,
+        "volume": _finite(record.volume),
+        "risk_money": _finite(record.risk_money),
     }
     return {
         "id": signal.id,
@@ -278,6 +280,8 @@ def record_from_row(row: Mapping[str, Any]) -> SignalRecord | None:
         int(_number(meta.get("probability_min_samples"), BASELINE_MIN_SAMPLES)),
     )
     ev = row.get("expected_value")
+    volume = _number(meta.get("volume"))
+    risk_money = _number(meta.get("risk_money"))
     return SignalRecord(
         signal=signal,
         trace=trace,
@@ -286,4 +290,6 @@ def record_from_row(row: Mapping[str, Any]) -> SignalRecord | None:
         spread=_number(row.get("spread")),
         atr=_number(row.get("atr")),
         reject_reason=str(row.get("reject_reason") or ""),
+        volume=volume if math.isfinite(volume) else None,
+        risk_money=risk_money if math.isfinite(risk_money) else None,
     )

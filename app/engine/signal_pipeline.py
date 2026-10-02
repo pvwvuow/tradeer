@@ -2,9 +2,10 @@
 probability + EV -> filters -> risk -> decision, every step in the decision trace.
 
 Runs in the `market-analysis` thread, called by `MarketWatch` after a symbol was analysed.
-Signal only until Phase 8: a signal that passes every filter waits for approval
-(`PENDING_APPROVAL`) and expires; nothing is sent to MT5. The UI asks to dismiss a signal
-through a queue, so every database write happens in this one thread.
+A signal that passes every filter is sized and checked by the risk manager (Phase 7); one
+that breaks a limit is `RISK_REJECTED`. Signal only until Phase 8: a signal within every
+limit waits for approval (`PENDING_APPROVAL`) and expires; nothing is sent to MT5. The UI
+asks to dismiss a signal through a queue, so every database write happens in this one thread.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from app.domain.signals import TRANSITIONS, Signal, SignalRecord, SignalState
 from app.engine.filters import FilterInput, FilterSettings, run_filters
 from app.mt5.models import SymbolSpec, SymbolTradeMode
 from app.observability.decision_trace import DecisionTrace
+from app.risk.risk_manager import RiskDecision
 from app.storage.ids import stable_id
 from app.storage.signal_store import TradeResult, config_id
 from app.strategies.base import EXAMPLE_NOTE, Evaluation, Strategy
@@ -36,7 +38,8 @@ from app.strategies.context import MarketContext, build_context
 
 KEEP_SIGNALS = 200
 FRESH_GRACE_SECONDS = 120
-RISK_NOTE = "Position size and risk limits arrive in Phase 7; nothing is sized yet"
+RISK_NOTE = "No risk manager is running, so nothing was sized"
+FILTERED_RISK_NOTE = "not sized: the signal was filtered out"
 EXECUTION_NOTE = "Signal only: orders arrive in Phase 8"
 
 Log = Callable[[str, str], None]
@@ -56,6 +59,69 @@ class SignalStore(Protocol):
     def recent(self, limit: int = ..., account: str | None = None) -> list[SignalRecord]: ...
 
     def results(self, strategy: str, limit: int = ...) -> list[TradeResult]: ...
+
+
+class RiskHook(Protocol):
+    """The risk manager (Phase 7): sizes a signal and checks every limit."""
+
+    def evaluate(
+        self,
+        signal: Signal,
+        spec: SymbolSpec | None,
+        clock: BrokerClock,
+        now: float,
+    ) -> RiskDecision: ...
+
+    def refresh(self, now: float | None = None, *, force: bool = False) -> None: ...
+
+
+def add_risk_steps(trace: DecisionTrace, decision: RiskDecision, now: float) -> None:
+    """The full sizing calculation and every limit check, one trace line each."""
+    sizing = decision.sizing
+    cur = decision.currency
+    if sizing is None:
+        trace.add("risk", "position size and limits", False, detail=decision.reason, at=now)
+        return
+    trace.add("risk", "equity", None, value=round(decision.equity, 2), detail=cur, at=now)
+    loss = decision.loss_per_lot
+    trace.add(
+        "risk",
+        "loss per lot at SL",
+        loss is not None and math.isfinite(loss) and loss > 0,
+        value=round(loss, 2) if loss is not None and math.isfinite(loss) else None,
+        detail=f"{cur}, from MT5 order_calc_profit (never the tick value)",
+    )
+    trace.add(
+        "risk",
+        "commission per lot",
+        None,
+        value=round(decision.commission_per_lot, 2),
+        detail=f"{cur}, {decision.commission_source}",
+    )
+    trace.add(
+        "risk",
+        "lot size",
+        sizing.ok,
+        value=sizing.volume if sizing.ok else None,
+        detail=sizing.text(),
+    )
+    trace.add(
+        "risk",
+        "risk money",
+        None,
+        value=round(sizing.risk_money, 2),
+        threshold=round(sizing.allowed_risk, 2),
+        detail=f"{cur}: what this lot loses at the stop loss, commission included",
+    )
+    for check in decision.checks:
+        trace.add(
+            "risk",
+            check.name,
+            check.passed,
+            value=check.value,
+            threshold=check.threshold,
+            detail=check.detail,
+        )
 
 
 @dataclass(frozen=True)
@@ -118,12 +184,14 @@ class SignalPipeline:
         *,
         store: SignalStore | None = None,
         account: Callable[[], str | None] | None = None,
+        risk: RiskHook | None = None,
         log: Log = _quiet,
         utc_now: Callable[[], float] = time.time,
     ) -> None:
         self._strategies = strategies
         self._filters = filters
         self._store = store
+        self._risk = risk
         self._account = account or (lambda: None)
         self._log = log
         self._now = utc_now
@@ -186,6 +254,11 @@ class SignalPipeline:
                 changed |= self._finish(signal.id, SignalState.EXPIRED, moment, reason)
         if changed:
             self._publish("Signals updated")
+        if self._risk is not None:
+            try:
+                self._risk.refresh(moment)
+            except Exception as error:
+                self._log("ERROR", f"Risk refresh failed: {type(error).__name__}: {error}")
 
     def on_analysis(
         self,
@@ -359,16 +432,28 @@ class SignalPipeline:
         )
 
         # Risk, decision ----------------------------------------------------------------
-        trace.add("risk", "position size and limits", None, detail=RISK_NOTE)
         failed = [step.name for step in trace.failed() if step.stage == "filter"]
-        state = SignalState.FILTERED_OUT if failed else SignalState.PENDING_APPROVAL
-        reason = "; ".join(failed) if failed else "all filters passed"
-        trace.add(
-            "decision",
-            state.value,
-            not failed,
-            detail=f"filtered out by: {reason}" if failed else "waiting for your approval",
-        )
+        decision: RiskDecision | None = None
+        if self._risk is None:
+            trace.add("risk", "position size and limits", None, detail=RISK_NOTE)
+        elif failed:
+            trace.add("risk", "position size and limits", None, detail=FILTERED_RISK_NOTE)
+        else:
+            decision = self._risk.evaluate(signal, spec, ctx.clock, now)
+            add_risk_steps(trace, decision, now)
+        if failed:
+            state, reason = SignalState.FILTERED_OUT, "; ".join(failed)
+            detail = f"filtered out by: {reason}"
+        elif decision is not None and not decision.ok:
+            state, reason = SignalState.RISK_REJECTED, decision.reason
+            detail = f"rejected by risk: {reason}"
+        else:
+            state, reason = SignalState.PENDING_APPROVAL, "all filters passed"
+            if decision is not None:
+                reason = f"all filters passed; {decision.volume:g} lots within every risk limit"
+            detail = "waiting for your approval"
+        rejected = state is not SignalState.PENDING_APPROVAL
+        trace.add("decision", state.value, not rejected, detail=detail)
         trace.add(
             "execution",
             "expires at",
@@ -385,15 +470,20 @@ class SignalPipeline:
             expected_value=ev,
             spread=ctx.spread,
             atr=range_atr,
-            reject_reason=reason if failed else "",
+            reject_reason=reason if rejected else "",
+            volume=decision.volume if decision is not None and decision.ok else None,
+            risk_money=decision.risk_money if decision is not None and decision.ok else None,
         )
         if not trace.complete:
             missing = ", ".join(trace.missing_stages())
             self._log("ERROR", f"Decision trace of {signal.id} is missing: {missing}")
         self._remember(record)
         self._save(record, strategy)
-        verdict = "filtered out" if failed else "waiting for approval"
-        why = f"Filtered by: {reason}" if failed else f"Why: {signal.reason}"
+        verdict = {
+            SignalState.FILTERED_OUT: "filtered out",
+            SignalState.RISK_REJECTED: "rejected by risk",
+        }.get(state, "waiting for approval")
+        why = f"Because: {reason}" if rejected else f"Why: {signal.reason}"
         self._log("INFO", f"Signal {verdict}: {signal.summary()} [{strategy.name}]. {why}.")
         return record
 

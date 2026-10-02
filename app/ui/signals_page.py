@@ -34,8 +34,8 @@ from app.strategies.base import EXAMPLE_NOTE
 from app.ui.pages import PAGE_MARGIN, styled_label
 
 SIGNAL_ONLY_NOTE = (
-    "Signal only: nothing is sent to MT5. Risk sizing arrives in Phase 7 and orders in "
-    f"Phase 8, so Approve stays off. {EXAMPLE_NOTE}"
+    "Signal only: nothing is sent to MT5. Every signal is sized and checked by the risk "
+    f"limits; orders arrive in Phase 8, so Approve stays off. {EXAMPLE_NOTE}"
 )
 FEED_COLUMNS = [
     "Time (local)",
@@ -48,6 +48,8 @@ FEED_COLUMNS = [
     "R:R",
     "Probability",
     "EV (R)",
+    "Lot",
+    "Risk",
     "State",
     "Reason",
 ]
@@ -111,6 +113,8 @@ def feed_row(record: SignalRecord) -> list[str]:
     probability = "unknown" if estimate.value is None else f"{estimate.value * 100:.0f}%"
     ev = "-" if record.expected_value is None else f"{record.expected_value:+.2f}"
     reason = record.reject_reason or signal.reason
+    lot = "-" if record.volume is None else f"{record.volume:g}"
+    risk = "-" if record.risk_money is None else f"{record.risk_money:,.2f}"
     return [
         moment,
         signal.symbol,
@@ -122,6 +126,8 @@ def feed_row(record: SignalRecord) -> list[str]:
         f"{signal.rr:.1f}",
         probability,
         ev,
+        lot,
+        risk,
         state_text(signal.state),
         reason,
     ]
