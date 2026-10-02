@@ -8,7 +8,7 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 2: Observability, pull request #10, CI green, waiting for review.
 - Phase 3: MT5 connection, pull request #13, CI green, waiting for review.
 - Phase 4: Storage, pull request #14, CI green, waiting for review.
-- Phase 5: Market data & analysis, pull request #15, CI green, waiting for review.
+- Phase 5: Market data & analysis, pull request #15, updated with the fixes from the first real run, waiting for review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -18,7 +18,16 @@ Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer,
 
 ## Current phase: 5 Market data & analysis (branch `phase/05-market-analysis`, pull request #15)
 
-Status: pull request #15 into `phase/04-storage`, waiting for review.
+Status: pull request #15 into `phase/04-storage`, waiting for review. Updated after the first run on a real PC (see below).
+
+### Found in your first real run (fixed)
+
+Your log (FIBO Group demo, 2 October 2026) showed the connection, the history import (11 deals, 5 trades), the broker time (UTC+2/+3) and all 3 cards working. It also showed 4 problems:
+
+1. **The window froze for 12 s and 16 s** while MT5 answered slowly (connecting took 11.4 s, the first bar download 15.7 s). Even the watchdog stopped, so the MetaTrader5 package blocks the whole Python process while it waits. Fix: the package runs in its own helper process (`app/mt5/terminal_process.py`). A call that hangs for 120 s restarts the helper and the app logs in again; a heartbeat stuck behind a long request is postponed, not reported as a lost connection.
+2. **95% of the log was one Qt warning** (`QFont::setPointSize: Point size <= 0 (-1)`, 956 times). Fix: font sizes in pt instead of px, and a repeated message is logged once a minute with a count.
+3. **GBPUSD and XAUUSD always said "wait".** MT5 stores the minimum spread of each bar, and the check compared the live spread with those minimums. Fix: the last closed M5 bar's spread is compared with the typical bar spread of this hour. The log line of each card now also says why.
+4. **Trade times were saved in server time**, because no fresh price had arrived when the history import ran ("offset unknown (market closed)" although the market was open). Fix: the import uses the broker clock the analysis measured or saved, and runs again by itself once the clock is measured.
 
 ### What was built
 
@@ -40,11 +49,13 @@ Status: pull request #15 into `phase/04-storage`, waiting for review.
 - ✓ Market structure never looks ahead: the result for the first k bars equals the full result cut at bar k.
 - ✓ Summer-time dates for the USA and the EU (2005, 2024, 2026), UTC conversion and the broker day are unit-tested.
 - ✓ Data checks, levels, volatility, sessions, correlation, currency strength, spread, patterns, card rules, calendar CSV and store are unit-tested.
-- ✓ Architecture tests: `analysis`, `calendar`, `engine` and `core` never import Qt or MetaTrader5, the analysis is pure, and the market-data code never trades.
-- ✓ In the sandbox: 291 unit tests passed, 3 skipped (the Market page UI tests run in CI).
-- ✓ CI on pull request #15: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows are green, including the Market page UI tests (pyqtgraph 0.14.0 with PySide6 6.10.3); the build job builds the app with the bundled `CalendarExporter.mq5` and runs the frozen `--self-check` and `--crash-test`. The first run found 2 mypy errors in `levels.py`; they were fixed.
+- ✓ Architecture tests: `analysis`, `calendar`, `engine` and `core` never import Qt or MetaTrader5, the analysis is pure, the market-data code never trades, and only the helper process imports MetaTrader5.
+- ✓ In the sandbox: 304 unit tests passed, 3 skipped (the Market page UI tests run in CI). New tests run the helper process for real: package shapes, a hanging call that restarts it, a crash, a missing package, the gateway beating while it waits, a postponed heartbeat, the repeat filter, the spread rule from your account and the history import running again.
+- ✓ CI before the log fixes: green on Linux and Windows, including the build job with the frozen `--self-check` and `--crash-test`. After the log fixes: the Linux tests are green; see the checks on pull request #15 for the Windows job and the build, which now also starts the MT5 helper in the frozen app.
 - ✗ `CalendarExporter.mq5` was not compiled here (no MetaEditor). Compile it on your PC (see below).
-- ✗ Not yet checked against a real MT5 account.
+- ✓ First run against a real MT5 demo account (your log): connection, history, broker time and 3 cards worked; the 4 problems above are fixed.
+- ✗ The fixes are not yet checked on your PC. Please run the test below again and send the new log.
+- ✗ `docs/ARCHITECTURE.md` still needs ADRs 46 to 48 (helper process, spread rule, repeated Qt messages); the reasons are in this file and in the commit messages.
 
 ### Test on your PC
 
@@ -53,6 +64,7 @@ Status: pull request #15 into `phase/04-storage`, waiting for review.
 3. Open the Calendar tab and click Install MT5 exporter. In MT5 press F4 (MetaEditor), open Services > CalendarExporter.mq5 and press F7 (Compile). Back in MT5, Navigator > Services, right-click CalendarExporter > Add service, then start it. Click Read MT5 calendar now: upcoming events appear with countdowns.
 4. Add a USD high-impact event 30 minutes from now by hand: the EURUSD and XAUUSD cards say "wait" after the next bar.
 5. Check the status bar: the session clock and the next news.
+6. While the cards load for the first time, move the window and switch pages: it must not freeze. In Task Manager you see a second `MT5TradingWorkstation` process (the MT5 helper). Then send `all.log` again: no repeated font warnings, and each card line ends with "Why: ...".
 
 ### Limitations
 
@@ -60,6 +72,7 @@ Status: pull request #15 into `phase/04-storage`, waiting for review.
 - The session clock uses FX hours (Sunday to Friday, New York 17:00). Symbols with their own hours (indices) show "not trading right now" when their prices stop.
 - The broker clock assumes UTC+2/+3 (New York close) until the first fresh price arrives; the card says so.
 - The chart draws the bars kept by the analysis (600 per timeframe); deeper history arrives with backtesting.
+- The spread status follows closed M5 bars, so a sudden spread jump shows after the bar closes; the live spread is shown on the card right away.
 
 ## Phase 4: Storage (branch `phase/04-storage`, pull request #14)
 
@@ -88,7 +101,7 @@ Status: pull request #14 into `phase/03-mt5-connection`, CI green, waiting for r
 - ✓ CI is green on this pull request: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows, including the httpx client, Data page and log storage tests; the build job builds the app and runs the frozen `--self-check` and `--crash-test`. The first run had found 4 mypy errors and a Windows-only file lock on a damaged database; both were fixed.
 - ✗ Not tested with a real Supabase project (see "Test on your PC").
 - ✗ The SQL files have not been run on a real Postgres database.
-- ✗ History import not checked against a real MT5 account.
+- ✓ (Phase 5) History import worked against your real MT5 demo account.
 - ✓ (Fixed in Phase 5) Server time to UTC now follows the broker's summer-time rules.
 
 ### Test on your PC
@@ -109,8 +122,8 @@ Status: pull request #14 into `phase/03-mt5-connection`, CI green, waiting for r
 
 Built:
 
-- `MT5Gateway`: one thread owns every call to the real `MetaTrader5` package, through a queue with a timeout on every call, a watchdog heartbeat and a log record (masked arguments, duration, error) for every request in the `mt5` category.
-- `FakeMT5` in `tests/fakes/` for tests only. An architecture test fails if any module except `app/mt5/gateway.py` imports `MetaTrader5`, or if `app/` imports the fakes.
+- `MT5Gateway`: one thread owns every call to the real `MetaTrader5` package, through a queue with a timeout on every call, a watchdog heartbeat and a log record (masked arguments, duration, error) for every request in the `mt5` category. (Phase 5: the package itself now runs in a helper process.)
+- `FakeMT5` in `tests/fakes/` for tests only. An architecture test fails if any module except the MT5 helper module imports `MetaTrader5`, or if `app/` imports the fakes.
 - The Test-connection checklist (spec C1, I3): terminal found, terminal running, login, account info, broker connection, Algo Trading, account trading permission, symbols, live quotes and history, each with the real value or a plain-language fix. `last_error()` is mapped to friendly messages (wrong password or server, IPC errors, MT4 or 32-bit terminal, not logged in, no connection), with a same-user and same-privilege hint.
 - Account details shown: broker, server, login, name, `DEMO` / `REAL` / `CONTEST`, currency, balance, equity, leverage, hedging or netting, stop-out level and mode, terminal build.
 - Investor password: detected from `account_info().trade_allowed`, switches to Analysis-only (status bar badge `ANALYSIS-ONLY`).
@@ -127,7 +140,7 @@ Acceptance checklist (spec G3 phase 3):
 
 - ✓ Gateway, checklist, diagnostics, smoke test, connection service, profiles, credentials, single-instance lock and terminal discovery pass their unit tests against `FakeMT5` in the agent sandbox (Python 3.12, without PySide6, loguru or keyring).
 - ✓ The read-only tools never call `order_send` or `order_check` (tests check every call `FakeMT5` received).
-- ✗ **The real connection is not verified.** The spec criterion is that the downloaded build connects to your real MT5 demo account and shows real broker, login, balance and live bid/ask. Only you can check this on your PC (see the pull request, "Test on your PC").
+- ✓ **The real connection works** (your log from 2 October 2026): FIBO Group demo, real login, balance, leverage and hedging mode.
 - ✓ CI is green on this pull request: `ruff check`, `ruff format --check`, `mypy` (strict) and pytest on Linux and Windows, including the Qt tests of the Connection page and the integration test of the request log; the build job builds the app and runs the frozen `--self-check` and `--crash-test`.
 - ✗ Investor mode, reconnect and the open-position alert are verified with `FakeMT5` only.
 - ✗ Partly Windows-only: the test that compares the copied constants with the real package runs only in the Windows CI job. Terminal discovery and Credential Manager are tested with temporary folders and an in-memory store, not with a real installed terminal or the real vault.
@@ -167,6 +180,6 @@ Acceptance checklist (spec G3 phase 2):
 
 ## Next steps
 
-1. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), Phase 4 (#14), then Phase 5 (#15). Each one is retargeted to `main` after the one before it is merged.
-2. Run "Test on your PC" from the Phase 3, 4 and 5 pull requests against your MT5 demo account and report the result.
+1. Run "Test on your PC" of Phase 5 again with the fixes and send the new `all.log`.
+2. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), Phase 4 (#14), then Phase 5 (#15). Each one is retargeted to `main` after the one before it is merged.
 3. Phase 6 (strategies and signals, plus the opportunity scanner) after Phase 5 is reviewed.
