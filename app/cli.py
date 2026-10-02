@@ -25,6 +25,7 @@ REQUIRED_MODULES: tuple[tuple[str, str | None], ...] = (
     ("PySide6.QtWidgets", None),
     ("sqlite3", "sqlite_version"),
     ("httpx", "__version__"),
+    ("pyqtgraph", "__version__"),
 )
 
 
@@ -112,6 +113,18 @@ def _check_module(importer: Importer, name: str, version_attr: str | None) -> Ch
     return CheckResult(name, True, f"version {getattr(module, version_attr, 'unknown')}")
 
 
+def bundled_files() -> tuple[tuple[str, Path], ...]:
+    """Data files the build must contain (PyInstaller `--add-data`)."""
+    calendar = Path(__file__).resolve().parent / "calendar" / "mql5" / "CalendarExporter.mq5"
+    return (("calendar exporter", calendar),)
+
+
+def _check_file(name: str, path: Path) -> CheckResult:
+    if path.is_file():
+        return CheckResult(name, True, f"{path.name} included")
+    return CheckResult(name, False, f"{path} is missing from the build")
+
+
 def run_self_check(
     importer: Importer = importlib.import_module,
     pointer_bits: int | None = None,
@@ -121,6 +134,7 @@ def run_self_check(
     version = python_version or (sys.version_info[0], sys.version_info[1])
     results = [_check_python(bits, version)]
     results.extend(_check_module(importer, name, attr) for name, attr in REQUIRED_MODULES)
+    results.extend(_check_file(name, path) for name, path in bundled_files())
     ok = all(result.ok for result in results)
     lines = [f"MT5 Trading Workstation {__version__} self-check on {platform.platform()}"]
     lines.extend(result.line() for result in results)
