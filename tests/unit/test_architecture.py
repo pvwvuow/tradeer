@@ -92,3 +92,29 @@ def test_signal_code_never_trades() -> None:
     texts = sources()
     names = ["engine/signal_pipeline.py", "engine/filters.py", "ui/signals_page.py"]
     assert [name for name in names if ORDER_CALLS.search(texts[name])] == []
+
+
+def test_risk_math_is_pure() -> None:
+    """Sizing, limits, exposure and the limit state: no MT5, storage, engine, UI or files."""
+    forbidden = re.compile(r"app\.(mt5|storage|engine|ui)\b|(?<![\w.])open\(|threading|sqlite3")
+    names = ("domain/sizing.py", "risk/limits.py", "risk/exposure.py", "risk/limits_state.py")
+    texts = sources()
+    offenders = [
+        f"{name}: {found.group(0)}" for name in names for found in forbidden.finditer(texts[name])
+    ]
+    assert offenders == []
+
+
+def test_risk_code_never_trades_or_imports_qt() -> None:
+    texts = sources()
+    names = [name for name in texts if name.startswith("risk/")]
+    names += ["mt5/risk_reads.py", "storage/risk_store.py", "ui/risk_page.py"]
+    assert [name for name in names if ORDER_CALLS.search(texts[name])] == []
+    assert [name for name in names if name.startswith("risk/") and "PySide6" in texts[name]] == []
+
+
+def test_sizing_never_uses_the_tick_value() -> None:
+    """ADR 60: FIBO reported a 10x wrong tick value for gold; order_calc_profit is right."""
+    texts = sources()
+    names = ["domain/sizing.py", "risk/risk_manager.py", "risk/limits.py", "mt5/risk_reads.py"]
+    assert [name for name in names if "tick_value" in texts[name]] == []
