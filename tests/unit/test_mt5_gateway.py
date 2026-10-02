@@ -63,6 +63,25 @@ def test_requests_are_reported_with_masked_arguments() -> None:
     assert all(record.duration_ms >= 0 for record in records)
 
 
+def test_call_times_are_measured_to_a_fraction_of_a_millisecond() -> None:
+    # A real log showed only 0, 15 or 16 ms: Windows' monotonic clock ticks every 15.6 ms.
+    records: list[RequestRecord] = []
+    gateway = started(FakeMT5(), records)
+
+    def three_ms(mt5: MT5Api) -> int:
+        end = time.perf_counter() + 0.003
+        while time.perf_counter() < end:
+            pass
+        return 1
+
+    try:
+        assert gateway.run("busy", three_ms) == 1
+    finally:
+        gateway.stop()
+    busy = next(record for record in records if record.name == "busy")
+    assert 2.9 <= busy.duration_ms < 1000.0
+
+
 def test_a_hanging_call_times_out_and_later_requests_expire_in_the_queue() -> None:
     fake = FakeMT5(hang_seconds=0.5)
     records: list[RequestRecord] = []

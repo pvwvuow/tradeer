@@ -87,7 +87,8 @@ class MT5Gateway:
         on_request: Callable[[RequestRecord], None] | None = None,
         heartbeat: Callable[[], None] | None = None,
         idle_seconds: float = 1.0,
-        clock: Callable[[], float] = time.monotonic,
+        # perf_counter: before Python 3.13, monotonic() on Windows ticks in 15.6 ms steps.
+        clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         self._api_factory = api_factory
         self._default_timeout = default_timeout

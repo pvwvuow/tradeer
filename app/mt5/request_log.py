@@ -29,7 +29,7 @@ def log_request(record: RequestRecord) -> None:
     elif record.duration_ms >= SLOW_REQUEST_MS:
         log.warning("MT5 {} was slow: {:.0f} ms", record.name, record.duration_ms)
     else:
-        log.debug("MT5 {} took {:.0f} ms", record.name, record.duration_ms)
+        log.debug("MT5 {} took {:.1f} ms", record.name, record.duration_ms)
 
 
 def log_event(level: str, message: str) -> None:
