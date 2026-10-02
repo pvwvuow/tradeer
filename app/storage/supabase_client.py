@@ -88,7 +88,8 @@ class SupabaseClient:
         return data
 
     def _session(self, data: Mapping[str, Any], email: str) -> AuthSession:
-        user = data.get("user") if isinstance(data.get("user"), dict) else {}
+        found = data.get("user")
+        user: dict[str, Any] = found if isinstance(found, dict) else {}
         try:
             return AuthSession(
                 user_id=str(user["id"]),

@@ -72,9 +72,16 @@ class Database:
             )
             self._connections.append(connection)
         connection.row_factory = _dict_row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA synchronous=NORMAL")
-        connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
+            connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        except sqlite3.Error:
+            # A damaged file: close the handle at once, or Windows keeps the file locked.
+            with self._lock:
+                self._connections.remove(connection)
+            connection.close()
+            raise
         self._local.connection = connection
         self._local.depth = 0
         return connection

@@ -222,7 +222,7 @@ def sqlite_ddl() -> str:
             else:
                 lines.append(f"    {name} {sql_type}")
         parts.append(f"CREATE TABLE {table} (\n" + ",\n".join(lines) + "\n);")
-    for table, columns in indexes():
-        name = index_name(table, columns)
-        parts.append(f"CREATE INDEX {name}\n    ON {table} ({', '.join(columns)});")
+    for table, indexed in indexes():
+        name = index_name(table, indexed)
+        parts.append(f"CREATE INDEX {name}\n    ON {table} ({', '.join(indexed)});")
     return "\n".join(parts) + "\n"
