@@ -1,7 +1,9 @@
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
+from app.core.clock import BrokerClock, DstScheme
 from app.mt5.checklist import ChecklistReport
 from app.mt5.connection import ConnectionState, ConnectionStatus
 from app.mt5.errors import MT5Error
@@ -98,3 +100,39 @@ def test_nothing_is_recorded_while_disconnected() -> None:
         with pytest.raises(MT5Error):
             tracker.import_history()
         assert len(errors) == 1 and isinstance(errors[0], MT5Error)
+
+
+def test_an_import_without_broker_time_runs_again_once_the_clock_is_measured() -> None:
+    fake = FakeMT5(now=lambda: NOW)
+    fake.deals = make_closed_trade(5, opened=1_726_000_000, closed=1_726_000_600, profit=4.0)
+    fake.initialize()
+    fake.login(fake.accounts[0].login, password=fake.accounts[0].password)
+    gateway = MT5Gateway(lambda: fake, idle_seconds=0.05)
+    gateway.start()
+    events: list[tuple[str, str]] = []
+    with temporary_store() as store:
+        stale = replace(status_for(fake), report=None)  # no fresh quote at connect
+        store.start_session("s-1", app_version="0", profile="p", mode="paper", settings={})
+        tracker = AccountTracker(
+            store,
+            "s-1",
+            status=lambda: stale,
+            history=HistoryImporter(gateway, store, clock=lambda: NOW),
+            wall_clock=lambda: NOW,
+            run_in_background=run_now,
+            log=lambda level, message: events.append((level, message)),
+        )
+        measured: list[BrokerClock] = []
+        tracker.clock_source = lambda: measured[0] if measured else None
+        try:
+            tracker.on_status(stale)
+            assert tracker.last_history is not None and tracker.last_history.offset_hours is None
+            assert "not measured yet" in tracker.last_history.text()
+            measured.append(BrokerClock(2.0, DstScheme.US, measured=True))
+            tracker.on_broker_clock()
+            assert tracker.last_history.offset_hours == 3.0
+            tracker.on_broker_clock()  # nothing left to correct: no third import
+        finally:
+            gateway.stop()
+    imports = [message for _, message in events if message.startswith("Trade history imported")]
+    assert len(imports) == 2
