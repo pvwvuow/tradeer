@@ -355,6 +355,8 @@ def _start_market(
         key = clock_key()
         if key is not None:
             store.set_state(key, json.dumps(clock.to_dict()))
+        if storage.tracker is not None:
+            storage.tracker.on_broker_clock()
 
     def refresh_calendar() -> None:
         message = import_exporter_file(calendar_file, calendar)
@@ -377,6 +379,13 @@ def _start_market(
         log=log,
         heartbeat=partial(watchdog.beat, "market-analysis"),
     )
+
+    def known_clock() -> BrokerClock | None:
+        clock = watch.clock
+        return clock if clock.measured else load_clock()
+
+    if storage.tracker is not None:
+        storage.tracker.clock_source = known_clock
     watch.start()
     return watch, calendar, calendar_file
 
