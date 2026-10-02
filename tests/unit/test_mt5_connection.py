@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from app.mt5.checklist import ConnectRequest
@@ -161,5 +163,30 @@ def test_the_monitor_thread_starts_and_stops() -> None:
         harness.service.start_monitor(interval_seconds=0.01)
         harness.service.start_monitor(interval_seconds=0.01)
         harness.service.stop_monitor()
+    finally:
+        harness.close()
+
+
+def test_a_heartbeat_stuck_behind_a_long_request_is_postponed_not_lost() -> None:
+    harness = Harness(FakeMT5())
+    harness.service = ConnectionService(
+        harness.gateway,
+        request,
+        log=lambda level, message: harness.events.append((level, message)),
+        heartbeat_seconds=5.0,
+        heartbeat_timeout=0.2,
+        clock=harness.clock,
+        path_exists=lambda path: True,
+    )
+    try:
+        harness.service.connect()
+        slow = harness.gateway.submit("history_import", lambda mt5: time.sleep(1.0))
+        time.sleep(0.1)
+        harness.advance(6)
+        assert harness.service.status.state is ConnectionState.CONNECTED
+        assert any("Heartbeat postponed" in message for _, message in harness.events)
+        slow.result(timeout=5)
+        harness.advance(6)
+        assert harness.service.status.state is ConnectionState.CONNECTED
     finally:
         harness.close()
