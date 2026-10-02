@@ -252,8 +252,7 @@ def check_trade(
             total <= settings.max_total_open_risk_percent + 1e-9,
             round(total, 3),
             settings.max_total_open_risk_percent,
-            f"open {open_risk:,.2f} + this trade {candidate.risk_money:,.2f} "
-            f"{picture.currency}",
+            f"open {open_risk:,.2f} + this trade {candidate.risk_money:,.2f} {picture.currency}",
             EXPOSURE_BLOCK,
         ),
     )
