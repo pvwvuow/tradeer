@@ -72,3 +72,37 @@ def test_slope_percentile_and_returns() -> None:
     assert close_to(indicators.slope(line, 4)[3:], [0.5] * 7)
     assert indicators.percentile_rank(np.array([1.0, 2, 3, 4, math.nan]), 3.0) == 75.0
     assert close_to(indicators.log_returns(np.array([1.0, math.e])), [1.0])
+
+
+def wilder_rsi_reference(close: list[float], period: int) -> list[float]:
+    """Step-by-step Wilder RSI: the first average is a simple mean, then smoothing."""
+    out = [math.nan] * len(close)
+    gains = [max(close[i] - close[i - 1], 0.0) for i in range(1, len(close))]
+    losses = [max(close[i - 1] - close[i], 0.0) for i in range(1, len(close))]
+    if len(gains) < period:
+        return out
+    average_gain = sum(gains[:period]) / period
+    average_loss = sum(losses[:period]) / period
+    for index in range(period, len(close)):
+        if index > period:
+            average_gain = (average_gain * (period - 1) + gains[index - 1]) / period
+            average_loss = (average_loss * (period - 1) + losses[index - 1]) / period
+        total = average_gain + average_loss
+        out[index] = 100.0 * average_gain / total if total > 0 else 50.0
+    return out
+
+
+def test_rsi_matches_a_step_by_step_wilder_reference() -> None:
+    close = [44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89]
+    close += [46.03, 45.61, 46.28, 46.28, 46.00, 46.03, 46.41, 46.22, 45.64, 46.21, 46.25]
+    values = indicators.rsi(np.array(close), 14)
+    expected = wilder_rsi_reference(close, 14)
+    for got, want in zip(values, expected, strict=True):
+        if math.isnan(want):
+            assert math.isnan(got)
+        else:
+            assert abs(got - want) < 1e-9
+    assert 65.0 < values[14] < 75.0
+    assert indicators.rsi(np.arange(30, dtype=np.float64), 14)[-1] == 100.0
+    assert indicators.rsi(np.full(30, 1.5), 14)[-1] == 50.0
+    assert np.all(np.isnan(indicators.rsi(np.arange(10, dtype=np.float64), 14)))

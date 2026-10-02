@@ -65,6 +65,26 @@ def atr(high: FloatArray, low: FloatArray, close: FloatArray, period: int = 14) 
     return rma(true_range(high, low, close), period)
 
 
+def rsi(close: FloatArray, period: int = 14) -> FloatArray:
+    """Wilder's RSI (0 to 100). A bar with no losses gives 100, one with no moves 50."""
+    size = len(close)
+    if size <= period:
+        return _nan(size)
+    change = np.diff(close, prepend=np.nan)
+    gain = np.where(change > 0, change, 0.0)
+    loss = np.where(change < 0, -change, 0.0)
+    gain[0] = loss[0] = np.nan
+    average_gain = rma(gain, period)
+    average_loss = rma(loss, period)
+    out = _nan(size)
+    valid = np.isfinite(average_gain) & np.isfinite(average_loss)
+    total = average_gain + average_loss
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(total > 0, 100.0 * average_gain / total, 50.0)
+    out[valid] = ratio[valid]
+    return out
+
+
 def adx(
     high: FloatArray,
     low: FloatArray,
