@@ -237,21 +237,9 @@ class FakeMT5:
             return self._fail_none(api.RES_E_NOT_FOUND, "Symbol not found")
         bars = max(0, min(count, self.rates_count - start_pos))
         seconds = max(60, (timeframe if timeframe < 16000 else (timeframe - 16384) * 60) * 60)
-        last_open = self._server_now() // seconds * seconds - seconds * (start_pos + 1)
-        rates = np.zeros(bars, dtype=RATE_DTYPE)
-        for index in range(bars):
-            price = found.bid + (index % 7 - 3) * 10**-found.digits * 10
-            rates[index] = (
-                last_open - seconds * (bars - 1 - index),
-                price,
-                price + 0.0005,
-                price - 0.0005,
-                price,
-                100 + index,
-                found.spread_points,
-                0,
-            )
-        return rates
+        last_open = self._server_now() // seconds * seconds - seconds * start_pos
+        opens = last_open - seconds * np.arange(bars - 1, -1, -1, dtype=np.int64)
+        return synthetic_rates(found, opens, seconds)
 
     def history_deals_get(self, *args: Any, **kwargs: Any) -> tuple[SimpleNamespace, ...] | None:
         self.calls.append("history_deals_get")
@@ -324,6 +312,39 @@ class FakeMT5:
     def _fail_none(self, code: int, message: str) -> None:
         self._error = (code, message)
         return None
+
+
+def synthetic_price(symbol: FakeSymbol, server_times: np.ndarray[Any, Any]) -> Any:
+    """A deterministic price path: the same bar time always gives the same price."""
+    moments = np.asarray(server_times, dtype=np.float64)
+    seed = sum(ord(char) for char in symbol.name)
+    wave = (
+        0.004 * np.sin(2 * np.pi * moments / (86_400 * 5.3) + seed)
+        + 0.0015 * np.sin(2 * np.pi * moments / (3600 * 7.1) + seed / 3)
+        + 0.0004 * np.sin(moments / 977.0 + seed)
+    )
+    return symbol.bid * (1.0 + wave)
+
+
+def synthetic_rates(
+    symbol: FakeSymbol,
+    opens: np.ndarray[Any, Any],
+    seconds: int,
+) -> np.ndarray[Any, Any]:
+    """Bars of `seconds` length opening at `opens` (server time), on the synthetic path."""
+    rates = np.zeros(len(opens), dtype=RATE_DTYPE)
+    if not len(opens):
+        return rates
+    samples = np.stack([synthetic_price(symbol, opens + seconds * k / 4) for k in range(5)])
+    rates["time"] = opens
+    rates["open"] = np.round(samples[0], symbol.digits)
+    rates["close"] = np.round(samples[-1], symbol.digits)
+    spread = 10.0**-symbol.digits * 3
+    rates["high"] = np.round(samples.max(axis=0) + spread, symbol.digits)
+    rates["low"] = np.round(samples.min(axis=0) - spread, symbol.digits)
+    rates["tick_volume"] = 100 + (opens // seconds) % 50
+    rates["spread"] = symbol.spread_points
+    return rates
 
 
 def _epoch(value: Any) -> int:
