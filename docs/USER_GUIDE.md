@@ -1,14 +1,14 @@
 # User guide
 
-## What works today (Phase 4)
+## What works today (Phase 5)
 
-Phase 4 adds a local database, optional cloud sync to your own Supabase project and trade history import. See "Cloud sync with Supabase" and "Trade history" below.
+Phase 5 adds the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
 
 - **Simple view** (default): a calm Home screen in plain language. It says you are in practice mode and whether the app is connected to MetaTrader 5. The "Stop trading now" button is always visible; it becomes active once trading exists.
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
 - **Theme**: click **Switch to light theme** or **Switch to dark theme** (top right). Your choice is remembered.
 - **Command palette**: in the Advanced view press **Ctrl+K**, type part of a page or command name (for example `risk` or `debug`) and press Enter.
-- **Status bar** (bottom, always visible): connection state (broker, server and login when connected), the operating mode badge (`PAPER`, or `ANALYSIS-ONLY` with an investor password), the bot state, the app version and the kill switch.
+- **Status bar** (bottom, always visible): connection state (broker, server and login when connected), the operating mode badge (`PAPER`, or `ANALYSIS-ONLY` with an investor password), the bot state, the cloud state, the session clock, the next high-impact news, the app version and the kill switch.
 
 ## Before you connect
 
@@ -92,11 +92,25 @@ The app never saves your password. It keeps a sign-in token in Windows Credentia
 | · N waiting | Rows saved on this PC that are not uploaded yet. |
 | · N refused | Rows Supabase refused. Fix the cause, then click Retry refused rows. |
 
+## Market page
+
+Advanced view > Market. Everything here is information only and never a trade signal.
+
+- **Watchlist**: type up to 10 symbols separated by commas (for example `EURUSD, GBPUSD, XAUUSD`) and click Save watchlist. Broker suffixes such as `EURUSD.m` are found automatically; a symbol your broker does not offer is named in the page status.
+- **Cards**: one per symbol, renewed after every closed 5-minute bar. The headline reads like "XAUUSD: H4 uptrend, H1 pullback into support 2,318.20 (0.4 ATR), volatility high, London session, USD CPI in 3h 05m -> wait". The verdict is one of: watch, wait (news, wide spread, market closed, extreme volatility), no clear direction, or data problem (the reason is shown and logged).
+- **Chart**: pick a symbol and a timeframe. Drag to pan, use the mouse wheel to zoom, and move the mouse for the crosshair with open, high, low and close. Tick boxes turn EMAs, levels, swings and session shading on or off.
+- **Trend matrix, Correlation, Currency strength**: hover a cell for its reasons.
+- **Calendar**: events of the next 7 days with countdowns. Add one by hand, import a CSV (columns time, currency, impact, title; optional actual, forecast, previous; times in UTC), or use the MT5 exporter:
+  1. Click Install MT5 exporter (connect MT5 first).
+  2. In MT5 press F4 to open MetaEditor, open Services > CalendarExporter.mq5 and press F7 (Compile).
+  3. In MT5, Navigator > Services, right-click CalendarExporter > Add service, then start it.
+  4. The app reads the calendar every 3 minutes; click Read MT5 calendar now to read it at once.
+
 ## Trade history
 
 Open Settings, tab "Data & cloud sync", and click Import history now, or use the command "Import trade history". The first import reads your whole history; later imports read only the last few days. Importing again never creates duplicates. Each trade is marked manual, bot or external (another EA).
 
-Times are converted to UTC with your broker's current offset, so trades from before a daylight-saving change can be one hour off. A later phase fixes this.
+Times are converted to UTC with your broker's clock, including its summer-time rules (most brokers are UTC+2 in winter and UTC+3 in summer). When the app learns new rules for your broker, it imports the history again once to correct older trades.
 
 ## Your data on this PC
 

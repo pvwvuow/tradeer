@@ -6,7 +6,9 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 ## Status
 
-Phase 4 of 16 (Storage). Everything the app records goes to a local SQLite database first, with optional cloud sync to your own Supabase project and an import of your MT5 trade history. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+Phase 5 of 16 (Market data & analysis). The Market page shows a plain-language analysis card per symbol, renewed on every closed bar, a multi-timeframe trend matrix, an interactive chart, correlation, currency strength and the economic calendar (with an MT5 calendar exporter). The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+
+From Phase 4 (Storage): everything the app records goes to a local SQLite database first, with optional cloud sync to your own Supabase project and an import of your MT5 trade history.
 
 From Phase 3 (MT5 connection): the app connects to the MetaTrader 5 terminal on your PC through one gateway thread, runs a Test-connection checklist with real values, saves account profiles (passwords in Windows Credential Manager), switches to Analysis-only with an investor password, and ships Connection Diagnostics and a read-only `--mt5-smoke-test`. It writes structured, masked logs and crash reports. It **never places orders yet**.
 
