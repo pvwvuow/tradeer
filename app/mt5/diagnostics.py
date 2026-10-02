@@ -22,6 +22,9 @@ from app.observability.masking import MASKER
 
 DIAGNOSTIC_TIMEFRAMES: tuple[str, ...] = ("M15", "H1", "H4", "D1")
 HISTORY_PROBE_LIMIT = 100_000
+# A real terminal ("Max bars in chart" 100,000) refused a request for 100,000 bars, so the
+# probe asks again for fewer bars before it reports that nothing is there.
+HISTORY_PROBE_STEPS: tuple[int, ...] = (50_000, 10_000, 1_000)
 OFFSET_TOLERANCE_SECONDS = 180.0
 
 
@@ -31,10 +34,37 @@ class HistoryDepth:
     timeframe: str
     bars: int
     limit: int
+    error: str = ""
 
     def text(self) -> str:
+        if not self.bars and self.error:
+            return f"{self.symbol} {self.timeframe}: not available ({self.error})"
         shown = f"{self.bars:,}+" if self.bars >= self.limit else f"{self.bars:,}"
         return f"{self.symbol} {self.timeframe}: {shown} bars"
+
+
+def probe_counts(limit: int, maxbars: int | None = None) -> list[int]:
+    """Bar counts to ask for, largest first, never more than "Max bars in chart"."""
+    first = min(limit, maxbars) if maxbars is not None and maxbars > 0 else limit
+    return [first, *(step for step in HISTORY_PROBE_STEPS if step < first)]
+
+
+def probe_history(
+    mt5: MT5Api,
+    symbol: str,
+    timeframe: str,
+    limit: int = HISTORY_PROBE_LIMIT,
+    maxbars: int | None = None,
+) -> HistoryDepth:
+    """How many bars MT5 gives for this symbol and timeframe (read-only)."""
+    error = ""
+    for count in probe_counts(limit, maxbars):
+        rates = mt5.copy_rates_from_pos(symbol, TIMEFRAMES[timeframe], 0, count)
+        if rates is not None:
+            return HistoryDepth(symbol, timeframe, len(rates), count)
+        code, detail = mt5.last_error()
+        error = f"MT5 error {code}: {detail}"
+    return HistoryDepth(symbol, timeframe, 0, limit, error)
 
 
 @dataclass(frozen=True)
@@ -146,14 +176,13 @@ def run_diagnostics(
     specs: list[SymbolSpec] = []
     offset: float | None = None
     if checklist.connected:
+        maxbars = checklist.terminal.maxbars if checklist.terminal is not None else None
         for name in checklist.symbols:
             info = mt5.symbol_info(name)
             if info is not None:
                 specs.append(SymbolSpec.from_mt5(info))
             for timeframe in DIAGNOSTIC_TIMEFRAMES:
-                rates = mt5.copy_rates_from_pos(name, TIMEFRAMES[timeframe], 0, history_limit)
-                bars = len(rates) if rates is not None else 0
-                history.append(HistoryDepth(name, timeframe, bars, history_limit))
+                history.append(probe_history(mt5, name, timeframe, history_limit, maxbars))
         fresh = [quote for quote in checklist.quotes if quote.valid]
         if fresh:
             newest = max(quote.server_time for quote in fresh)

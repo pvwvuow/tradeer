@@ -86,6 +86,10 @@ class FakeMT5:
     deals: list[SimpleNamespace] = field(default_factory=list)
     orders: list[SimpleNamespace] = field(default_factory=list)
     rates_count: int = 5000
+    # Symbol -> seconds its bars trail the clock, as right after a connect on a real account.
+    stale_history: dict[str, int] = field(default_factory=dict)
+    # Refuse bigger copy_rates requests, as a real terminal refused 100,000 bars.
+    rates_request_limit: int | None = None
     initialize_error: tuple[int, str] | None = None
     hang_seconds: float = 0.0
     now: Any = time.time
@@ -235,9 +239,12 @@ class FakeMT5:
         found = self._find(symbol)
         if found is None or not self._ready():
             return self._fail_none(api.RES_E_NOT_FOUND, "Symbol not found")
+        if self.rates_request_limit is not None and count > self.rates_request_limit:
+            return self._fail_none(api.RES_E_INVALID_PARAMS, "Terminal: Invalid params")
         bars = max(0, min(count, self.rates_count - start_pos))
         seconds = max(60, (timeframe if timeframe < 16000 else (timeframe - 16384) * 60) * 60)
-        last_open = self._server_now() // seconds * seconds - seconds * start_pos
+        newest = self._server_now() - self.stale_history.get(symbol, 0)
+        last_open = newest // seconds * seconds - seconds * start_pos
         opens = last_open - seconds * np.arange(bars - 1, -1, -1, dtype=np.int64)
         return synthetic_rates(found, opens, seconds)
 
