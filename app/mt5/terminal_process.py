@@ -174,6 +174,7 @@ class MT5Process:
         start_timeout: float = START_TIMEOUT_SECONDS,
         wait_slice: float = WAIT_SLICE_SECONDS,
         on_wait: Callable[[], None] | None = None,
+        on_start: Callable[[int, int | None, str], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._loader = loader
@@ -181,6 +182,7 @@ class MT5Process:
         self._start_timeout = start_timeout
         self._wait_slice = wait_slice
         self.on_wait = on_wait
+        self.on_start = on_start  # (start number, process id, package version)
         self._clock = clock
         self._lock = threading.RLock()
         self._process: BaseProcess | None = None
@@ -244,6 +246,9 @@ class MT5Process:
                 )
             self._version = str(payload)
             self.starts += 1
+            if self.on_start is not None:
+                with contextlib.suppress(Exception):
+                    self.on_start(self.starts, process.pid, self._version)
             return self._version
 
     def ping(self) -> tuple[int, str]:

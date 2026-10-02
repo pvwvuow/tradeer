@@ -34,9 +34,12 @@ THREAD_NAME = "mt5-gateway"
 SKIPPED_ERRORS = ("cancelled before it started", "expired in the queue")
 
 
-def load_mt5() -> MT5Api:
-    """Start the MT5 helper process with the real package. Called in the gateway thread."""
-    process = MT5Process()
+def load_mt5(on_start: Callable[[int, int | None, str], None] | None = None) -> MT5Api:
+    """Start the MT5 helper process with the real package. Called in the gateway thread.
+
+    `on_start(start, pid, version)` runs after every start, also after a restart.
+    """
+    process = MT5Process(on_start=on_start)
     process.start()
     return cast(MT5Api, process)
 
