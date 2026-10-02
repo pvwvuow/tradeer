@@ -49,6 +49,16 @@ SYMBOL_TRADE_MODE_SHORTONLY = 2
 SYMBOL_TRADE_MODE_CLOSEONLY = 3
 SYMBOL_TRADE_MODE_FULL = 4
 
+# Order and position types (order_calc_profit, order_calc_margin, positions_get)
+ORDER_TYPE_BUY = 0
+ORDER_TYPE_SELL = 1
+ORDER_TYPE_BUY_LIMIT = 2
+ORDER_TYPE_SELL_LIMIT = 3
+ORDER_TYPE_BUY_STOP = 4
+ORDER_TYPE_SELL_STOP = 5
+POSITION_TYPE_BUY = 0
+POSITION_TYPE_SELL = 1
+
 # Deals (history_deals_get): type, entry and reason
 DEAL_TYPE_BUY = 0
 DEAL_TYPE_SELL = 1
@@ -84,7 +94,7 @@ RES_E_INTERNAL_FAIL_TIMEOUT = -10005
 
 
 class MT5Api(Protocol):
-    """Read-only functions used so far. Order functions arrive with execution (Phase 8)."""
+    """Read-only functions; `order_calc_*` only calculate. Sending orders arrives in Phase 8."""
 
     def initialize(self, *args: Any, **kwargs: Any) -> bool: ...
 
@@ -123,3 +133,22 @@ class MT5Api(Protocol):
     def history_orders_get(self, *args: Any, **kwargs: Any) -> Any: ...
 
     def positions_total(self) -> int: ...
+
+    def positions_get(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def order_calc_profit(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price_open: float,
+        price_close: float,
+    ) -> float | None: ...
+
+    def order_calc_margin(
+        self,
+        action: int,
+        symbol: str,
+        volume: float,
+        price_open: float,
+    ) -> float | None: ...
