@@ -41,6 +41,7 @@ from app.ui.data_page import DataPage
 from app.ui.home_page import HomePage
 from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
+from app.ui.model_page import ModelContext, ModelPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
 from app.ui.pages import PlaceholderPage, styled_label
 from app.ui.positions_page import KILL_TEXT, PositionsPage, TradingContext
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         risk: RiskContext | None = None,
         trading: TradingContext | None = None,
         backtest: BacktestContext | None = None,
+        model: ModelContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -113,6 +115,7 @@ class MainWindow(QMainWindow):
         self.risk_page = RiskPage(risk)
         self.positions_page = PositionsPage(trading)
         self.backtest_page = BacktestPage(backtest)
+        self.model_page = ModelPage(model)
         self.trading = trading
         if trading is not None:
             self.signals_page.mode_text = lambda: trading.settings.mode.label
@@ -131,6 +134,8 @@ class MainWindow(QMainWindow):
                 self._add_page(spec.page_id, self.positions_page)
             elif spec.page_id == "backtest":
                 self._add_page(spec.page_id, self.backtest_page)
+            elif spec.page_id == "model":
+                self._add_page(spec.page_id, self.model_page)
             elif spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
             elif spec.page_id == "settings" and self.data_page is not None:
