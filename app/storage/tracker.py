@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from app.core.clock import BrokerClock
+from app.core.clock import BrokerClock, fx_weekend, real_offset
 from app.mt5.connection import ConnectionStatus
 from app.mt5.diagnostics import estimate_broker_offset
 from app.mt5.errors import MT5Error
@@ -26,10 +26,17 @@ HistoryListener = Callable[[object], None]
 
 
 def broker_offset(status: ConnectionStatus, utc_now: float) -> float | None:
-    """The broker's UTC offset from the freshest quote of the connection checklist."""
+    """The broker's UTC offset from the freshest quote of the connection checklist.
+
+    None at the weekend and for impossible offsets: a stale price would give a wrong one, and
+    the saved, measured clock is used instead.
+    """
     report = status.report
     times = [quote.server_time for quote in report.quotes if quote.valid] if report else []
-    return estimate_broker_offset(max(times), utc_now) if times else None
+    if not times or fx_weekend(utc_now):
+        return None
+    offset = estimate_broker_offset(max(times), utc_now)
+    return offset if offset is not None and real_offset(offset) else None
 
 
 def _in_thread(work: Callable[[], None]) -> None:

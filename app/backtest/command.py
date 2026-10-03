@@ -15,7 +15,7 @@ from app.backtest import metrics as metric_text
 from app.backtest import monte_carlo as carlo_text
 from app.backtest.history import CACHE_FOLDER, DirectGateway, load_history, resolve_broker_symbol
 from app.backtest.service import BacktestRequest, default_request, run_report
-from app.core.clock import BrokerClock, guess_scheme, measure_offset
+from app.core.clock import BrokerClock, fx_weekend, guess_scheme, measure_offset
 from app.core.execution_settings import ExecutionSettingsSource
 from app.core.strategy_settings import StrategySettingsSource
 from app.mt5.api import MT5Api
@@ -29,7 +29,7 @@ def measured_clock(mt5: MT5Api, symbol: str, now: float) -> tuple[BrokerClock, s
     """The broker clock from a fresh tick, or the usual UTC+2/+3 when the price is old."""
     tick = mt5.symbol_info_tick(symbol)
     server = float(getattr(tick, "time", 0) or 0) if tick is not None else 0.0
-    offset = measure_offset(server, now) if server > 0 else None
+    offset = measure_offset(server, now) if server > 0 and not fx_weekend(now) else None
     if offset is None:
         return BrokerClock.assumed(), "no fresh price: broker time assumed UTC+2/+3"
     scheme, winter = guess_scheme(offset, now)

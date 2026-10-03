@@ -21,6 +21,11 @@ HOUR = 3600
 DAY = 86_400
 OFFSET_TOLERANCE_SECONDS = 180.0
 CONFIRMATIONS = 2
+# Two agreeing ticks must be this far apart, with the price clock moving like real time, so a
+# stale price (market closed) can never confirm an offset.
+CONFIRM_GAP_SECONDS = 600.0
+# The half-hour offsets real time zones use (whole hours from -12 to +14 are all used).
+HALF_HOUR_ZONES = frozenset({-9.5, -3.5, 3.5, 4.5, 5.5, 6.5, 9.5, 10.5})
 
 
 class DstScheme(StrEnum):
@@ -89,9 +94,24 @@ def measure_offset(
     """The offset in hours (half-hour steps) shown by a fresh tick, or None if it is stale."""
     difference = server_time - utc_now
     offset = round(difference / 1800.0) / 2.0
-    if abs(offset) > 14 or abs(difference - offset * HOUR) > tolerance_seconds:
+    if abs(difference - offset * HOUR) > tolerance_seconds or not real_offset(offset):
         return None
     return offset
+
+
+def real_offset(hours: float) -> bool:
+    """An offset some real time zone uses: a stale price gives impossible ones like -11.5."""
+    if hours == int(hours):
+        return -12 <= hours <= 14
+    return hours in HALF_HOUR_ZONES
+
+
+def fx_weekend(utc_seconds: float) -> bool:
+    """FX is closed from Friday 17:00 to Sunday 17:00 New York time: prices are stale."""
+    offset = -4 if us_dst_active(utc_seconds) else -5
+    local = datetime.fromtimestamp(utc_seconds + offset * HOUR, UTC)
+    weekday, hour = local.weekday(), local.hour
+    return weekday == 5 or (weekday == 4 and hour >= 17) or (weekday == 6 and hour < 17)
 
 
 def guess_scheme(offset_hours: float, utc_seconds: float) -> tuple[DstScheme, float]:
@@ -125,6 +145,14 @@ class OffsetChange:
         )
 
 
+@dataclass(frozen=True)
+class _Pending:
+    offset: float
+    count: int
+    server: float
+    utc: float
+
+
 class BrokerClock:
     """Converts broker server time to UTC. Not thread-safe: one owner updates it."""
 
@@ -139,7 +167,7 @@ class BrokerClock:
         self.scheme = scheme
         self.measured = measured and winter_hours is not None
         self.changes: list[OffsetChange] = []
-        self._pending: tuple[float, int] | None = None
+        self._pending: _Pending | None = None
 
     @classmethod
     def assumed(cls) -> BrokerClock:
@@ -155,16 +183,26 @@ class BrokerClock:
         return base + (1.0 if dst_active(self.scheme, utc_seconds) else 0.0)
 
     def observe(self, server_time: float, utc_now: float) -> OffsetChange | None:
-        """Feed a fresh tick. The clock changes after two observations that agree."""
+        """Feed a tick. The clock changes after two ticks that agree, at least ten minutes
+        apart, whose server time moved like real time (a stale price never moves)."""
         offset = measure_offset(server_time, utc_now)
-        if offset is None:
+        if offset is None or fx_weekend(utc_now):
             return None
         if self.measured and offset == self.offset_at(utc_now):
             self._pending = None
             return None
-        count = self._pending[1] + 1 if self._pending and self._pending[0] == offset else 1
-        self._pending = (offset, count)
-        if count < CONFIRMATIONS:
+        pending = self._pending
+        if pending is None or pending.offset != offset:
+            self._pending = _Pending(offset, 1, server_time, utc_now)
+            return None
+        elapsed = utc_now - pending.utc
+        if elapsed < CONFIRM_GAP_SECONDS:
+            return None
+        if abs((server_time - pending.server) - elapsed) > OFFSET_TOLERANCE_SECONDS:
+            self._pending = None  # the price did not move with the clock: it is stale
+            return None
+        if pending.count + 1 < CONFIRMATIONS:
+            self._pending = _Pending(offset, pending.count + 1, server_time, utc_now)
             return None
         self._pending = None
         old = self.offset_at(utc_now) if self.measured else None
@@ -234,4 +272,6 @@ class BrokerClock:
             scheme = DstScheme(str(raw.get("scheme", DstScheme.FIXED.value)))
         except (TypeError, ValueError):
             return cls.assumed()
+        if winter is not None and not real_offset(winter):
+            return cls.assumed()  # measured from a stale price by an older version
         return cls(winter, scheme, measured=bool(raw.get("measured", False)))
