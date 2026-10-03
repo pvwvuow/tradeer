@@ -124,7 +124,7 @@ class TradeRow:
 
 
 def base_symbol(symbol: str) -> str:
-    """"EURUSD.m" or "eurusd_i" -> "EURUSD"; other names unchanged (upper case)."""
+    """Map "EURUSD.m" or "eurusd_i" to "EURUSD"; other names unchanged (upper case)."""
     letters = re.sub(r"[^A-Z0-9]", "", symbol.upper())
     if letters in SYMBOL_NAMES:
         return letters
@@ -154,7 +154,7 @@ def action_text(direction: Direction | str) -> tuple[str, str]:
 
 
 def money(value: float, currency: str, *, signed: bool = False) -> str:
-    """"+$12.30", "−$5.00" (signed) or "$1,000.00"; "12.30 CHF" without a known sign."""
+    """Money text: "+$12.30", "−$5.00" (signed), "$1,000.00", or "12.30 CHF" (no sign)."""
     amount = f"{abs(value):,.2f}"
     sign_symbol = CURRENCY_SIGNS.get(currency)
     text = f"{sign_symbol}{amount}" if sign_symbol else f"{amount} {currency}".strip()

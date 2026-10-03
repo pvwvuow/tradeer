@@ -100,14 +100,14 @@ def test_the_first_start_explains_practice_money_then_routes(
     tmp_path: Path,
 ) -> None:
     window = make_window(qtbot, tmp_path)
-    assert window.home.welcome.isVisible() and not window.home.scroll.isVisible()
+    assert window.home.welcome.isVisible() and not window.home.scroll_area.isVisible()
     assert "practice money, not real" in window.home.practice_label.text()
     qtbot.mouseClick(window.home.trader_button, Qt.MouseButton.LeftButton)
     saved = load_prefs(tmp_path)
     assert saved.onboarded and saved.view_mode is ViewMode.ADVANCED
     assert not window.sidebar.isHidden()
     again = make_window(qtbot, tmp_path, UiPrefs(onboarded=True))
-    assert not again.home.welcome.isVisible() and again.home.scroll.isVisible()
+    assert not again.home.welcome.isVisible() and again.home.scroll_area.isVisible()
     beginner = make_window(qtbot, tmp_path / "new")
     qtbot.mouseClick(beginner.home.new_button, Qt.MouseButton.LeftButton)
     assert beginner.current_page_id() == SIMPLE_HOME.page_id

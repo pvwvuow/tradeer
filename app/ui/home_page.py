@@ -161,12 +161,12 @@ class HomePage(QWidget):
         layout.setContentsMargins(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN)
         layout.setSpacing(16)
         layout.addWidget(self._build_welcome())
-        self.scroll = QScrollArea()
-        self.scroll.setObjectName("HomeScroll")
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.setWidget(self._build_content())
-        layout.addWidget(self.scroll, 1)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("HomeScroll")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setWidget(self._build_content())
+        layout.addWidget(self.scroll_area, 1)
         layout.addLayout(self._build_bottom())
         if signals is not None:
             signals.pipeline.add_listener(self.bridge.signals.emit)
@@ -347,7 +347,7 @@ class HomePage(QWidget):
     def show_welcome(self, visible: bool) -> None:
         """The first-run panel: practice money first, then Simple or Advanced (spec F0, F2)."""
         self.welcome.setVisible(visible)
-        self.scroll.setVisible(not visible)
+        self.scroll_area.setVisible(not visible)
 
     def set_connection(self, connected: bool, text: str) -> None:
         self.connected = connected
