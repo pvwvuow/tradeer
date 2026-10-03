@@ -6,7 +6,7 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 ## Status
 
-Phase 9 of 16 (Simple Mode). The default Home screen shows one trade suggestion at a time in plain words with Approve and Skip, the balance, the open trades with Close now and a Stop trading now button. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+Phase 10 of 16 (Backtesting). The Backtest page and `--backtest` replay the strategies on MT5 history with the same code that trades live (entries at the next bar open, the same-candle rule, costs), with walk-forward, Monte-Carlo and a sensitivity heatmap; a test proves the backtest gives the same signals as live on the same data. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
 
 From Phase 8 (Execution): approved signals are placed with stop loss and take profit (Paper by default, Semi-auto for real orders after your approval), managed, recovered after a restart and synced back; a kill switch stops everything.
 

@@ -1,8 +1,8 @@
 # User guide
 
-## What works today (Phase 9)
+## What works today (Phase 10)
 
-Phase 9 adds the Simple view's Home screen: one trade suggestion at a time in plain words with Approve and Skip, your balance, your open trades with Close now, and Stop trading now (see "Home (Simple view)"). Phase 8 added trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
+Phase 10 adds backtesting: replay the strategies on MT5 history with the same code that trades live, with walk-forward, Monte-Carlo and a sensitivity heatmap (see "Backtest page" and "Backtest from the command line"). Phase 9 added the Simple view's Home screen: one trade suggestion at a time in plain words with Approve and Skip, your balance, your open trades with Close now, and Stop trading now (see "Home (Simple view)"). Phase 8 added trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
 
 - **Simple view** (default): the Home screen in plain language (see "Home (Simple view)"). **Settings** (top bar) opens the settings, **Back to Home** returns.
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
@@ -185,6 +185,23 @@ Advanced view > Risk. The limits are enforced by the app on every signal; this p
 - **Stop new entries**: no new signal passes until you re-enable. The kill switch (status bar, Ctrl+Shift+K) also closes the bot's positions.
 - **Re-enable trading**: needed after the drawdown limit or a stop; type ENABLE to confirm. The drawdown then counts from your current equity. A daily-loss stop ends by itself at the next trading day.
 - Lots are calculated with MetaTrader 5's own profit calculator, so gold, JPY pairs and non-USD accounts are sized correctly.
+
+## Backtest page
+
+Advanced view, Analyze > Backtest. Choose the symbol, the dates (UTC; the last day is included), the strategies (they use the settings of the Strategies page) and the costs: start balance, account currency, leverage, spread floor and extra spread, slippage, commission per lot (round turn) and swap per lot and night. Click **Run backtest**; the window stays usable and **Cancel** stops after the current day.
+
+- **How it works**: the app reads the history from MT5 (kept on this PC, so the next run is faster) and replays it bar by bar through the same strategies, filters, risk limits and trade management as live trading. Entries happen at the next bar's open; a stop loss and take profit inside one candle count as a loss; weekend gaps fill at the open price.
+- **Summary**: trades, win rate, net result, profit factor, expectancy (R per trade), max drawdown and how long it lasted, Sharpe and Sortino, the longest losing streak. Fewer than 100 trades shows a warning: such results are mostly luck.
+- **Equity** shows the account and the drawdown over time; **Trades** lists every trade; **Breakdowns** groups them by month, session, weekday, strategy or symbol.
+- **Walk-forward** (tick it, choose one parameter and the values to try): the best value on each past window (in-sample) is traded on the next one (out-of-sample). It passes with at least 100 out-of-sample trades and a positive expectancy.
+- **Monte-Carlo**: the same trades in 1,000 other orders; how deep the drawdown can get and the risk of ruin (losing half the account).
+- **Sensitivity**: two parameters on a grid. A stable plateau is good; a sharp peak means the best values are probably fitted to noise.
+- **Saved runs**: every finished run, to compare.
+- MT5 keeps only "Max bars in chart" bars: set it to Unlimited (Tools > Options > Charts) and restart MT5. The page says when the history is too short.
+
+## Backtest from the command line
+
+`MT5TradingWorkstation.exe --backtest --symbol EURUSD --from 2026-01-01 --to 2026-06-30` connects with the saved profile, reads the history, replays it with the profile's settings and prints the summary and every trade (add `--strategies trend_pullback` for one strategy and `--report-file backtest.txt` to save it). It never sends an order and works at the weekend.
 
 ## Trade history
 
