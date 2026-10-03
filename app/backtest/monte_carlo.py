@@ -79,10 +79,11 @@ def simulate(
         picks = rng.integers(0, count, size=(runs, count))
     else:
         picks = np.argsort(rng.random((runs, count)), axis=1)
-    paths = np.cumprod(1.0 + returns[picks], axis=1)
+    paths = np.asarray(np.cumprod(1.0 + returns[picks], axis=1), dtype=np.float64)
     drawdowns = _max_drawdowns(paths)
     finals = (paths[:, -1] - 1.0) * 100.0
-    original = float(_max_drawdowns(np.cumprod(1.0 + returns)[None, :])[0])
+    single = np.asarray(np.cumprod(1.0 + returns)[None, :], dtype=np.float64)
+    original = float(_max_drawdowns(single)[0])
     return MonteCarloResult(
         method=method,
         runs=runs,

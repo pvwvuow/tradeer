@@ -88,7 +88,8 @@ class Metrics:
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
     def to_json(self) -> dict[str, Any]:
-        return _clean(asdict(self))
+        found: dict[str, Any] = _clean(asdict(self))
+        return found
 
 
 def _clean(value: Any) -> Any:
@@ -177,7 +178,8 @@ def daily_returns(times: FloatArray, equity: FloatArray, start_balance: float) -
     closes = np.r_[start_balance, equity[last]]
     with np.errstate(divide="ignore", invalid="ignore"):
         found = np.diff(closes) / closes[:-1]
-    return found[np.isfinite(found)].astype(np.float64)
+    finite: FloatArray = found[np.isfinite(found)].astype(np.float64)
+    return finite
 
 
 def sharpe_sortino(returns: FloatArray) -> tuple[float | None, float | None]:

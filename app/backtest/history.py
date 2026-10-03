@@ -150,7 +150,8 @@ def save_cache(folder: Path | None, symbol: str, timeframe: str, columns: Column
     folder.mkdir(parents=True, exist_ok=True)
     path = _cache_file(folder, symbol, timeframe)
     temporary = path.with_name(path.name + ".tmp.npz")
-    np.savez_compressed(temporary, **columns)
+    arrays: dict[str, Any] = dict(columns)
+    np.savez_compressed(temporary, **arrays)
     temporary.replace(path)
 
 
