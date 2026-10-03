@@ -32,17 +32,21 @@ from app.observability.controls import LogControls
 from app.observability.crash_handler import CrashTestError
 from app.storage.runtime import StorageRuntime
 from app.storage.sync import SyncStatus
+from app.ui.analytics_page import AnalyticsContext, AnalyticsPage
 from app.ui.backtest_page import BacktestContext, BacktestPage
 from app.ui.command_palette import CommandPalette
 from app.ui.commands import Command
 from app.ui.connection_page import ConnectionContext, ConnectionPage
 from app.ui.crash_dialog import CrashDialog
+from app.ui.dashboard_page import DashboardContext, DashboardPage
 from app.ui.data_page import DataPage
 from app.ui.home_page import HomePage
+from app.ui.journal_page import JournalContext, JournalPage
 from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
 from app.ui.model_page import ModelContext, ModelPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
+from app.ui.notifications_page import NotificationsContext, NotificationsPage
 from app.ui.pages import PlaceholderPage, styled_label
 from app.ui.positions_page import KILL_TEXT, PositionsPage, TradingContext
 from app.ui.risk_page import RiskContext, RiskPage
@@ -68,6 +72,10 @@ class MainWindow(QMainWindow):
         trading: TradingContext | None = None,
         backtest: BacktestContext | None = None,
         model: ModelContext | None = None,
+        dashboard: DashboardContext | None = None,
+        analytics: AnalyticsContext | None = None,
+        journal: JournalContext | None = None,
+        notifications: NotificationsContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -116,13 +124,25 @@ class MainWindow(QMainWindow):
         self.positions_page = PositionsPage(trading)
         self.backtest_page = BacktestPage(backtest)
         self.model_page = ModelPage(model)
+        self.dashboard_page = DashboardPage(dashboard)
+        self.analytics_page = AnalyticsPage(analytics)
+        self.journal_page = JournalPage(journal)
+        self.notifications_page = (
+            NotificationsPage(notifications) if notifications is not None else None
+        )
         self.trading = trading
         if trading is not None:
             self.signals_page.mode_text = lambda: trading.settings.mode.label
         self._connected = False
         self.settings_tabs: QTabWidget | None = None
         for spec in ADVANCED_PAGES:
-            if spec.page_id == "market":
+            if spec.page_id == "dashboard":
+                self._add_page(spec.page_id, self.dashboard_page)
+            elif spec.page_id == "analytics":
+                self._add_page(spec.page_id, self.analytics_page)
+            elif spec.page_id == "journal":
+                self._add_page(spec.page_id, self.journal_page)
+            elif spec.page_id == "market":
                 self._add_page(spec.page_id, self.market_page)
             elif spec.page_id == "signals":
                 self._add_page(spec.page_id, self.signals_page)
@@ -144,6 +164,8 @@ class MainWindow(QMainWindow):
                 first = self.connection_page or PlaceholderPage(spec)
                 self.settings_tabs.addTab(first, "Account & connection")
                 self.settings_tabs.addTab(self.data_page, "Data & cloud sync")
+                if self.notifications_page is not None:
+                    self.settings_tabs.addTab(self.notifications_page, "Notifications")
                 self._add_page(spec.page_id, self.settings_tabs)
             elif spec.page_id == "settings" and self.connection_page is not None:
                 self._add_page(spec.page_id, self.connection_page)
