@@ -144,6 +144,14 @@ class MT5Api(Protocol):
         count: int,
     ) -> Any: ...
 
+    def copy_rates_range(
+        self,
+        symbol: str,
+        timeframe: int,
+        date_from: Any,
+        date_to: Any,
+    ) -> Any: ...
+
     def history_deals_get(self, *args: Any, **kwargs: Any) -> Any: ...
 
     def history_orders_get(self, *args: Any, **kwargs: Any) -> Any: ...
