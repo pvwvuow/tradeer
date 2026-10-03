@@ -11,7 +11,8 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 5: Market data & analysis, pull request #15, CI green, waiting for review.
 - Phase 6: Strategies & signals, pull request #16, CI green, waiting for review.
 - Phase 7: Risk, pull request #17, CI green, waiting for review.
-- Phase 8: Execution, stacked on Phase 7, in review.
+- Phase 8: Execution, pull request #18, CI green, waiting for review (demo test on a weekday still open).
+- Phase 9: Simple Mode, stacked on Phase 8, in review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -19,7 +20,58 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 8 Execution (branch `phase/08-execution`, pull request into `phase/07-risk`)
+## Current phase: 9 Simple Mode (branch `phase/09-simple-mode`, pull request into `phase/08-execution`)
+
+Status: built and tested with unit tests (the texts, the jargon check, the balance and the daily results) and Qt tests (the Home screen, the onboarding, Approve, Skip and Stop) that run in CI. Not yet run on your PC. The Home screen is a plain-language view over the same engine as the Advanced view: Approve, Skip, Close now and Stop call exactly the same code as the Signals page, Positions & Trades and the kill switch.
+
+### What was built
+
+- **Home screen** (`app/ui/home_page.py`, spec B3b and F0): the default Simple view. From top to bottom: the trading mode in plain words ("Practice money: trades are simulated, nothing real is bought or sold."), a balance strip, one Trade Suggestion Card, your open trades, a status line and the **Stop trading now** button.
+- **Balance strip**: "Practice balance" (Paper) or "Balance", today's change in money and percent with an arrow and colour (▲ green, ▼ red), the result of the last 7 days and a small line chart of it. The 7-day result comes from the closed trades of the current mode (`TradeRepository.daily_net`, read every 60 s and right after a close).
+- **Trade Suggestion Card**: one suggestion at a time, the one that ends soonest first, with "1 of 3 suggestions" when more wait. It shows the market in plain words ("Gold (XAUUSD)", "Euro vs US dollar (EURUSD)"), Buy ▲ or Sell ▼, one sentence why ("Gold is trending up and just dipped back, so it may rise again."), "You could lose about −$5.00 if it goes wrong", "You could make about +$12.40 if it goes right", a confidence label (Fairly confident, Moderately confident, Low confidence, or "not known yet" with how many results are still needed) and how long it stays valid (a countdown). When the live price has moved further than the approval re-check allows, it says so before you approve.
+- **Approve and Skip**: Approve asks once ("Buy Gold?", the money at risk and the possible gain, and whether it is practice money or a REAL order) and then hands the suggestion to the same approval as the Signals page (re-check at the live price, sizing, order). Skip dismisses it (the same as Dismiss on the Signals page). In Analysis-only mode Approve is disabled with a plain reason.
+- **Details**: "Show details" opens the exact numbers: the win chance with its range and sample size, the order and its price, the stop loss and take profit prices, the lot, the expected result in R, the chart timeframe, the strategy and its full reason. The default screen carries none of these words (a test checks every default text against a jargon list).
+- **Open trades**: each bot trade with its market, Buy or Sell and its result now in money and percent of the balance, with **Close now** (asks first; the same close as Positions & Trades). A pending order says "Waiting for its price".
+- **Status line**: "Watching the market…", "Found a trade for you.", "Trade running.", "The market is closed…", "Paused: today's loss limit is reached…", "Stopped: you pressed Stop trading…" or "Not connected to MetaTrader 5…", from the same state as the Advanced view.
+- **Stop trading now**: the kill switch of Phase 8 (asks first; closes the bot's trades, cancels its orders, stops new ones; manual trades stay).
+- **First start** (spec F0, F2): before anything else a card says "This is practice money, not real" and asks "How much do you know about trading?": "I'm new to trading: keep it simple" keeps the Simple view, "I already trade: show the Advanced view" opens the Advanced view. The answer is saved (`UiPrefs.onboarded`), so the card shows once.
+- **Simple view chrome**: the status bar is hidden in the Simple view ("Show status bar" brings it back); a **Settings** button in the top bar opens the settings and "Back to Home" returns. The Advanced view is unchanged.
+- **Plumbing**: the risk picture now carries the balance and equity (`RiskUsage`), the execution snapshot carries the daily results, the theme has profit, loss and warning colours and a row style. ADRs 81 to 86 in `docs/ARCHITECTURE.md`.
+
+### Checklist
+
+- ✓ The default Home screen has no trading jargon (no R, ATR, SL/TP, lot, pips, spread, timeframe…): every default text of a card, the balance strip, the open trades and the status lines is checked in `tests/unit/test_home_model.py` and on the live widget in `tests/ui/test_home_page.py`
+- ✓ A fresh paper signal becomes a plain card with money on both sides and a confidence label, and Approve sends it to the same approval as the Signals page (Qt test)
+- ✓ Skip dismisses the suggestion; one card at a time, the most urgent first, with the queue count (tests)
+- ✓ Stop trading now is the Advanced kill switch (Qt test)
+- ✓ The balance strip shows today in money and percent and the last 7 days from the closed trades (`test_the_engine_reports_the_closed_results_of_the_last_days`)
+- ✓ First start: the practice-money card comes first, the answer chooses Simple or Advanced and is saved (Qt test)
+- ✓ The Simple view reaches Settings and comes back; the status bar is hidden there (Qt test)
+- ✗ **Not yet run on your PC**: the Qt tests run only in CI (Linux offscreen and Windows); see "Test on your PC"
+- ✗ Settings in the Simple view opens the full settings tabs, not a short plain "essentials" screen (risk profile, language, notifications)
+- ✗ The first start asks only Simple or Advanced; there is no symbol or risk wizard yet (the defaults are used)
+- ✗ The confidence label stays "not known yet" until a strategy has 30 finished suggestions
+
+### Test on your PC
+
+1. Download the build artifact of this pull request, unzip, run `MT5TradingWorkstation.exe --self-check`.
+2. Start the app. On the first start of this build (also on your existing profile) the Home screen shows "This is practice money, not real" and "How much do you know about trading?". Click "I'm new to trading: keep it simple". Close and start again: the card does not come back.
+3. In the Simple view check the top: the mode line says practice money, the balance strip says "Practice balance" with today's change, and there is no status bar (click "Show status bar" to see it).
+4. With the market open (a weekday), wait for a suggestion: one card with the market in plain words, Buy or Sell, one sentence why, what you could make and lose in money, a confidence label and a countdown. Nothing on it should need a trading dictionary. Click "Show details": the exact prices, lot and R appear.
+5. Click Approve, then Yes: within a few seconds the trade is under "Your open trades" with its result now (a paper trade: nothing appears in MT5). Click Skip on another one: it goes away and the next one (if any) shows.
+6. Click Close now on the open trade and confirm: it disappears, and after a moment the "Last 7 days" result includes it.
+7. Click Stop trading now and confirm: the status line says "Stopped: you pressed Stop trading…". To trade again: Advanced view, type ENABLE on the Risk page and click "Allow approvals again" on Positions & Trades.
+8. Click Settings (top bar): the settings open; "Back to Home" returns.
+9. If anything looks wrong, send a screenshot and the newest `logs/all.log`.
+
+### Limitations
+
+- Settings in the Simple view are the full settings; a short plain screen with only the essentials is not built.
+- The 7-day result counts closed trades of the current mode only; open trades are in "Today".
+- The win chance and the confidence label are honest estimates and stay "not known yet" for a new strategy; nothing on the screen promises a result.
+- Notifications (Windows, Telegram, sound) are Phase 12; language and right-to-left layout are later phases.
+
+## Phase 8: Execution (branch `phase/08-execution`, pull request #18)
 
 Status: built and tested against the FakeMT5 (a simulated trade server with scripted return codes). First run on your PC on Saturday 3 October (market closed): the app starts, connects and saves its settings cleanly; the demo trade test and the approvals still need an open market. Paper is still the default mode: nothing reaches your account until you switch to Semi-auto and approve a signal.
 
@@ -358,4 +410,5 @@ Acceptance checklist (spec G3 phase 2):
 2. Run "Test on your PC" from the Phase 3, 4 and 5 pull requests against your MT5 demo account and report the result.
 3. Run "Test on your PC" from the Phase 6 pull request during a London morning, and from the Phase 7 pull request (Risk page).
 4. Run "Test on your PC" from the Phase 8 pull request on your demo account on a weekday, while the market is open (`--mt5-trade-test`, then a paper and a Semi-auto approval, the restart and the kill switch).
-5. Phase 9 (Simple Mode: the Home screen with the Trade Suggestion Card, plain-language status and the Stop button) after Phase 8 is reviewed.
+5. Run "Test on your PC" from the Phase 9 pull request (the Home screen, the first start, Approve, Skip, Close now and Stop) on a weekday.
+6. Phase 10 (Backtesting) after Phase 9 is reviewed.
