@@ -749,6 +749,7 @@ def _show_window(
     from app.observability.logger import get_logger
     from app.ui.connection_page import ConnectionContext, launch_profile_instance
     from app.ui.crash_dialog import CrashNotifier
+    from app.ui.insights import build_insights
     from app.ui.main_window import MainWindow
     from app.ui.market_page import MarketContext
     from app.ui.positions_page import TradingContext
@@ -779,6 +780,26 @@ def _show_window(
             elevated=is_elevated(),
             launch_profile=launch_profile_instance,
         )
+        insights = build_insights(
+            profile=options.profile,
+            profile_dir=prefs_dir,
+            storage=storage,
+            service=service,
+            execution=market.execution,
+            pipeline=market.pipeline,
+            risk=market.risk,
+            watch=watch,
+            calendar=calendar,
+            known_clock=market.known_clock,
+            credentials=context.credentials,
+            logs=observability.pipeline,
+        )
+        trading = TradingContext(
+            market.execution,
+            market.execution_settings,
+            real_account,
+            insights.history,
+        )
         window = MainWindow(
             load_prefs(prefs_dir),
             prefs_dir,
@@ -788,10 +809,15 @@ def _show_window(
             MarketContext(watch, prefs_dir, calendar, calendar_file, data_path),
             SignalsContext(market.pipeline, market.settings),
             RiskContext(market.risk, market.risk_settings),
-            TradingContext(market.execution, market.execution_settings, real_account),
+            trading,
             backtest,
             _model_context(options.profile, service, market, backtest),
+            insights.dashboard,
+            insights.analytics,
+            insights.journal,
+            insights.notifications,
         )
+        insights.attach(window)
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")
         QMessageBox.critical(None, APP_NAME, "The app could not start. A crash report was saved.")
@@ -816,6 +842,7 @@ def _show_window(
     try:
         return int(application.exec())
     finally:
+        insights.stop()
         heartbeat.stop()
         observability.watchdog.unregister("ui")
         reporter.remove_listener(notifier.notify)
