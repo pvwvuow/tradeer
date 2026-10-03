@@ -118,3 +118,31 @@ def test_sizing_never_uses_the_tick_value() -> None:
     texts = sources()
     names = ["domain/sizing.py", "risk/risk_manager.py", "risk/limits.py", "mt5/risk_reads.py"]
     assert [name for name in names if "tick_value" in texts[name]] == []
+
+
+def test_only_the_live_broker_sends_orders() -> None:
+    """Spec C7: one place builds and sends real orders, so every order passes `order_check`,
+    the retcode policy and the request log. Everything else goes through the `Broker`."""
+    allowed = ["brokers/live_broker.py", "mt5/api.py"]
+    senders = sorted(name for name, text in sources().items() if ORDER_CALLS.search(text))
+    assert senders == allowed
+
+
+def test_the_paper_broker_never_reaches_mt5_trading() -> None:
+    texts = sources()
+    for name in ("brokers/paper_broker.py", "brokers/market.py"):
+        assert "live_broker" not in texts[name], name
+        assert not ORDER_CALLS.search(texts[name]), name
+
+
+def test_the_execution_engine_only_talks_to_brokers() -> None:
+    """The engine sees the `Broker` interface and market reads, never the MT5 gateway."""
+    text = sources()["engine/execution.py"]
+    assert re.findall(r"app\.mt5\.(gateway|api|terminal_process)\b", text) == []
+    assert "app.brokers.live_broker" not in text and "app.brokers.paper_broker" not in text
+
+
+def test_the_trade_test_refuses_real_accounts_before_any_order() -> None:
+    text = sources()["brokers/trade_test.py"]
+    refuse = text.index("AccountKind.DEMO")
+    assert refuse < text.index("send_open(")
