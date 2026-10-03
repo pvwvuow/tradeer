@@ -2,7 +2,9 @@
 
 It mimics the shapes the real package returns (named records, numpy rate arrays, `None` plus
 `last_error()` on failure) and records every call, so tests can prove that read-only tools
-never trade. It is never imported by the app and never shipped.
+never trade. `order_check`/`order_send` simulate a trade server (positions, pending orders,
+deals, scripted return codes, SL/TP hits when a test moves the price with `set_bid`). It is
+never imported by the app and never shipped.
 """
 
 from __future__ import annotations
@@ -58,6 +60,8 @@ class FakeSymbol:
     contract_size: float = 100_000.0
     trade_mode: int = api.SYMBOL_TRADE_MODE_FULL
     visible: bool = True
+    filling_flags: int = 3  # SYMBOL_FILLING_FOK | SYMBOL_FILLING_IOC
+    stops_level: int = 10
 
 
 def default_symbols() -> list[FakeSymbol]:
@@ -97,6 +101,15 @@ class FakeMT5:
     hang_seconds: float = 0.0
     now: Any = time.time
     calls: list[str] = field(default_factory=list)
+    # Trading simulation: return codes to answer the next sends with (nothing happens), sends
+    # that execute but answer TIMEOUT (a lost reply), commission per lot and side.
+    send_script: list[int] = field(default_factory=list)
+    lost_replies: int = 0
+    check_retcode: int = 0
+    commission_per_lot: float = 0.0
+    pending_orders: list[SimpleNamespace] = field(default_factory=list)
+    _next_ticket: int = 70_000_000
+    _simulated: set[int] = field(default_factory=set)
     _error: tuple[int, str] = (api.RES_S_OK, "Success")
     _initialized: bool = False
     _account: FakeAccount | None = None
@@ -179,8 +192,8 @@ class FakeMT5:
             company=account.company,
             currency=account.currency,
             balance=account.balance,
-            equity=account.balance,
-            margin_free=account.balance,
+            equity=account.balance + self._floating(),
+            margin_free=account.balance + self._floating(),
             leverage=account.leverage,
             trade_mode=account.trade_mode,
             margin_mode=account.margin_mode,
@@ -255,7 +268,12 @@ class FakeMT5:
         self.calls.append("history_deals_get")
         if not self._ready():
             return None
-        return tuple(deal for deal in self.deals if _in_range(deal.time, args))
+        found = [deal for deal in self.deals if _in_range(deal.time, args)]
+        if "ticket" in kwargs:
+            found = [deal for deal in found if deal.ticket == kwargs["ticket"]]
+        if "position" in kwargs:
+            found = [deal for deal in found if deal.position_id == kwargs["position"]]
+        return tuple(found)
 
     def history_orders_get(self, *args: Any, **kwargs: Any) -> tuple[SimpleNamespace, ...] | None:
         self.calls.append("history_orders_get")
@@ -273,7 +291,24 @@ class FakeMT5:
         self.calls.append("positions_get")
         if not self._ready():
             return None
-        return tuple(self.positions)
+        self._revalue()
+        found = list(self.positions)
+        if "symbol" in kwargs:
+            found = [p for p in found if p.symbol == kwargs["symbol"]]
+        if "ticket" in kwargs:
+            found = [p for p in found if p.ticket == kwargs["ticket"]]
+        return tuple(found)
+
+    def orders_get(self, *args: Any, **kwargs: Any) -> tuple[SimpleNamespace, ...] | None:
+        self.calls.append("orders_get")
+        if not self._ready():
+            return None
+        found = list(self.pending_orders)
+        if "symbol" in kwargs:
+            found = [o for o in found if o.symbol == kwargs["symbol"]]
+        if "ticket" in kwargs:
+            found = [o for o in found if o.ticket == kwargs["ticket"]]
+        return tuple(found)
 
     # Calculations (never trade) ----------------------------------------------------------
     def order_calc_profit(
@@ -327,14 +362,359 @@ class FakeMT5:
                 return 1.0 / symbol.bid
         raise AssertionError(f"FakeMT5 has no USD rate for {currency}")
 
-    # Anything that trades must never be called by read-only code ------------------------
-    def order_send(self, request: Any) -> None:
-        self.calls.append("order_send")
-        raise AssertionError("order_send must not be called by read-only code")
-
-    def order_check(self, request: Any) -> None:
+    # Trading simulation (read-only code must never call these: see `trading_calls`) ------
+    def order_check(self, request: dict[str, Any]) -> SimpleNamespace | None:
         self.calls.append("order_check")
-        raise AssertionError("order_check must not be called by read-only code")
+        if not self._ready():
+            return self._fail_none(api.RES_E_FAIL, "Terminal not ready")
+        code = self.check_retcode or self._validate(request)
+        account = self._account
+        balance = account.balance if account is not None else 0.0
+        return SimpleNamespace(
+            retcode=0 if code in (0, api.TRADE_RETCODE_DONE) else code,
+            balance=balance,
+            equity=balance + self._floating(),
+            profit=0.0,
+            margin=0.0,
+            margin_free=balance,
+            margin_level=0.0,
+            comment="Done" if not code else "Rejected",
+            request=SimpleNamespace(**request),
+        )
+
+    def order_send(self, request: dict[str, Any]) -> SimpleNamespace | None:
+        self.calls.append("order_send")
+        if not self._ready():
+            return self._fail_none(api.RES_E_FAIL, "Terminal not ready")
+        if self.send_script:
+            return self._result(self.send_script.pop(0), request)
+        code = self._validate(request)
+        if code:
+            return self._result(code, request)
+        action = int(request["action"])
+        if action == api.TRADE_ACTION_DEAL and request.get("position"):
+            result = self._close(request)
+        elif action == api.TRADE_ACTION_DEAL:
+            result = self._open(request)
+        elif action == api.TRADE_ACTION_PENDING:
+            ticket = self._ticket()
+            self.pending_orders.append(
+                SimpleNamespace(
+                    ticket=ticket,
+                    time_setup=self._server_now(),
+                    type=int(request["type"]),
+                    state=1,
+                    magic=int(request.get("magic", 0)),
+                    position_id=0,
+                    volume_initial=float(request["volume"]),
+                    volume_current=float(request["volume"]),
+                    price_open=float(request["price"]),
+                    sl=float(request.get("sl", 0.0)),
+                    tp=float(request.get("tp", 0.0)),
+                    time_expiration=int(request.get("expiration", 0)),
+                    symbol=request["symbol"],
+                    comment=str(request.get("comment", "")),
+                ),
+            )
+            result = self._result(api.TRADE_RETCODE_PLACED, request, order=ticket)
+        elif action == api.TRADE_ACTION_SLTP:
+            position = self._position(int(request["position"]))
+            if position is None:
+                return self._result(10036, request)
+            if (position.sl, position.tp) == (request["sl"], request["tp"]):
+                return self._result(10025, request)
+            position.sl, position.tp = float(request["sl"]), float(request["tp"])
+            result = self._result(api.TRADE_RETCODE_DONE, request)
+        elif action == api.TRADE_ACTION_REMOVE:
+            order = next((o for o in self.pending_orders if o.ticket == request["order"]), None)
+            if order is None:
+                return self._result(10013, request)
+            self.pending_orders.remove(order)
+            result = self._result(api.TRADE_RETCODE_DONE, request, order=order.ticket)
+        else:
+            return self._result(10013, request)
+        if self.lost_replies and action == api.TRADE_ACTION_DEAL:
+            self.lost_replies -= 1
+            return self._result(10012, request)
+        return result
+
+    def set_bid(self, symbol: str, bid: float) -> None:
+        """Move the price: pending orders that are crossed fill, SL/TP hits close positions."""
+        found = self._find(symbol)
+        if found is None:
+            raise AssertionError(f"FakeMT5 has no symbol {symbol}")
+        found.bid = bid
+        bid, ask = self._prices(found)
+        for order in list(self.pending_orders):
+            if order.symbol != symbol:
+                continue
+            if order.time_expiration and self._server_now() >= order.time_expiration:
+                self.pending_orders.remove(order)
+                continue
+            long = order.type in (api.ORDER_TYPE_BUY_LIMIT, api.ORDER_TYPE_BUY_STOP)
+            current = ask if long else bid
+            stop = order.type in (api.ORDER_TYPE_BUY_STOP, api.ORDER_TYPE_SELL_STOP)
+            rising = current >= order.price_open
+            crossed = rising == long if stop else rising != long
+            if crossed:
+                self.pending_orders.remove(order)
+                self._new_position(order, long, order.volume_current, current, order.ticket)
+        for position in list(self.positions):
+            if position.ticket not in self._simulated or position.symbol != symbol:
+                continue
+            long = position.type == api.POSITION_TYPE_BUY
+            price = bid if long else ask
+            sign = 1 if long else -1
+            if position.sl and (price - position.sl) * sign <= 0:
+                self._exit(position, position.volume, position.sl, api.DEAL_REASON_SL)
+            elif position.tp and (price - position.tp) * sign >= 0:
+                self._exit(position, position.volume, position.tp, api.DEAL_REASON_TP)
+
+    def _prices(self, symbol: FakeSymbol) -> tuple[float, float]:
+        spread = symbol.spread_points / 10**symbol.digits
+        return symbol.bid, round(symbol.bid + spread, symbol.digits)
+
+    def _ticket(self) -> int:
+        self._next_ticket += 1
+        return self._next_ticket
+
+    def _position(self, ticket: int) -> SimpleNamespace | None:
+        return next((p for p in self.positions if p.ticket == ticket), None)
+
+    def _validate(self, request: dict[str, Any]) -> int:
+        """0 when the request is valid, else the trade server's return code."""
+        action = int(request.get("action", 0))
+        if action in (api.TRADE_ACTION_REMOVE, api.TRADE_ACTION_SLTP):
+            if action == api.TRADE_ACTION_SLTP:
+                position = self._position(int(request.get("position", 0)))
+                if position is None:
+                    return 10036
+                found = self._find(position.symbol)
+                long = position.type == api.POSITION_TYPE_BUY
+                return self._stops(found, long, float(request["sl"]), float(request["tp"]))
+            return 0
+        if not self.algo_trading:
+            return 10027
+        found = self._find(str(request.get("symbol", "")))
+        if found is None:
+            return 10013
+        if found.trade_mode == api.SYMBOL_TRADE_MODE_DISABLED:
+            return 10017
+        volume = float(request.get("volume", 0.0))
+        if volume < 0.01 or abs(round(volume / 0.01) * 0.01 - volume) > 1e-9:
+            return 10014
+        filling = int(request.get("type_filling", 0))
+        allowed = {api.ORDER_FILLING_FOK: 1, api.ORDER_FILLING_IOC: 2}
+        if filling in allowed and not found.filling_flags & allowed[filling]:
+            return 10030
+        if filling == api.ORDER_FILLING_RETURN and found.filling_flags:
+            return 10030
+        bid, ask = self._prices(found)
+        kind = int(request.get("type", 0))
+        long = kind in (api.ORDER_TYPE_BUY, api.ORDER_TYPE_BUY_LIMIT, api.ORDER_TYPE_BUY_STOP)
+        if action == api.TRADE_ACTION_DEAL:
+            current = ask if long else bid
+            point = 10**-found.digits
+            deviation = int(request.get("deviation", 0))
+            if abs(float(request.get("price", current)) - current) > (deviation + 0.5) * point:
+                return 10004
+            if request.get("position"):
+                return 0 if self._position(int(request["position"])) else 10036
+            sl, tp = float(request.get("sl", 0)), float(request.get("tp", 0))
+            return self._stops(found, long, sl, tp)
+        price = float(request.get("price", 0.0))
+        current = ask if long else bid
+        stop = kind in (api.ORDER_TYPE_BUY_STOP, api.ORDER_TYPE_SELL_STOP)
+        right_side = (price > current) == long if stop else (price < current) == long
+        if not right_side:
+            return 10015
+        sl, tp = float(request.get("sl", 0)), float(request.get("tp", 0))
+        return self._stops(found, long, sl, tp, price)
+
+    def _stops(
+        self,
+        found: FakeSymbol | None,
+        long: bool,
+        sl: float,
+        tp: float,
+        price: float | None = None,
+    ) -> int:
+        if found is None:
+            return 10013
+        bid, ask = self._prices(found)
+        reference = price if price is not None else (bid if long else ask)
+        sign = 1 if long else -1
+        minimum = found.stops_level * 10**-found.digits
+        if sl and (reference - sl) * sign < minimum:
+            return 10016
+        if tp and (tp - reference) * sign < minimum:
+            return 10016
+        return 0
+
+    def _open(self, request: dict[str, Any]) -> SimpleNamespace:
+        found = self._find(str(request["symbol"]))
+        assert found is not None
+        bid, ask = self._prices(found)
+        long = int(request["type"]) == api.ORDER_TYPE_BUY
+        price = ask if long else bid
+        ticket = self._ticket()
+        source = SimpleNamespace(
+            magic=int(request.get("magic", 0)),
+            sl=float(request.get("sl", 0.0)),
+            tp=float(request.get("tp", 0.0)),
+            symbol=request["symbol"],
+            comment=str(request.get("comment", "")),
+        )
+        deal = self._new_position(source, long, float(request["volume"]), price, ticket)
+        return self._result(
+            api.TRADE_RETCODE_DONE,
+            request,
+            order=ticket,
+            deal=deal,
+            price=price,
+            volume=float(request["volume"]),
+        )
+
+    def _new_position(
+        self,
+        source: SimpleNamespace,
+        long: bool,
+        volume: float,
+        price: float,
+        ticket: int,
+    ) -> int:
+        self.positions.append(
+            SimpleNamespace(
+                ticket=ticket,
+                symbol=source.symbol,
+                type=api.POSITION_TYPE_BUY if long else api.POSITION_TYPE_SELL,
+                volume=volume,
+                price_open=price,
+                price_current=price,
+                sl=source.sl,
+                tp=source.tp,
+                profit=0.0,
+                swap=0.0,
+                magic=source.magic,
+                identifier=ticket,
+                comment=source.comment,
+                time=self._server_now(),
+            ),
+        )
+        self._simulated.add(ticket)
+        return self._deal(ticket, source, long, api.DEAL_ENTRY_IN, volume, price, 0.0, 3)
+
+    def _deal(
+        self,
+        position: int,
+        source: SimpleNamespace,
+        buy: bool,
+        entry: int,
+        volume: float,
+        price: float,
+        profit: float,
+        reason: int,
+    ) -> int:
+        ticket = self._ticket()
+        deal = make_trade_deal(
+            ticket,
+            position,
+            entry=entry,
+            deal_type=api.DEAL_TYPE_BUY if buy else api.DEAL_TYPE_SELL,
+            time_s=self._server_now(),
+            volume=volume,
+            price=price,
+            profit=round(profit, 2),
+            commission=-round(self.commission_per_lot * volume, 2),
+            magic=source.magic,
+            reason=reason,
+            symbol=source.symbol,
+        )
+        deal.order = position
+        deal.comment = source.comment
+        self.deals.append(deal)
+        if self._account is not None:
+            self._account.balance += deal.profit + deal.commission
+        return ticket
+
+    def _close(self, request: dict[str, Any]) -> SimpleNamespace:
+        position = self._position(int(request["position"]))
+        assert position is not None
+        found = self._find(position.symbol)
+        assert found is not None
+        bid, ask = self._prices(found)
+        long = position.type == api.POSITION_TYPE_BUY
+        price = bid if long else ask
+        volume = min(float(request["volume"]), position.volume)
+        deal = self._exit(position, volume, price, api.DEAL_REASON_EXPERT)
+        return self._result(
+            api.TRADE_RETCODE_DONE,
+            request,
+            order=self._ticket(),
+            deal=deal,
+            price=price,
+            volume=volume,
+        )
+
+    def _exit(self, position: SimpleNamespace, volume: float, price: float, reason: int) -> int:
+        long = position.type == api.POSITION_TYPE_BUY
+        sign = 1 if long else -1
+        found = self._find(position.symbol)
+        contract = found.contract_size if found is not None else 100_000.0
+        money = (price - position.price_open) * sign * contract * volume
+        money *= self._to_account(position.symbol[3:6])
+        out = api.DEAL_ENTRY_OUT
+        deal = self._deal(position.ticket, position, not long, out, volume, price, money, reason)
+        position.volume = round(position.volume - volume, 8)
+        if position.volume <= 1e-9:
+            self.positions.remove(position)
+            self._simulated.discard(position.ticket)
+        return deal
+
+    def _revalue(self) -> None:
+        for position in self.positions:
+            if position.ticket not in self._simulated:
+                continue
+            found = self._find(position.symbol)
+            if found is None:
+                continue
+            bid, ask = self._prices(found)
+            long = position.type == api.POSITION_TYPE_BUY
+            price = bid if long else ask
+            position.price_current = price
+            sign = 1 if long else -1
+            money = (price - position.price_open) * sign * found.contract_size * position.volume
+            position.profit = round(money * self._to_account(position.symbol[3:6]), 2)
+
+    def _floating(self) -> float:
+        self._revalue()
+        return sum(p.profit for p in self.positions if p.ticket in self._simulated)
+
+    def _result(
+        self,
+        code: int,
+        request: dict[str, Any],
+        *,
+        order: int = 0,
+        deal: int = 0,
+        price: float = 0.0,
+        volume: float = 0.0,
+    ) -> SimpleNamespace:
+        found = self._find(str(request.get("symbol", "")))
+        bid, ask = self._prices(found) if found is not None else (0.0, 0.0)
+        return SimpleNamespace(
+            retcode=code,
+            deal=deal,
+            order=order,
+            volume=volume,
+            price=price,
+            bid=bid,
+            ask=ask,
+            comment="Request executed" if code == api.TRADE_RETCODE_DONE else f"code {code}",
+            request_id=len(self.calls),
+            retcode_external=0,
+            request=SimpleNamespace(**request),
+        )
 
     # Helpers ----------------------------------------------------------------------------
     @property
@@ -363,9 +743,9 @@ class FakeMT5:
             volume_min=0.01,
             volume_max=100.0,
             volume_step=0.01,
-            trade_stops_level=10,
+            trade_stops_level=symbol.stops_level,
             trade_freeze_level=0,
-            filling_mode=3,
+            filling_mode=symbol.filling_flags,
             trade_mode=symbol.trade_mode,
             currency_margin=symbol.name[:3],
             currency_profit=symbol.name[3:6],
