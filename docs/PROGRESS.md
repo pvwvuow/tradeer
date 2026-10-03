@@ -10,7 +10,8 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 4: Storage, pull request #14, CI green, waiting for review.
 - Phase 5: Market data & analysis, pull request #15, CI green, waiting for review.
 - Phase 6: Strategies & signals, pull request #16, CI green, waiting for review.
-- Phase 7: Risk, stacked on Phase 6, in review.
+- Phase 7: Risk, pull request #17, CI green, waiting for review.
+- Phase 8: Execution, stacked on Phase 7, in review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -18,9 +19,59 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 7 Risk (branch `phase/07-risk`, pull request into `phase/06-strategies-signals`)
+## Current phase: 8 Execution (branch `phase/08-execution`, pull request into `phase/07-risk`)
 
-Status: built and tested against the FakeMT5; not yet run on your PC. Still signal only: the risk manager decides which signals wait for approval, and nothing is sent to MT5.
+Status: built and tested against the FakeMT5 (a simulated trade server with scripted return codes); not yet run on your PC. Paper is still the default mode: nothing reaches your account until you switch to Semi-auto and approve a signal.
+
+### What was built
+
+- **Approval** (Signals page, spec C5): Approve asks for a confirmation with the lot and the money at risk. On the next analysis cycle the signal is re-checked against the live price (still valid, price within 0.25 R of the entry, spread at most 0.2 of the SL distance, stops level, netting) and sized again by the risk manager at the live price. A failed re-check expires the signal with the reason; nothing is sent.
+- **Live broker** (`app/brokers/live_broker.py`, spec C7): buy at the ask, sell at the bid; SL and TP always in the request; the filling mode from the symbol (FOK, else IOC, else RETURN: XAUUSD at FIBO gets IOC); deviation; the strategy's magic number; comment `tw-<signal id>`. `order_check` must pass before `order_send`. Pending orders carry their expiration.
+- **Retcode policy** (`app/mt5/retcodes.py`): retries only requote, price changed, off quotes, timeout, too many requests and connection, with a fresh price, at most 3 times (setting). After a timeout or a lost connection it first looks for the order by its comment, so a lost reply never opens a second trade. Every request and answer is saved in `mt5_requests` and logged in the `execution` category, with latency and slippage.
+- **Paper broker** (`app/brokers/paper_broker.py`, spec C8): the same interface on live quotes, with slippage (1 point) and commission (setting); pending orders fill when crossed and expire; SL/TP on every cycle; positions, orders, deals and the paper balance survive a restart. Paper trades go to the same `trades` table with `mode = paper`. In Paper mode the risk limits use the paper balance and positions.
+- **Execution engine** (`app/engine/execution.py`): opens the order, records the trade (requested and fill price, slippage, initial SL/TP, risk money, signal id), tracks MFE/MAE in R, applies the optional per-strategy management (break-even at X R + offset, ATR trailing, partial close at X R, time exit after N bars; all off by default; never inside the freeze level; the SL only tightens), cancels the other London breakout order when one fills (OCO), and syncs a closed position back from the deal history: profit, commission, swap, net, R and the exit reason (stop loss, take profit, stop out, manual, expert). The signal goes `APPROVED -> SENT -> FILLED -> MANAGED -> CLOSED` (or `FAILED`), every step in its history and trace.
+- **Crash recovery**: the managed trades are saved after every cycle. After a restart or reconnect the engine resumes managing them, adopts any bot position it did not know (WARNING in the log), and a failed MT5 read never counts as "closed".
+- **Kill switch** (status bar, Positions & Trades, Ctrl+Shift+K; always with a confirmation): closes every bot position, cancels every bot pending order, stops new entries (typed ENABLE on the Risk page to resume). Manual trades are never touched.
+- **Positions & Trades page**: the trading mode (Paper, Semi-auto, Analysis-only; Auto waits for the Go-Live gate of Phase 13; Semi-auto on a REAL account needs the typed word REAL), the bot's open positions and pending orders with P/L, MFE and MAE, Close position (with a confirmation), the execution events, and the execution and management settings (`execution.json`). Every change is in the audit log.
+- **Status bar**: the mode badge follows the saved mode; the bot state shows "running, N open", "stopped (kill switch)" or "disconnected".
+- **`--mt5-trade-test --symbol EURUSD`** (spec I4): refuses REAL accounts and investor logins. On DEMO it opens the minimum lot with SL and TP, checks the position and its magic number in MT5, moves the SL, closes, reads the closed deal back (profit, commission, swap) and prints every step with its return codes (logged in `execution` and `mt5`).
+- Fixed from Phase 7: the risk manager now uses the broker's symbol name (for example `EURUSD.m`) for `order_calc_profit`, `order_calc_margin` and the per-symbol limit. Bot trades from the history import are now labelled "bot" (their magic numbers are passed to the import).
+
+### Checklist
+
+- ✓ An approved signal opens with SL/TP and the strategy's magic number, and the closed deal (profit, commission, swap, exit reason, R) is synced back: FakeMT5 end-to-end tests (`tests/unit/test_execution_engine.py`, `test_pipeline_execution.py`)
+- ✓ Retcode policy: a requote is retried with a fresh price, invalid stops are never retried, a lost reply is found by its comment (unit tests)
+- ✓ XAUUSD with IOC-only filling is sent with IOC (unit tests, trade test)
+- ✓ Crash recovery: a new engine resumes the saved trade and adopts an unknown bot position without sending anything (`test_crash_recovery_resumes_managing_and_adopts_unknown_bot_positions`); a failed read never closes a trade
+- ✓ Kill switch closes bot positions, cancels bot orders, stops new entries and spares manual trades (unit and UI tests)
+- ✓ Paper broker: fills, slippage, commission, pending orders, expiry, SL/TP with gaps, saved state, paper risk picture (unit tests)
+- ✓ `--mt5-trade-test` passes on the FakeMT5 DEMO account and refuses a REAL one before any request (unit tests)
+- ✓ Architecture tests: only the live broker calls `order_send`/`order_check`; the engine never touches the gateway; the paper broker never reaches MT5 trading
+- ✗ **Not yet run on your MT5 demo account**: the acceptance check (a tiny test trade opens with SL/TP, shows the right magic number in MT5, is modified, closed, and the deal is synced back) needs your PC; see "Test on your PC"
+- ✗ Management rules and paper SL/TP run on every analysis cycle (a few seconds), not on every tick
+
+### Test on your PC
+
+1. Download the build artifact of this pull request, unzip, run `MT5TradingWorkstation.exe --self-check`.
+2. With MT5 open on your **demo** account and Algo Trading ON, run `MT5TradingWorkstation.exe --mt5-trade-test --symbol EURUSD`. Expected: steps 1 to 5 all ✓ and `Result: PASS`; in MT5 (History tab) a 0.01-lot trade with magic 26070099 and comment `tw-trade-test`. Then run it again with `--symbol XAUUSD`: the report must say `filling IOC` and pass.
+3. Start the app: the status bar shows `PAPER` and "Bot: running". Open Advanced > Positions & Trades: mode Paper.
+4. When a signal waits (Signals page), select it and click Approve, then Yes. Within a few seconds its state is "open (managed)" and it appears on Positions & Trades as a paper position. Nothing appears in MT5.
+5. Switch the mode to Semi-auto (demo: a confirmation only). Approve the next signal: the trade appears in MT5 with its SL, TP, magic 26070001 or 26070002 and a `tw-` comment.
+6. Crash-recovery test: with that trade open, close the app (or end it in Task Manager), start it again: Positions & Trades lists the trade again ("Resumed managing 1 bot trade" in the events) and nothing new is sent.
+7. Press Ctrl+Shift+K and confirm: the bot trade is closed, the status bar says "Bot: stopped (kill switch)", the Risk page says new entries are stopped. Your manual trades stay open.
+8. After the trade closed, the signal says "closed" with net profit and R, and Settings > Data shows the trade with commission and swap after the next history import.
+9. If anything fails, send the report of step 2 and the newest files from `logs/execution/`, `logs/mt5/` and `logs/all.log`.
+
+### Limitations
+
+- SL/TP of paper positions and the management rules are checked on every analysis cycle (every few seconds), not on every tick; the server-side SL protects live positions between cycles.
+- On a netting account a second trade on a symbol with an open bot position is blocked (not reduced).
+- A paper position is valued with the profit per 1.0 of price read when it opened; for a cross-currency symbol this ignores later changes of the conversion rate.
+- The full Positions & Trades history (filters, detail drawer, journal) is Phase 12; Simple-mode cards are Phase 9; Telegram remote kill is Phase 12.
+
+## Phase 7: Risk (branch `phase/07-risk`, pull request #17)
+
+Status: built and tested against the FakeMT5; not yet run on your PC.
 
 ### What was built
 
@@ -44,7 +95,7 @@ Status: built and tested against the FakeMT5; not yet run on your PC. Still sign
 - ✓ Profiles and hard caps (unit tests); Risk page (UI test runs in CI)
 - ✓ Architecture tests: risk math is pure, risk code never sends or checks orders, sizing never reads the tick value
 - ✗ Not yet run on your PC with live FIBO data
-- ✗ `order_check`, the full kill switch (close bot positions, cancel orders) and the approval re-check arrive with orders in Phase 8; "Stop new entries" only stops new signals today
+- ✗ `order_check`, the full kill switch (close bot positions, cancel orders) and the approval re-check arrived with orders in Phase 8
 
 ### Test on your PC
 
@@ -288,8 +339,7 @@ Acceptance checklist (spec G3 phase 2):
 - No lock file yet; direct dependencies are pinned exactly.
 - Tick freshness and data checks arrived in Phase 5 (Market page); the connection checklist itself still only checks that history exists and warns when "Max bars in chart" is low.
 - "Start MT5 automatically" and "Start the app with Windows" (spec I5) are not built yet.
-- `--mt5-trade-test` arrives with execution in Phase 8.
-- Signals are signal only until Phase 8; the probability is "unknown" until 30 signals are resolved.
+- The probability is "unknown" until a strategy has 30 resolved signals.
 - FIBO's XAUUSD tick value (0.1 USD) disagrees with its contract size and published point value (1 USD): Phase 7 sizes positions with `order_calc_profit` and never reads the tick value (ADR 60).
 - Profiles cannot be switched inside a running window; another profile opens in a new window.
 - Health checks, performance metrics, the debug bundle and the full Logs page (trace timeline, time filters, export) are Phase 14 items.
@@ -299,4 +349,5 @@ Acceptance checklist (spec G3 phase 2):
 1. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), Phase 4 (#14), then Phase 5 (#15). Each one is retargeted to `main` after the one before it is merged.
 2. Run "Test on your PC" from the Phase 3, 4 and 5 pull requests against your MT5 demo account and report the result.
 3. Run "Test on your PC" from the Phase 6 pull request during a London morning, and from the Phase 7 pull request (Risk page).
-4. Phase 8 (execution: orders with server-side SL, retcode policy, position management, the full kill switch) after Phase 7 is reviewed.
+4. Run "Test on your PC" from the Phase 8 pull request on your demo account (`--mt5-trade-test`, then a paper and a Semi-auto approval, the restart and the kill switch).
+5. Phase 9 (Simple Mode: the Home screen with the Trade Suggestion Card, plain-language status and the Stop button) after Phase 8 is reviewed.
