@@ -59,12 +59,12 @@ class PageHeader(QWidget):
         text.addWidget(self.title)
         text.addWidget(self.subtitle)
         row.addLayout(text, 1)
-        self.actions = QHBoxLayout()
-        self.actions.setSpacing(8)
-        row.addLayout(self.actions)
+        self.action_row = QHBoxLayout()
+        self.action_row.setSpacing(8)
+        row.addLayout(self.action_row)
 
     def add_action(self, widget: QWidget) -> None:
-        self.actions.addWidget(widget, 0, Qt.AlignmentFlag.AlignBottom)
+        self.action_row.addWidget(widget, 0, Qt.AlignmentFlag.AlignBottom)
 
 
 def page_header(title: str, subtitle: str = "", crumb: str = "") -> PageHeader:
