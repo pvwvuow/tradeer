@@ -3,9 +3,11 @@ probability + EV -> filters -> risk -> decision, every step in the decision trac
 
 Runs in the `market-analysis` thread, called by `MarketWatch` after a symbol was analysed.
 A signal that passes every filter is sized and checked by the risk manager (Phase 7); one
-that breaks a limit is `RISK_REJECTED`. Signal only until Phase 8: a signal within every
-limit waits for approval (`PENDING_APPROVAL`) and expires; nothing is sent to MT5. The UI
-asks to dismiss a signal through a queue, so every database write happens in this one thread.
+that breaks a limit is `RISK_REJECTED`. A signal within every limit waits for approval
+(`PENDING_APPROVAL`) and expires. Approving hands it to the execution engine (Phase 8), which
+re-checks, sends and manages it; the engine's state changes (`SENT`, `FILLED`, `MANAGED`,
+`CLOSED`, `FAILED`) come back as `SignalUpdate`s. The UI asks to approve or dismiss a signal
+through a queue, so every database write happens in this one thread.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from app.analysis.symbol import SymbolAnalysis
 from app.core.clock import BrokerClock
 from app.domain.probability import ProbabilityEstimate, baseline, cost_in_r, expected_value_r
 from app.domain.signals import TRANSITIONS, Signal, SignalRecord, SignalState
+from app.engine.execution import SignalUpdate
 from app.engine.filters import FilterInput, FilterSettings, run_filters
 from app.mt5.models import SymbolSpec, SymbolTradeMode
 from app.observability.decision_trace import DecisionTrace
@@ -40,7 +43,9 @@ KEEP_SIGNALS = 200
 FRESH_GRACE_SECONDS = 120
 RISK_NOTE = "No risk manager is running, so nothing was sized"
 FILTERED_RISK_NOTE = "not sized: the signal was filtered out"
-EXECUTION_NOTE = "Signal only: orders arrive in Phase 8"
+EXECUTION_NOTE = "approve to send it (Paper or Semi-auto mode); unapproved signals expire"
+NO_EXECUTION_NOTE = "No execution engine is running: signal only"
+OCO_REASON = "the other side of the breakout filled (OCO)"
 
 Log = Callable[[str, str], None]
 Listener = Callable[["SignalsSnapshot"], None]
@@ -73,6 +78,20 @@ class RiskHook(Protocol):
     ) -> RiskDecision: ...
 
     def refresh(self, now: float | None = None, *, force: bool = False) -> None: ...
+
+
+class ExecutionHook(Protocol):
+    """The execution engine (Phase 8)."""
+
+    def approval_block(self) -> str: ...
+
+    def execute(self, record: SignalRecord, now: float | None = None) -> list[SignalUpdate]: ...
+
+    def cycle(
+        self,
+        now: float | None = None,
+        signals: Mapping[str, SignalRecord] | None = None,
+    ) -> list[SignalUpdate]: ...
 
 
 def add_risk_steps(trace: DecisionTrace, decision: RiskDecision, now: float) -> None:
@@ -131,6 +150,7 @@ class SignalsSnapshot:
     strategies: tuple[str, ...] = ()
     message: str = "Waiting for the first closed bar"
     updated_at: float = 0.0
+    approval_block: str = NO_EXECUTION_NOTE  # why Approve is disabled, "" when it works
 
     def pending(self) -> list[SignalRecord]:
         return [r for r in self.signals if r.signal.state is SignalState.PENDING_APPROVAL]
@@ -185,6 +205,7 @@ class SignalPipeline:
         store: SignalStore | None = None,
         account: Callable[[], str | None] | None = None,
         risk: RiskHook | None = None,
+        executor: ExecutionHook | None = None,
         log: Log = _quiet,
         utc_now: Callable[[], float] = time.time,
     ) -> None:
@@ -192,6 +213,7 @@ class SignalPipeline:
         self._filters = filters
         self._store = store
         self._risk = risk
+        self._executor = executor
         self._account = account or (lambda: None)
         self._log = log
         self._now = utc_now
@@ -201,6 +223,7 @@ class SignalPipeline:
         self._scan: dict[tuple[str, str], ScanEntry] = {}
         self._evaluated: dict[tuple[str, str, str], int] = {}  # strategy+hash+symbol -> bar
         self._dismiss: list[str] = []
+        self._approve: list[str] = []
         self._store_failed = False
         self._snapshot = SignalsSnapshot()
 
@@ -224,6 +247,11 @@ class SignalPipeline:
         with self._lock:
             self._dismiss.append(signal_id)
 
+    def approve(self, signal_id: str) -> None:
+        """Ask to send a pending signal; re-checked and sent on the next analysis cycle."""
+        with self._lock:
+            self._approve.append(signal_id)
+
     # Analysis thread -------------------------------------------------------------------
     def load(self) -> int:
         """The newest saved signals, so the page and the expiry survive a restart."""
@@ -244,16 +272,27 @@ class SignalPipeline:
         moment = self._now() if now is None else now
         with self._lock:
             queued, self._dismiss = self._dismiss, []
+            approved, self._approve = self._approve, []
         changed = False
         for signal_id in queued:
             changed |= self._finish(signal_id, SignalState.USER_REJECTED, moment, "dismissed")
+        for signal_id in approved:
+            changed |= self._send(signal_id, moment)
         for record in list(self._records.values()):
             signal = record.signal
             if signal.state is SignalState.PENDING_APPROVAL and signal.expires_at <= moment:
                 reason = f"expired at {_utc_text(signal.expires_at)}"
                 changed |= self._finish(signal.id, SignalState.EXPIRED, moment, reason)
-        if changed:
-            self._publish("Signals updated")
+        if self._executor is not None:
+            try:
+                updates = self._executor.cycle(moment, dict(self._records))
+            except Exception as error:
+                updates = []
+                self._log("ERROR", f"Execution cycle failed: {type(error).__name__}: {error}")
+            for update in updates:
+                changed |= self._apply(update, moment)
+        if changed or self._approval_block() != self._snapshot.approval_block:
+            self._publish("Signals updated" if changed else self._snapshot.message)
         if self._risk is not None:
             try:
                 self._risk.refresh(moment)
@@ -459,7 +498,7 @@ class SignalPipeline:
             "expires at",
             None,
             value=_utc_text(signal.expires_at),
-            detail=EXECUTION_NOTE,
+            detail=EXECUTION_NOTE if self._executor is not None else NO_EXECUTION_NOTE,
         )
         trace.final_decision = state.value
         signal = signal.with_state(state, now, reason)
@@ -572,12 +611,50 @@ class SignalPipeline:
         self._log("INFO", f"Signal {state.value.lower()}: {signal.summary()} ({reason})")
         return True
 
+    def _send(self, signal_id: str, now: float) -> bool:
+        record = self._records.get(signal_id)
+        if record is None or record.signal.state is not SignalState.PENDING_APPROVAL:
+            return False
+        if self._executor is None:
+            return self._finish(signal_id, SignalState.EXPIRED, now, NO_EXECUTION_NOTE)
+        self._log("INFO", f"Signal approved by the user: {record.signal.summary()}")
+        changed = False
+        for update in self._executor.execute(record, now):
+            changed |= self._apply(update, now)
+        return changed
+
+    def _apply(self, update: SignalUpdate, now: float) -> bool:
+        """One state change from the execution engine, with its trace lines."""
+        record = self._records.get(update.signal_id)
+        if record is None or update.state not in TRANSITIONS[record.signal.state]:
+            return False
+        for check in update.checks:
+            record.trace.add(
+                "execution",
+                check.name,
+                check.passed,
+                value=check.value,
+                threshold=check.threshold,
+                detail=check.detail,
+                at=now,
+            )
+        changed = self._finish(update.signal_id, update.state, now, update.reason)
+        group = record.signal.features.get("oco_group")
+        if changed and update.state is SignalState.FILLED and group:
+            for other in list(self._records.values()):
+                twin = other.signal
+                waiting = twin.state is SignalState.PENDING_APPROVAL
+                if waiting and twin.features.get("oco_group") == group:
+                    self._finish(twin.id, SignalState.EXPIRED, now, OCO_REASON)
+        return changed
+
     def _remember(self, record: SignalRecord) -> None:
         self._records[record.id] = record
         if len(self._records) > KEEP_SIGNALS:
             ordered = sorted(self._records.values(), key=lambda item: item.signal.created_at)
             for old in ordered[: len(self._records) - KEEP_SIGNALS]:
-                if old.signal.state is not SignalState.PENDING_APPROVAL:
+                state = old.signal.state
+                if state is not SignalState.PENDING_APPROVAL and not state.open_position:
                     del self._records[old.id]
 
     def _save(self, record: SignalRecord, strategy: Strategy | None) -> None:
@@ -595,6 +672,14 @@ class SignalPipeline:
                 self._log("WARNING", f"Signal {record.id} could not be saved: {name}: {error}")
             self._store_failed = True
 
+    def _approval_block(self) -> str:
+        if self._executor is None:
+            return NO_EXECUTION_NOTE
+        try:
+            return self._executor.approval_block()
+        except Exception as error:
+            return f"execution engine error: {type(error).__name__}"
+
     def _publish(self, message: str) -> None:
         records = sorted(
             self._records.values(),
@@ -608,6 +693,7 @@ class SignalPipeline:
             strategies=names,
             message=message,
             updated_at=self._now(),
+            approval_block=self._approval_block(),
         )
         with self._lock:
             self._snapshot = snapshot
