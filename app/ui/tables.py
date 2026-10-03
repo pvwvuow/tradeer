@@ -1,18 +1,25 @@
-"""Small table helpers shared by the Phase 12 pages."""
+"""Table helpers shared by the pages: one look for every table (0.13 design system)."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
+
+ROW_HEIGHT = 30
 
 
 def make_table(columns: Sequence[str], *, select: bool = False) -> QTableWidget:
     table = QTableWidget(0, len(columns))
     table.setHorizontalHeaderLabels(list(columns))
     table.verticalHeader().setVisible(False)
+    table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
+    table.setShowGrid(False)
+    table.setAlternatingRowColors(True)
+    table.setWordWrap(False)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     if select:
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -20,6 +27,8 @@ def make_table(columns: Sequence[str], *, select: bool = False) -> QTableWidget:
     else:
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
     header = table.horizontalHeader()
+    header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    header.setHighlightSections(False)
     header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
     header.setStretchLastSection(True)
     return table

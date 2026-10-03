@@ -32,7 +32,8 @@ from app.engine.execution import ExecutionSnapshot
 from app.engine.market_watch import MarketSnapshot
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.risk.risk_manager import RiskSnapshot
-from app.ui.pages import PAGE_MARGIN, styled_label
+from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
+from app.ui.style import repolish
 from app.ui.tables import fill_table, make_table, number, signed
 
 POLL_MS = 2_000
@@ -96,13 +97,30 @@ class _Kpi(QFrame):
         super().__init__()
         self.setProperty("role", "card")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.addWidget(styled_label(title, "muted"))
-        self.value = styled_label("n/a", "heading")
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(4)
+        layout.addWidget(styled_label(title, "crumb"))
+        self.value = styled_label("n/a", "kpi")
         layout.addWidget(self.value)
 
-    def set_text(self, text: str) -> None:
+    def set_text(self, text: str, tone: float | None = None) -> None:
+        """Show the value; a signed `tone` colors it green (gain) or red (loss)."""
         self.value.setText(text)
+        role = "kpi"
+        if tone is not None and math.isfinite(tone) and tone != 0:
+            role = "kpi_profit" if tone > 0 else "kpi_loss"
+        if self.value.property("role") != role:
+            self.value.setProperty("role", role)
+            repolish(self.value)
+
+
+def limit_tone(share: float) -> str:
+    """The bar color of a risk limit: calm, then amber from 75% used and red at the limit."""
+    if share >= 100.0:
+        return "loss"
+    if share >= 75.0:
+        return "warning"
+    return "accent"
 
 
 class DashboardPage(QWidget):
@@ -117,6 +135,7 @@ class DashboardPage(QWidget):
         layout.setSpacing(12)
         layout.addWidget(styled_label("Dashboard", "title"))
         kpis = QHBoxLayout()
+        kpis.setSpacing(12)
         self.kpis: dict[str, _Kpi] = {}
         for name in ("Balance", "Equity", "Today", "Open risk", "Last 30 days"):
             card = _Kpi(name)
@@ -125,34 +144,48 @@ class DashboardPage(QWidget):
             kpis.addWidget(card)
         layout.addLayout(kpis)
         middle = QHBoxLayout()
+        middle.setSpacing(12)
+        equity_card, equity_layout = card_frame()
+        equity_layout.addWidget(styled_label("EQUITY (CLOSED TRADES)", "crumb"))
         self.equity_plot = pg.PlotWidget(axisItems={"bottom": pg.DateAxisItem()})
-        self.equity_plot.setLabel("left", "Equity (closed trades)")
         self.equity_plot.setMinimumHeight(220)
-        middle.addWidget(self.equity_plot, 3)
+        equity_layout.addWidget(self.equity_plot, 1)
+        middle.addWidget(equity_card, 3)
         limits = QFrame()
         limits.setProperty("role", "card")
         self.limits_layout = QGridLayout(limits)
+        self.limits_layout.setContentsMargins(18, 14, 18, 14)
+        self.limits_layout.setVerticalSpacing(6)
+        self.limits_layout.addWidget(styled_label("RISK LIMITS USED", "crumb"), 0, 0)
         self.bars: dict[str, QProgressBar] = {}
         self.bar_labels: dict[str, QLabel] = {}
         for row, name in enumerate(("Daily loss", "Drawdown", "Open risk", "Open trades")):
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setTextVisible(False)
+            bar.setProperty("slim", True)
+            bar.setProperty("tone", "accent")
             bar.setObjectName(f"Limit{name.replace(' ', '')}")
             text = styled_label(f"{name}: n/a", "muted")
             self.bars[name] = bar
             self.bar_labels[name] = text
-            self.limits_layout.addWidget(text, row * 2, 0)
-            self.limits_layout.addWidget(bar, row * 2 + 1, 0)
+            self.limits_layout.addWidget(text, row * 2 + 1, 0)
+            self.limits_layout.addWidget(bar, row * 2 + 2, 0)
+        self.limits_layout.setRowStretch(9, 1)
         middle.addWidget(limits, 1)
         layout.addLayout(middle)
         tables = QHBoxLayout()
+        tables.setSpacing(12)
         self.positions = make_table(("Symbol", "Side", "Lots", "Entry", "SL", "TP", "P/L", "Mode"))
         self.positions.setObjectName("DashboardPositions")
         self.signals = make_table(("Time (UTC)", "Symbol", "Signal", "State"))
         self.signals.setObjectName("DashboardSignals")
-        tables.addWidget(self.positions, 1)
-        tables.addWidget(self.signals, 1)
+        for title, table in (("OPEN POSITIONS", self.positions), ("LATEST SIGNALS", self.signals)):
+            column = QVBoxLayout()
+            column.setSpacing(6)
+            column.addWidget(styled_label(title, "crumb"))
+            column.addWidget(table, 1)
+            tables.addLayout(column, 1)
         layout.addLayout(tables, 1)
         self.bias = styled_label("Market bias: waiting for the analysis.", "muted", wrap=True)
         self.bias.setObjectName("DashboardBias")
@@ -197,12 +230,17 @@ class DashboardPage(QWidget):
             risk_text = f"{usage.open_risk_percent:.2f}% ({usage.open_trades} open)"
             self.kpis["Open risk"].set_text(risk_text)
         net, count = today_result(self.trades, now)
-        self.kpis["Today"].set_text(f"{net:+,.2f} ({count} closed)")
+        self.kpis["Today"].set_text(f"{net:+,.2f} ({count} closed)", net)
         if risk is None:
             return
         for name, used, limit, unit in limit_rows(risk):
             share = used / limit * 100.0 if limit > 0 else 0.0
-            self.bars[name].setValue(int(max(0.0, min(100.0, share))))
+            bar = self.bars[name]
+            bar.setValue(int(max(0.0, min(100.0, share))))
+            tone = limit_tone(share)
+            if bar.property("tone") != tone:
+                bar.setProperty("tone", tone)
+                repolish(bar)
             used_text = f"{used:.2f}{unit}" if unit else f"{used:.0f}"
             limit_text = f"{limit:.2f}{unit}" if unit else f"{limit:.0f}"
             self.bar_labels[name].setText(f"{name}: {used_text} of {limit_text}")
@@ -218,6 +256,7 @@ class DashboardPage(QWidget):
         stats = compute_stats(recent, minimum_trades=0)
         self.kpis["Last 30 days"].set_text(
             f"{stats.net_profit:+,.2f}, win rate {stats.win_rate * 100:.0f}% ({stats.trades})",
+            stats.net_profit,
         )
         self.equity_plot.clear()
         curve = equity_curve(self.trades, 0.0)

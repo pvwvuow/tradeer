@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -46,17 +46,35 @@ from app.ui.journal_page import JournalContext, JournalPage
 from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
 from app.ui.model_page import ModelContext, ModelPage
-from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
+from app.ui.navigation import (
+    ADVANCED_GROUPS,
+    ADVANCED_PAGES,
+    SIMPLE_HOME,
+    page_by_id,
+    pages_in_group,
+)
 from app.ui.notifications_page import NotificationsContext, NotificationsPage
-from app.ui.pages import PlaceholderPage, styled_label
+from app.ui.pages import PlaceholderPage, decorate_page, styled_label
 from app.ui.positions_page import KILL_TEXT, PositionsPage, TradingContext
 from app.ui.risk_page import RiskContext, RiskPage
 from app.ui.signals_page import SignalsContext, SignalsPage
 from app.ui.strategies_page import StrategiesPage
-from app.ui.theme import build_qss, tokens_for
+from app.ui.style import (
+    ICON_SIZE,
+    PAGE_GLYPHS,
+    Glyph,
+    chip,
+    glyph_icon,
+    icons_available,
+    set_chip,
+    style_plots,
+    style_tables,
+    ui_font,
+)
+from app.ui.theme import ThemeTokens, build_qss, tokens_for
 from app.ui.updates_page import UpdateBanner, UpdatesContext, UpdatesPage
 
-SIDEBAR_WIDTH = 232
+SIDEBAR_WIDTH = 224
 KILL_SHORTCUT = "Ctrl+Shift+K"
 
 
@@ -98,8 +116,9 @@ class MainWindow(QMainWindow):
             "mt5": ConnectionState.DISCONNECTED.value,
         }
         self.setWindowTitle(f"MT5 Trading Workstation {__version__}")
-        self.resize(1280, 800)
-        self.setMinimumSize(960, 600)
+        self.setFont(ui_font(self.font()))
+        self.resize(1360, 860)
+        self.setMinimumSize(1024, 640)
         root = QWidget()
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -184,6 +203,7 @@ class MainWindow(QMainWindow):
             else:
                 self._add_page(spec.page_id, PlaceholderPage(spec))
         self._build_status_bar()
+        style_tables(self)
         self.home.stop = self.ask_kill
         self.home.on_onboarded = self.finish_onboarding
         self.home.on_status_bar = self._show_status_bar
@@ -230,6 +250,7 @@ class MainWindow(QMainWindow):
     def show_page(self, page_id: str) -> None:
         self.pages.setCurrentIndex(self._page_index[page_id])
         self._crash_state["page"] = page_id
+        self.page_crumb.setText(page_crumb(page_id))
         button = self._nav_buttons.get(page_id)
         if button is not None:
             button.setChecked(True)
@@ -240,6 +261,7 @@ class MainWindow(QMainWindow):
         advanced = mode is ViewMode.ADVANCED
         self.sidebar.setVisible(advanced)
         self._shortcut.setEnabled(advanced)
+        self.search_button.setVisible(advanced)
         self.view_button.setText("Switch to Simple" if advanced else "Switch to Advanced")
         self.settings_button.setVisible(not advanced)
         self.settings_button.setText("Settings")
@@ -315,8 +337,11 @@ class MainWindow(QMainWindow):
             self.logs_page.apply_tokens(tokens)
         self.market_page.apply_tokens(tokens)
         self.home.apply_tokens(tokens)
+        style_plots(self, tokens)
+        self._apply_icons(tokens)
         next_theme = "light" if theme is ThemeName.DARK else "dark"
-        self.theme_button.setText(f"Switch to {next_theme} theme")
+        self.theme_button.setToolTip(f"Switch to the {next_theme} theme")
+        self.theme_button.setText("" if icons_available() else f"{next_theme.title()} theme")
         if persist:
             self._persist()
 
@@ -354,9 +379,12 @@ class MainWindow(QMainWindow):
             return
         self._crash_state["mt5"] = status.state.value
         self.connection_label.setText(f"\u25cf {status.status_bar_text()}")
+        text, tone = connection_chip(status)
+        set_chip(self.connection_chip, text, tone)
+        self.connection_chip.setToolTip(status.status_bar_text())
         self._connected = status.connected
         badge = "ANALYSIS-ONLY" if status.analysis_only else self.operating_mode_label().upper()
-        self.mode_badge.setText(badge)
+        self._set_mode(badge)
         if self.trading is not None:
             self.set_execution_status(self.trading.engine.snapshot)
         self.home.set_connection(status.connected, plain_status(status))
@@ -372,7 +400,7 @@ class MainWindow(QMainWindow):
             return
         self._crash_state["operating_mode"] = snapshot.mode.value
         if not self.mode_badge.text().startswith("ANALYSIS-ONLY"):
-            self.mode_badge.setText(snapshot.mode.label.upper())
+            self._set_mode(snapshot.mode.label.upper())
         self.bot_state_label.setText(bot_state_text(snapshot, self._connected))
 
     def ask_kill(self) -> bool:
@@ -418,19 +446,37 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("TopBar")
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(16, 8, 16, 8)
+        layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(8)
+        logo = styled_label("M5", "logo")
+        logo.setObjectName("Logo")
+        logo.setFixedSize(QSize(30, 30))
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(logo)
         layout.addWidget(styled_label("MT5 Trading Workstation", "brand"))
+        layout.addSpacing(16)
+        self.page_crumb = styled_label("", "crumb")
+        self.page_crumb.setObjectName("PageCrumb")
+        layout.addWidget(self.page_crumb)
         layout.addStretch(1)
-        self.view_button = QPushButton()
-        self.view_button.setObjectName("ViewModeButton")
+        self.connection_chip = chip("MT5 not connected", "neutral")
+        self.connection_chip.setObjectName("ConnectionChip")
+        self.mode_chip = chip(self.defaults.mode.label.upper(), mode_tone(self.defaults.mode.label))
+        self.mode_chip.setObjectName("ModeChip")
+        self.mode_chip.setToolTip("Operating mode")
+        layout.addWidget(self.connection_chip)
+        layout.addWidget(self.mode_chip)
+        layout.addSpacing(8)
+        self.search_button = _ghost_button("Search   Ctrl+K", "SearchButton")
+        self.search_button.setToolTip("Command palette: every page and action")
+        self.search_button.clicked.connect(self.open_command_palette)
+        self.view_button = _ghost_button("", "ViewModeButton")
         self.view_button.clicked.connect(self.toggle_view_mode)
-        self.theme_button = QPushButton()
-        self.theme_button.setObjectName("ThemeButton")
+        self.theme_button = _ghost_button("", "ThemeButton")
         self.theme_button.clicked.connect(self.toggle_theme)
-        self.settings_button = QPushButton("Settings")
-        self.settings_button.setObjectName("SimpleSettingsButton")
+        self.settings_button = _ghost_button("Settings", "SimpleSettingsButton")
         self.settings_button.clicked.connect(self.toggle_simple_settings)
+        layout.addWidget(self.search_button)
         layout.addWidget(self.settings_button)
         layout.addWidget(self.view_button)
         layout.addWidget(self.theme_button)
@@ -441,7 +487,7 @@ class MainWindow(QMainWindow):
         sidebar.setObjectName("Sidebar")
         sidebar.setFixedWidth(SIDEBAR_WIDTH)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(12, 8, 12, 12)
         layout.setSpacing(2)
         self._nav_group = QButtonGroup(self)
         self._nav_group.setExclusive(True)
@@ -452,12 +498,36 @@ class MainWindow(QMainWindow):
                 button.setObjectName(f"nav_{spec.page_id}")
                 button.setProperty("nav", True)
                 button.setCheckable(True)
+                button.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+                button.setToolTip(spec.summary)
                 button.clicked.connect(self._nav_slot(spec.page_id))
                 self._nav_group.addButton(button)
                 self._nav_buttons[spec.page_id] = button
                 layout.addWidget(button)
+            layout.addSpacing(6)
         layout.addStretch(1)
+        hint = styled_label("Ctrl+K opens the command palette", "status", wrap=True)
+        hint.setObjectName("SidebarHint")
+        layout.addWidget(hint)
         return sidebar
+
+    def _apply_icons(self, tokens: ThemeTokens) -> None:
+        """Redraw the icon-font icons in the theme's colors (they are pixmaps, not text)."""
+        for page_id, button in self._nav_buttons.items():
+            glyph = PAGE_GLYPHS.get(page_id, "")
+            button.setIcon(glyph_icon(glyph, tokens.text_secondary, tokens.accent))
+        for button, glyph in (
+            (self.search_button, Glyph.SEARCH),
+            (self.view_button, Glyph.SWITCH),
+            (self.theme_button, Glyph.THEME),
+            (self.settings_button, Glyph.SETTINGS),
+        ):
+            button.setIcon(glyph_icon(glyph, tokens.text_secondary))
+            button.setIconSize(QSize(ICON_SIZE - 2, ICON_SIZE - 2))
+
+    def _set_mode(self, text: str) -> None:
+        self.mode_badge.setText(text)
+        set_chip(self.mode_chip, text, mode_tone(text))
 
     def _build_status_bar(self) -> None:
         bar = QStatusBar()
@@ -495,6 +565,8 @@ class MainWindow(QMainWindow):
         return slot
 
     def _add_page(self, page_id: str, widget: QWidget) -> None:
+        if page_id != SIMPLE_HOME.page_id:
+            decorate_page(widget, page_by_id(page_id))
         self._page_index[page_id] = self.pages.addWidget(widget)
 
     def _show_status_bar(self, shown: bool) -> None:
@@ -573,3 +645,45 @@ def plain_status(status: ConnectionStatus) -> str:
     if status.state is ConnectionState.FAILED:
         return "Status: could not connect to MetaTrader 5. Advanced view > Settings shows why."
     return "Status: not connected"
+
+
+def _ghost_button(text: str, name: str) -> QPushButton:
+    button = QPushButton(text)
+    button.setObjectName(name)
+    button.setProperty("variant", "ghost")
+    return button
+
+
+def page_crumb(page_id: str) -> str:
+    """The top bar's location text, e.g. "TRADE / DASHBOARD"."""
+    spec = page_by_id(page_id)
+    if spec.group == "Simple":
+        return ""
+    return f"{spec.group} / {spec.title}".upper()
+
+
+def mode_tone(mode: str) -> str:
+    """Chip tone of an operating mode: real orders stand out in red, watching in amber."""
+    key = mode.strip().lower()
+    if key.startswith("analysis"):
+        return "warning"
+    if key in ("semi-auto", "auto"):
+        return "loss"
+    return "accent"
+
+
+def connection_chip(status: ConnectionStatus) -> tuple[str, str]:
+    """The top bar's short MT5 text and its tone."""
+    account = status.account
+    if status.connected and account is not None:
+        if account.kind is AccountKind.REAL:
+            return f"REAL \u00b7 {account.login}", "loss"
+        kind = "Demo" if account.kind is AccountKind.DEMO else account.kind.value.title()
+        return f"{kind} \u00b7 {account.login}", "profit"
+    if status.connected:
+        return "MT5 connected", "profit"
+    if status.state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING):
+        return "MT5 connecting", "warning"
+    if status.state is ConnectionState.FAILED:
+        return "MT5 failed", "loss"
+    return "MT5 not connected", "neutral"
