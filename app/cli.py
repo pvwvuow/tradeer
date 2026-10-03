@@ -39,6 +39,10 @@ class CliOptions:
     mt5_smoke_test: bool = False
     mt5_trade_test: bool = False
     symbol: str = "EURUSD"
+    backtest: bool = False
+    start: str = ""
+    end: str = ""
+    strategies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,9 +84,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="DEMO only: open, modify and close one minimum-lot trade, read the deal back",
     )
     parser.add_argument(
+        "--backtest",
+        action="store_true",
+        help="read MT5 history and replay the strategies on it, print the report (no orders)",
+    )
+    parser.add_argument(
         "--symbol",
         default="EURUSD",
-        help="symbol for --mt5-trade-test (default EURUSD; broker suffixes are found)",
+        help="symbol for --mt5-trade-test and --backtest (default EURUSD; suffixes are found)",
+    )
+    parser.add_argument("--from", dest="start", default="", help="--backtest start, YYYY-MM-DD")
+    parser.add_argument("--to", dest="end", default="", help="--backtest last day, YYYY-MM-DD")
+    parser.add_argument(
+        "--strategies",
+        default="",
+        help="--backtest strategies, comma separated (default: every built-in strategy)",
     )
     parser.add_argument(
         "--report-file",
@@ -109,6 +125,12 @@ def parse_args(argv: Sequence[str]) -> CliOptions:
         mt5_smoke_test=bool(namespace.mt5_smoke_test),
         mt5_trade_test=bool(namespace.mt5_trade_test),
         symbol=str(namespace.symbol),
+        backtest=bool(namespace.backtest),
+        start=str(namespace.start),
+        end=str(namespace.end),
+        strategies=tuple(
+            name.strip() for name in str(namespace.strategies).split(",") if name.strip()
+        ),
     )
 
 
