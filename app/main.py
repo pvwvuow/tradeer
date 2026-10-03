@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from app.storage.runtime import StorageRuntime
     from app.ui.backtest_page import BacktestContext
     from app.ui.model_page import ModelContext
+    from app.ui.updates_page import UpdatesContext
+    from app.updates.state import LaunchTracker, StartInfo
 
 APP_NAME = "MT5 Trading Workstation"
 UI_HEARTBEAT_MS = 1000
@@ -62,6 +64,14 @@ class MarketParts:
     execution_settings: ExecutionSettingsSource
     known_clock: Callable[[], BrokerClock | None]
     models: ModelService
+
+
+@dataclass(frozen=True)
+class Launch:
+    """This run in the update history (spec J4): first run after an update, crash loop."""
+
+    tracker: LaunchTracker
+    start: StartInfo
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -320,12 +330,20 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
     font = QFont()
     font.setFamilies(["Inter", "Segoe UI Variable", "Segoe UI"])
     application.setFont(font)
+    from app.__version__ import __version__
+    from app.updates.state import LaunchTracker
+
+    tracker = LaunchTracker(__version__)
+    launch = Launch(tracker, tracker.start())
     if getattr(sys, "frozen", False):
         ok, report = run_self_check()
         if not ok:
             # A production build must fail loudly, never fall back to fake data (spec I2).
             ui_log.critical("Startup self-check failed:\n{}", report)
-            QMessageBox.critical(None, APP_NAME, report)
+            if launch.start.previous:
+                _offer_rollback(options.profile, launch.start, report)
+            else:
+                QMessageBox.critical(None, APP_NAME, report)
             return 1
     from app.storage.runtime import StorageError
 
@@ -335,7 +353,16 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
     try:
         storage = _open_storage(observability, options.profile, gateway, service)
         market = _start_market(observability, options.profile, gateway, service, storage)
-        return _show_window(observability, options, application, gateway, service, storage, market)
+        return _show_window(
+            observability,
+            options,
+            application,
+            gateway,
+            service,
+            storage,
+            market,
+            launch,
+        )
     except StorageError as error:
         ui_log.critical("Local storage failed: {}", error)
         QMessageBox.critical(None, APP_NAME, str(error))
@@ -350,6 +377,48 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
             observability.watchdog.unregister("cloud-sync")
         gateway.stop()
         observability.watchdog.unregister("mt5-gateway")
+
+
+def _updates_context(profile: str, start: StartInfo) -> UpdatesContext:
+    from app.observability.logger import audit, get_logger
+    from app.ui.updates_page import UpdatesContext
+    from app.updates.service import UpdateService
+    from app.updates.settings import UpdateSettingsSource
+    from app.updates.velopack_backend import VelopackBackend
+
+    log = get_logger(LogCategory.UPDATE)
+
+    def write(level: str, message: str) -> None:
+        log.log(level, "{}", message)
+
+    def record(action: str, before: str, after: str) -> None:
+        audit(action, before=before, after=after)
+
+    settings = UpdateSettingsSource(app_data_dir(profile))
+    if settings.note:
+        write("WARNING", settings.note)
+    backend = VelopackBackend()
+    if backend.unavailable_reason():
+        write("INFO", f"In-app updates off: {backend.unavailable_reason()}")
+    service = UpdateService(backend, settings, start, log=write, record=record)
+    return UpdatesContext(service, settings)
+
+
+def _offer_rollback(profile: str, start: StartInfo, report: str) -> None:
+    """The new version fails its self-check: offer the previous one (spec J2.6, J4)."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from app.updates.service import Command
+
+    buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    text = f"{report}\n\nThis version does not work on this PC. Go back to {start.previous}?"
+    if QMessageBox.critical(None, APP_NAME, text, buttons) != QMessageBox.StandardButton.Yes:
+        return
+    service = _updates_context(profile, start).service
+    service.handle(Command.ROLLBACK)
+    error = service.apply() if service.snapshot.ready else service.snapshot.message
+    if error:
+        QMessageBox.warning(None, APP_NAME, f"The rollback did not work: {error}")
 
 
 def _open_storage(
@@ -737,6 +806,7 @@ def _show_window(
     service: ConnectionService,
     storage: StorageRuntime,
     market: MarketParts,
+    launch: Launch,
 ) -> int:
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtWidgets import QMessageBox
@@ -755,6 +825,7 @@ def _show_window(
     from app.ui.positions_page import TradingContext
     from app.ui.risk_page import RiskContext
     from app.ui.signals_page import SignalsContext
+    from app.updates.state import HEALTHY_SECONDS
 
     ui_log = get_logger(LogCategory.UI)
     reporter = observability.crash_reporter
@@ -794,6 +865,7 @@ def _show_window(
             credentials=context.credentials,
             logs=observability.pipeline,
         )
+        updates = _updates_context(options.profile, launch.start)
         trading = TradingContext(
             market.execution,
             market.execution_settings,
@@ -816,6 +888,7 @@ def _show_window(
             insights.analytics,
             insights.journal,
             insights.notifications,
+            updates,
         )
         insights.attach(window)
     except Exception as error:
@@ -835,13 +908,18 @@ def _show_window(
     heartbeat.start(UI_HEARTBEAT_MS)
     window.show()
     ui_log.info("Main window shown")
+    updates.service.start()
+    QTimer.singleShot(int(HEALTHY_SECONDS * 1000), launch.tracker.mark_healthy)
     account = load_account(prefs_dir)
     if account.configured and account.auto_connect and window.connection_page is not None:
         ui_log.info("Connecting automatically to the saved account")
         window.connection_page.connect_to_mt5()
     try:
-        return int(application.exec())
+        code = int(application.exec())
+        launch.tracker.mark_healthy()
+        return code
     finally:
+        updates.service.stop()
         insights.stop()
         heartbeat.stop()
         observability.watchdog.unregister("ui")

@@ -27,6 +27,7 @@ REQUIRED_MODULES: tuple[tuple[str, str | None], ...] = (
     ("sqlite3", "sqlite_version"),
     ("httpx", "__version__"),
     ("pyqtgraph", "__version__"),
+    ("velopack", None),
 )
 
 
