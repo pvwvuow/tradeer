@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
-from app.ui.navigation import SIMPLE_HOME, PageSpec
+from app.ui.navigation import PageSpec
 
 PAGE_MARGIN = 32
 NO_DATA_NOTE = "This page is an empty shell. It never shows sample or simulated data."
@@ -46,28 +46,3 @@ class PlaceholderPage(QWidget):
         card_layout.addWidget(styled_label(NO_DATA_NOTE, "muted", wrap=True))
         layout.addWidget(card)
         layout.addStretch(1)
-
-
-class SimpleHomePage(QWidget):
-    """Plain-language home (spec F0). The full card and P/L strip arrive in Phase 9."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName(f"page_{SIMPLE_HOME.page_id}")
-        layout = _page_layout(self)
-        layout.addWidget(styled_label("Home", "title"))
-        practice = "Practice mode: the app uses pretend money until you choose otherwise."
-        layout.addWidget(styled_label(practice, "muted", wrap=True))
-        card, card_layout = card_frame()
-        card_layout.addWidget(styled_label("No trade suggestions yet", "brand"))
-        waiting = "Not connected to MetaTrader 5 yet, so the app is not watching the market."
-        card_layout.addWidget(styled_label(waiting, "muted", wrap=True))
-        layout.addWidget(card)
-        layout.addStretch(1)
-        self.status_line = styled_label("Status: not connected", "muted")
-        layout.addWidget(self.status_line)
-        self.stop_button = QPushButton("Stop trading now")
-        self.stop_button.setProperty("variant", "danger")
-        self.stop_button.setEnabled(False)
-        self.stop_button.setToolTip("Nothing is running yet.")
-        layout.addWidget(self.stop_button)

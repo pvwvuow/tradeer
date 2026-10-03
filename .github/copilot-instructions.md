@@ -10,7 +10,7 @@
 
 ## Architecture rules (spec D3)
 
-- Only `app/mt5/gateway.py` imports `MetaTrader5`. One gateway thread owns every MT5 call through a command queue; every call has a timeout.
+- Only `app/mt5/terminal_process.py` imports `MetaTrader5`, and only inside the MT5 helper process. One gateway thread sends every MT5 call through a command queue; every call has a timeout.
 - The UI thread never blocks. MT5, network, database, ML and backtests run in workers; training and large backtests run in a separate process.
 - Decisions are made on closed bars only. Ticks are for position management, paper fills and the UI.
 - One logic, three runtimes: backtest, paper and live share strategies, features, risk, costs and position management through the `Broker` interface.
@@ -19,6 +19,23 @@
 - Every order carries a server-side stop loss. State is persisted and recovered on start.
 - `FakeMT5` lives in `tests/fakes/` only and is never shipped.
 - Config changes apply between bars, are validated, versioned and audit-logged.
+
+## Logging rules (spec E3, details in `docs/ARCHITECTURE.md`)
+
+- Use `get_logger(LogCategory.X)` from `app/observability/logger.py`. Use `print()` only for CLI reports.
+- Pass dynamic text as an argument: `log.info("Order sent: {}", text)`, never inside the format string.
+- Register every secret as soon as it is read: `MASKER.register(value)`. Never log credentials on purpose, even though masking exists.
+- Wrap the work for one signal in `trace(...)`; hand work to other threads with `propagate(fn)`.
+- Audit-log every user action and setting change with `audit(action, before=..., after=...)`.
+- Code that runs in hooks or other threads never touches Qt widgets; it emits a Qt signal instead.
+
+## MT5 rules (details in `docs/ARCHITECTURE.md`)
+
+- Call MT5 only through `MT5Gateway` (`gateway.call(...)` or `gateway.run(name, fn)`); never import `MetaTrader5` outside `app/mt5/terminal_process.py`. `tests/unit/test_architecture.py` enforces it.
+- Never wait on a gateway future in the UI thread; deliver results with a queued Qt signal.
+- Read-only tools (the checklist, diagnostics, `--mt5-smoke-test`) never call `order_send` or `order_check`.
+- Never retry a failed first login automatically: repeated wrong passwords can lock the account.
+- Test against `FakeMT5` from `tests/fakes/`; it implements the `MT5Api` protocol and records every call. It is never imported by `app/`.
 
 ## Hard constraints (spec G4)
 
@@ -40,6 +57,8 @@ ruff format --check .
 mypy
 pytest
 python -m app --self-check
+python -m app --crash-test
+python -m app --mt5-smoke-test
 ```
 
 ## Git and pull requests (spec H1)

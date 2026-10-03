@@ -4,9 +4,25 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 > **Honest expectations.** This app is infrastructure, not an edge. It does not find or guarantee a profitable strategy. Any win probability it shows is an uncertain estimate with a sample size and a confidence interval. Paper (practice) mode is the default.
 
+## Install
+
+Download `MT5TradingWorkstation-win-Setup.exe` from the [latest release](https://github.com/pvwvuow/tradeer/releases/latest) once and run it (per-user, no admin rights). After that the app updates itself from inside: only the changed parts are downloaded, one click and one restart (Velopack delta updates). Details: [docs/USER_GUIDE.md](docs/USER_GUIDE.md), "Install and updates"; design and status: [docs/UPDATES.md](docs/UPDATES.md).
+
 ## Status
 
-Phase 1 of 16 (Foundation). The app opens with a Simple view and an Advanced view, a dark and a light theme, a grouped sidebar with empty pages, an always-visible status bar and a command palette (Ctrl+K). It does **not** connect to MetaTrader 5 and it never places orders yet.
+Version 0.12 adds in-app delta updates (spec Part J, planned as Phase 15, done early). Phase 12 of 16 (Analytics, journal & notifications). The Dashboard, Analytics and Journal pages show your real results: statistics checked against hand calculations, breakdowns, charts, trader behavior, risk of ruin and comparisons; every trade has a plain-language story, your notes and ratings; daily and weekly reports; Windows notifications and an optional Telegram bot with a PIN. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+
+From Phase 11 (ML win probability): the Model page trains a LightGBM model on every signal the strategies made on MT5 history, validates it with purged walk-forward tests against the baseline (the strategy's own win rate), calibrates it, and lets you use it only when it beats the baseline out of sample.
+
+From Phase 10 (Backtesting): the Backtest page and `--backtest` replay the strategies on MT5 history with the same code that trades live (entries at the next bar open, the same-candle rule, costs), with walk-forward, Monte-Carlo and a sensitivity heatmap; a test proves the backtest gives the same signals as live on the same data.
+
+From Phase 8 (Execution): approved signals are placed with stop loss and take profit (Paper by default, Semi-auto for real orders after your approval), managed, recovered after a restart and synced back; a kill switch stops everything.
+
+From Phase 5 to 7: the Market page with analysis cards and charts, two strategies with signals, and risk management with limits that cannot be bypassed.
+
+From Phase 4 (Storage): everything the app records goes to a local SQLite database first, with optional cloud sync to your own Supabase project and an import of your MT5 trade history.
+
+From Phase 3 (MT5 connection): the app connects to the MetaTrader 5 terminal on your PC through one gateway thread, runs a Test-connection checklist with real values, saves account profiles (passwords in Windows Credential Manager), switches to Analysis-only with an investor password, and ships Connection Diagnostics and a read-only `--mt5-smoke-test`. It writes structured, masked logs and crash reports.
 
 - Full specification: `docs/SPEC.md`
 - Progress and next steps: `docs/PROGRESS.md`
@@ -29,6 +45,42 @@ python -m app
 
 `--self-check` prints `Result: PASS` when Python, MetaTrader5 and Qt load correctly.
 
+## How the MT5 connection works
+
+The official `MetaTrader5` Python package talks to the **MT5 terminal installed on the same Windows PC**; it does not connect to the broker directly. So:
+
+- MT5 must be installed, running (the app can start it) and logged in, with **Algo Trading** on.
+- Run MT5 and the app as the same Windows user and at the same privilege level (both normal, or both "Run as administrator").
+- Run **one app instance per account**, never two on the same account. For several accounts at once, use one portable MT5 terminal and one app profile (`--profile NAME`) per account.
+- Keep the PC awake while the app runs: Windows Settings, System, Power, set "Sleep" to Never when plugged in, and schedule Windows updates outside trading hours (Windows Update, Advanced options, Active hours).
+- For 24/7 running use a Windows VPS close to your broker's server.
+
+Check a build against your account in 30 seconds (read-only, never trades):
+
+```powershell
+python -m app --mt5-smoke-test
+```
+
+## Logs and crash reports
+
+- Logs: `%APPDATA%\MT5TradingWorkstation\profiles\<profile>\logs`. One folder per category with one `.jsonl` file per day, plus a readable `all.log`. Old files are zipped, deleted after 30 days, and the folder never grows past 500 MB.
+- Crash reports: `...\profiles\<profile>\crash_reports\crash_<time>.json`.
+- Passwords, keys and tokens are masked before anything is written.
+- To prove crash reporting works on your PC, run:
+
+```powershell
+python -m app --crash-test
+```
+
+It crashes a background thread on purpose and prints `Result: PASS` when a crash report was written and no secret leaked into the report or the logs. The built app supports the same flag: `MT5TradingWorkstation.exe --crash-test --report-file crash-test.txt`.
+
+## Storage and cloud sync
+
+- Everything is written to a local SQLite database first (`profiles/<profile>/data/workstation.db`), so the app works offline.
+- Rows waiting for the cloud sit in an outbox and upload in the background. Going offline never loses or duplicates them.
+- Cloud sync is optional and uses your own free Supabase project with Row Level Security. Setup steps: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+- The app talks to Supabase with httpx (PostgREST and Supabase Auth), not supabase-py. Why: ADR 30 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Run the checks
 
 ```powershell
@@ -47,7 +99,7 @@ CI is on. `.github/workflows/` contains four workflows:
   - `ci`: Windows job running `scripts/ci/check.ps1` — install, `ruff check`, `ruff format --check`, `mypy` (strict) and `pytest` with coverage; uploads `coverage.xml` as an artifact.
   - `build`: pull requests only — Windows job running `scripts/ci/build.ps1`, which builds the one-folder PyInstaller app, runs the frozen `--self-check`, zips it and uploads the portable build artifact (download it from the pull request under Checks, then Artifacts).
 - **codeql** (`codeql.yml`) — Python security analysis on `main`, pull requests and a weekly schedule.
-- **release** (`release.yml`) — release-please keeps a Release PR up to date; merging it tags `vX.Y.Z` and the `publish` job runs `scripts/ci/release.ps1` to attach the installer, portable zip, `checksums.txt` and `latest.json` to the GitHub Release.
+- **release** (`release.yml`) — release-please keeps a Release PR up to date; merging it tags `vX.Y.Z` and the `publish` job runs `scripts/ci/release.ps1`, which packs the build with Velopack and attaches `MT5TradingWorkstation-win-Setup.exe`, the full and delta packages, `releases.win.json`, a portable zip, `checksums.txt` and `latest.json` to the GitHub Release.
 
 The workflow YAML stays thin; all CI logic lives in `scripts/ci/*.ps1`.
 
@@ -59,7 +111,7 @@ A branch ruleset on `main` enforces this (configured in repository settings):
 2. **Require status checks to pass**: `ci`, `build` and `Tests (Linux, Qt offscreen)`.
 3. **Block force pushes** and **restrict deletions**.
 
-Every phase arrives as a pull request that you review and merge yourself.
+Every build arrives as a pull request into `main`. Since 3 October 2026 the agent merges it once CI is green and publishes the release (owner's decision).
 
 ## Releases
 
@@ -67,10 +119,11 @@ Releases are automated by release-please:
 
 1. Settings, then Actions, then General, then Workflow permissions: enable **Allow GitHub Actions to create and approve pull requests** (done in repository settings).
 2. Optional but recommended: add a repository secret `RELEASE_PLEASE_TOKEN` (a fine-grained token with Contents and Pull requests read/write on this repository). Without it, release pull requests do not trigger CI and need an admin merge.
-3. Merging a phase into `main` updates a "Release PR". Merging that Release PR creates the tag `vX.Y.Z`, builds the installer, and attaches the installer, a portable zip, `checksums.txt` and `latest.json` to the GitHub Release.
+3. Merging into `main` updates a "Release PR". Merging that Release PR creates the tag `vX.Y.Z`; the release job packs it with Velopack (installer, full package, a delta from the previous release) and uploads everything to the GitHub Release, where the installed apps find it.
 
 ## Safety notes
 
 - Paper mode is the default. Real accounts and Auto mode will require typed confirmation and the Go-Live gate.
 - Every live order will carry a server-side stop loss. No martingale, grid or averaging down, ever.
+- Account passwords are kept in Windows Credential Manager, never in files or logs.
 - Never paste passwords or tokens into chats, issues or commits.

@@ -12,10 +12,13 @@ SPACE_WIDE = 12
 SPACE_XL = 16
 RADIUS = 12
 RADIUS_CONTROL = 8
-FONT_SMALL = 12
-FONT_BODY = 14
-FONT_SECTION = 18
-FONT_TITLE = 24
+# Font sizes in points (12, 14, 18 and 24 px at 96 dpi). A size in px makes every widget font
+# report point size -1, and Qt then warned "QFont::setPointSize: Point size <= 0" hundreds of
+# times a minute on a real PC.
+FONT_SMALL = 9
+FONT_BODY = 10.5
+FONT_SECTION = 13.5
+FONT_TITLE = 18
 
 
 @dataclass(frozen=True)
@@ -95,7 +98,7 @@ def build_qss(tokens: ThemeTokens) -> str:
 QWidget {{
     background-color: {t.bg};
     color: {t.text};
-    font-size: {FONT_BODY}px;
+    font-size: {FONT_BODY:g}pt;
 }}
 QFrame#TopBar {{
     background-color: {t.surface};
@@ -114,16 +117,16 @@ QLabel {{
     background: transparent;
 }}
 QLabel[role="brand"] {{
-    font-size: {FONT_SECTION}px;
+    font-size: {FONT_SECTION:g}pt;
     font-weight: 600;
 }}
 QLabel[role="title"] {{
-    font-size: {FONT_TITLE}px;
+    font-size: {FONT_TITLE:g}pt;
     font-weight: 700;
 }}
 QLabel[role="section"] {{
     color: {t.text_secondary};
-    font-size: {FONT_SMALL}px;
+    font-size: {FONT_SMALL:g}pt;
     font-weight: 600;
     padding-top: {SPACE}px;
 }}
@@ -132,14 +135,27 @@ QLabel[role="muted"] {{
 }}
 QLabel[role="status"] {{
     color: {t.text_secondary};
-    font-size: {FONT_SMALL}px;
+    font-size: {FONT_SMALL:g}pt;
     padding: 0 {SPACE}px;
+}}
+QLabel[role="profit"] {{
+    color: {t.profit};
+}}
+QLabel[role="loss"] {{
+    color: {t.loss};
+}}
+QLabel[role="warning"] {{
+    color: {t.warning};
+}}
+QFrame[role="row"] {{
+    background-color: transparent;
+    border-top: 1px solid {t.border};
 }}
 QLabel[role="badge"] {{
     color: {t.warning};
     border: 1px solid {t.warning};
     border-radius: {RADIUS_CONTROL}px;
-    font-size: {FONT_SMALL}px;
+    font-size: {FONT_SMALL:g}pt;
     font-weight: 700;
     padding: 2px {SPACE}px;
 }}
