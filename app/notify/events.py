@@ -30,7 +30,7 @@ class EventKind(StrEnum):
     DAILY_REPORT = "daily_report"
 
     @property
-    def title(self) -> str:
+    def label(self) -> str:
         return TITLES[self]
 
     @property
@@ -63,7 +63,7 @@ class Notice:
 
     @property
     def title(self) -> str:
-        return self.kind.title
+        return self.kind.label
 
 
 def execution_notices(old: ExecutionSnapshot | None, new: ExecutionSnapshot) -> list[Notice]:

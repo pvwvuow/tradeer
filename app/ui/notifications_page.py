@@ -84,8 +84,9 @@ class NotificationsPage(QWidget):
         grid.addWidget(styled_label("Telegram", "muted"), 0, 2)
         self.toast_boxes: dict[EventKind, QCheckBox] = {}
         self.telegram_boxes: dict[EventKind, QCheckBox] = {}
-        for row, kind in enumerate(EventKind, start=1):
-            title = kind.title + (" (urgent)" if kind.urgent else "")
+        kinds: list[EventKind] = list(EventKind)
+        for row, kind in enumerate(kinds, start=1):
+            title = kind.label + (" (urgent)" if kind.urgent else "")
             grid.addWidget(styled_label(title, "body"), row, 0)
             toast = QCheckBox()
             telegram = QCheckBox()
