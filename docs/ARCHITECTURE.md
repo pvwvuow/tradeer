@@ -8,16 +8,17 @@ app/
   main.py          composition root: CLI, self-check, crash test, GUI start
   cli.py           argument parsing, --self-check build verification, report output
   analysis/        pure market analysis on closed bars: indicators, trend, structure, levels, card (phase 5)
+  brokers/         the Broker interface, live MT5 broker, paper broker, trade requests, trade test (phase 8)
   calendar/        economic calendar: events, CSV import, store, MQL5 exporter (phase 5)
   core/            per-user paths, UI preferences, account profiles, credentials, instance lock, broker clock, watchlist
-  domain/          pure logic: operating modes, validated defaults, trade history, signals, sizing (no Qt, MT5 or I/O)
-  engine/          background workers: the market-analysis thread (phase 5), signal filters and pipeline (phase 6)
+  domain/          pure logic: operating modes, validated defaults, trade history, signals, sizing, order checks, position management (no Qt, MT5 or I/O)
+  engine/          background workers: the market-analysis thread (phase 5), signal filters and pipeline (phase 6), execution engine (phase 8)
   mt5/             the MT5 gateway thread, connection checklist, diagnostics, smoke test, market data
   observability/   logging, trace context, masking, crash reports, watchdog (phase 2)
   risk/            risk settings and profiles, limits, currency exposure, limit state, risk manager (phase 7)
   storage/         SQLite database, migrations, outbox, cloud sync, history tracker (phase 4)
   strategies/      strategy interface, market context, the two example strategies (phase 6)
-  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, Market, chart, Signals, Strategies, Risk
+  ui/              Qt: theme tokens, navigation, command palette, pages, Logs, Connection, Data, Market, chart, Signals, Strategies, Risk, Positions & Trades
 supabase/          SQL to run in the Supabase SQL Editor: schema, RLS, views, cleanup (phase 4)
 tests/
   fakes/           FakeMT5 and FakeSupabase for tests only (never shipped)
@@ -70,6 +71,19 @@ Qt parts live in `app/ui`: `logs_page.py`, `log_filter.py` (pure), `crash_dialog
 | `request_log.py` | writes every gateway request to the `mt5` log category | loguru |
 | `market_data.py` | closed bars per symbol and timeframe, incremental, in one gateway request per poll; the poll tells when MT5 is still loading a symbol's bars (phase 5, ADR 49) | no |
 
+### `app/brokers` (phase 8)
+
+| Module | Role | Sends orders |
+|---|---|---|
+| `base.py` | the `Broker` protocol and its records: `OrderResult`, `Attempt`, `BrokerPosition`, `BrokerOrder` | no |
+| `requests.py` | `OrderPlan`, the filling mode from the symbol flags, the MT5 request dicts (open, SL/TP, close, cancel) | no |
+| `live_broker.py` | `LiveBroker`: `order_check`, then `order_send` with the retcode policy; the only module that calls them (architecture test) | yes |
+| `paper_broker.py` | `PaperBroker` on live quotes, its saved state, `ModeRiskBroker` (paper money for the risk manager) | no |
+| `market.py` | quotes, symbol specs, balance and `order_calc_profit` through the gateway, for both brokers | no |
+| `trade_test.py` | `--mt5-trade-test`: DEMO only, open / modify / close / read the deal | through `live_broker` |
+
+`app/engine/execution.py` is the execution engine (approval, management, deal sync, recovery, kill switch); `app/mt5/retcodes.py` is the retcode table; `app/storage/trade_store.py` writes `trades`, `trade_events` and `mt5_requests`; `app/ui/positions_page.py` is Positions & Trades.
+
 `app/core` adds `profiles.py` (`profiles/<name>/account.json`, no password), `credentials.py` (Windows Credential Manager through `keyring`) and `single_instance.py` (an OS file lock per profile). The Qt part is `app/ui/connection_page.py`.
 
 ## Data flow
@@ -104,6 +118,14 @@ Files live per profile: `%APPDATA%\MT5TradingWorkstation\profiles\<profile>\logs
 `ConnectionService.connect()` runs the checklist in the gateway thread: terminal found, `initialize(path)` (which also starts a closed terminal and waits), `login(login, password, server, timeout=60000)`, account info, broker connection (`terminal_info().connected`), Algo Trading (`terminal_info().trade_allowed`), account trading (`account_info().trade_allowed` and `trade_expert`), symbols, live quotes and history (bars plus the "Max bars in chart" setting). Each line shows the real value or a plain-language fix. After a successful connect the monitor polls a heartbeat every 5 s; a lost connection switches the status bar to "Reconnecting", logs a CRITICAL alert when positions are open, and retries with exponential backoff from 2 s up to 120 s.
 
 On start the app takes `profiles/<name>/instance.lock`, loads `account.json`, reads the password from Credential Manager (and registers it with the log masker), and connects automatically when a profile is saved.
+
+### Phase 8: an approved signal
+
+1. The user clicks Approve and confirms; the Signals page queues the id (`SignalPipeline.approve`).
+2. On the next analysis cycle the pipeline hands the record to `ExecutionEngine.execute`: live quote and symbol spec, the re-check (not expired, entry tolerance in R, spread vs SL, stops level, netting), then the risk manager sizes it again at the live price.
+3. The engine builds an `OrderPlan` (SL and TP in the request, filling from the symbol, deviation, the strategy's magic number, comment `tw-<signal id>`) and calls the broker of the mode: `PaperBroker` (Paper) or `LiveBroker` (Semi-auto). The live broker runs `order_check` and `order_send` in the gateway thread, retrying only safe codes with a fresh price.
+4. The result comes back as `SignalUpdate`s (`APPROVED`, `SENT`, `FILLED`, `MANAGED`, or `FAILED`, or `EXPIRED` when the re-check fails). The pipeline applies each one with its trace lines and saves the signal. The engine writes the trade row, a `trade_events` row and every request to `mt5_requests`.
+5. Every cycle the engine reads the bot's positions and orders, updates MFE/MAE, applies the strategy's management rules, and reads a vanished position back from `history_deals_get` (profit, commission, swap, exit reason), which makes the signal `CLOSED`.
 
 ## Storage (Phase 4)
 
@@ -213,6 +235,19 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 65. **Currency exposure is risk-weighted.** Each position is +risk on its base and -risk on its quote currency (`currency_margin`, `currency_profit`); the limit is the largest net value in % of capital on a currency the new trade touches (default 1% = two 0.5% trades in one direction). A position without a SL counts with its current loss.
 66. **One magic number per strategy, never reused.** `MAGIC_NUMBERS` in the registry; anything else (magic 0 or another EA) is "manual" for the limits and counts when `count_manual_trades` is on.
 67. **Profiles are presets of one settings model.** `risk.json` stores the profile name and all values; an edited preset becomes "custom". The model holds the hard caps (1% per trade, 5% open risk, 10% daily, 50% drawdown), so neither the file nor the form can go above them; an unreadable file gives Normal.
+68. **One `Broker` interface for paper and live.** The execution engine sees only `Broker` (open, modify, close, cancel, positions, orders, deals) and `MarketReads`; `PaperBroker` and `LiveBroker` implement it. Reason: spec D3.4, so Paper exercises the same approval, management, close and recovery code as Semi-auto. An architecture test keeps the gateway out of the engine.
+69. **Only `brokers/live_broker.py` calls `order_check` / `order_send`.** Every real order is checked with `order_check` first (retcode 0), then sent; an architecture test fails if any other module names these functions. The protocol in `mt5/api.py` is the only other mention.
+70. **Retry only safe return codes, at most N times, with a fresh price.** `mt5/retcodes.py`: requote, price changed, off quotes, timeout, too many requests, connection retry; everything else (invalid stops, no money, trading disabled, market closed, invalid fill, ...) fails at once. After an uncertain answer (timeout, connection) the broker first looks for a position or order with the same comment and magic, so a lost reply never opens the trade twice.
+71. **The filling mode comes from the symbol's flags at send time.** FOK if allowed, else IOC, else RETURN, read from `symbol_info().filling_mode` inside the gateway call. Reason: FIBO's XAUUSD accepts IOC only; a fixed mode would be rejected with 10030. The `SYMBOL_FILLING_*` flags live in `brokers/requests.py`, not `mt5/api.py`, because not every package version exports them (the Windows constants test compares every name in `api.py`).
+72. **Approval re-checks, then sizes again at the live price.** Not expired, price within 0.25 R of the entry (setting), spread at most 0.2 of the SL distance (setting), stops level, netting; then `RiskManager.evaluate` on a copy of the signal with the live entry. A failed re-check makes the signal `EXPIRED` with the reason (the state machine allows only EXPIRED from PENDING_APPROVAL) and nothing is sent.
+73. **Comment `tw-<10 hex of the signal id>`, one magic number per strategy.** The comment links a position to its signal for recovery and the trade row; the magic number decides what the bot may touch. The engine never modifies or closes a position without a bot magic number (manual trades and other EAs are never touched, spec G4).
+74. **Managed trades are saved after every cycle; recovery matches by ticket, then comment.** `sync_state` key `execution_state:<account>` (JSON, local only). After a restart the engine resumes managing saved trades; a bot position MT5 has but the database does not is adopted and logged as a WARNING. A failed positions read (None) never counts as "closed".
+75. **A closed trade comes from the deal history.** When a managed position disappears, `history_deals_get(position=...)` is summarized (`domain/history.py`): profit, commission, swap, fee, close price, exit reason from the deal reason, R = net / risk money, MFE/MAE. Live rows use the history import's id (`trade_id(account, position)`), so both writers fill one row. If the closing deal is still missing after 30 cycles, the signal closes without it and a WARNING is logged.
+76. **Paper money is its own account.** The paper broker starts from the MT5 balance (or the "paper start balance" setting), keeps positions, orders, deals and the balance in `sync_state` (`paper_state:<account>`), and values a position with `order_calc_profit` per 1.0 of price at the open (never the tick value). In Paper mode the risk manager sees the paper balance, equity and positions (`ModeRiskBroker`), and its limit state uses the key `paper:<account>`, so paper losses never stop live trading and the other way round. SL/TP are checked against the live price on every analysis cycle (every few seconds), not on every tick; a gap fills at the worse price.
+77. **OCO for the London breakout.** When one pending order of an `oco_group` fills, the engine cancels the other order and the pipeline expires the other signal if it was never approved.
+78. **The kill switch closes, cancels and stops.** It closes every bot position and cancels every bot pending order (paper and live), then calls `RiskManager.request_stop("kill switch: ...")`, which is persisted and needs the typed ENABLE on the Risk page. The engine also refuses approvals until "Allow approvals again". It is on the status bar, on Positions & Trades and on Ctrl+Shift+K, always behind a confirmation dialog.
+79. **Netting accounts block a second trade on the same symbol.** On a netting account a new order would merge with (or reverse) the open position, so a symbol with an open bot position is blocked at approval. Reason: simple and safe; reducing instead of blocking can come later as a setting.
+80. **Auto mode is not selectable until the Go-Live gate exists (Phase 13).** `execution.json` refuses `auto` (it loads as Paper with a note). Semi-auto on a REAL (or unknown) account needs the typed word REAL; every mode change is audit-logged.
 
 ## Logging rules for new code
 
@@ -266,3 +301,12 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 - Sizing, limits, exposure and the limit state are pure (architecture test); MT5 reads live in `app/mt5/risk_reads.py` and run in the gateway thread.
 - Every limit is a `LimitCheck` with value, threshold and detail, and becomes one line of the decision trace. A new blocking check names its `risk_events` type.
 - The limit state is written only in the analysis thread and saved after every change; never clear a stop without the user's typed confirmation (except a daily stop at the next trading day).
+
+## Execution rules
+
+- Never call `order_send` or `order_check` outside `app/brokers/live_broker.py` (architecture test); everything else uses the `Broker` interface.
+- Every order request carries its SL and TP, the strategy's magic number and the `tw-` comment. A position without a SL is logged as an ERROR when it is adopted.
+- Never touch a position or order whose magic number is not one of the bot's.
+- A failed read is "unknown", never "closed" or "no positions".
+- Every request and answer goes to `mt5_requests` and the `execution` log; every change of a managed trade is a `trade_events` row.
+- Signal states change only through `SignalUpdate`s applied by the pipeline (`Signal.with_state` checks every transition).
