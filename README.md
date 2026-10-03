@@ -6,7 +6,9 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 ## Status
 
-Phase 10 of 16 (Backtesting). The Backtest page and `--backtest` replay the strategies on MT5 history with the same code that trades live (entries at the next bar open, the same-candle rule, costs), with walk-forward, Monte-Carlo and a sensitivity heatmap; a test proves the backtest gives the same signals as live on the same data. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+Phase 11 of 16 (ML win probability). The Model page trains a LightGBM model on every signal the strategies made on MT5 history, validates it with purged walk-forward tests against the baseline (the strategy's own win rate), calibrates it, and lets you use it only when it beats the baseline out of sample; signals then show the estimate with its range and the three factors behind it. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+
+From Phase 10 (Backtesting): the Backtest page and `--backtest` replay the strategies on MT5 history with the same code that trades live (entries at the next bar open, the same-candle rule, costs), with walk-forward, Monte-Carlo and a sensitivity heatmap; a test proves the backtest gives the same signals as live on the same data.
 
 From Phase 8 (Execution): approved signals are placed with stop loss and take profit (Paper by default, Semi-auto for real orders after your approval), managed, recovered after a restart and synced back; a kill switch stops everything.
 
