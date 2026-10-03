@@ -138,6 +138,19 @@ QLabel[role="status"] {{
     font-size: {FONT_SMALL:g}pt;
     padding: 0 {SPACE}px;
 }}
+QLabel[role="profit"] {{
+    color: {t.profit};
+}}
+QLabel[role="loss"] {{
+    color: {t.loss};
+}}
+QLabel[role="warning"] {{
+    color: {t.warning};
+}}
+QFrame[role="row"] {{
+    background-color: transparent;
+    border-top: 1px solid {t.border};
+}}
 QLabel[role="badge"] {{
     color: {t.warning};
     border: 1px solid {t.warning};
