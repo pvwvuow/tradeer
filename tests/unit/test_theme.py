@@ -1,7 +1,7 @@
 import re
 
 from app.core.ui_prefs import ThemeName
-from app.ui.theme import DARK, LIGHT, build_qss, contrast_ratio, tokens_for
+from app.ui.theme import CHIP_TONES, DARK, LIGHT, build_qss, chip_colors, contrast_ratio, tokens_for
 
 HEX_COLOR = re.compile(r"^#[0-9A-F]{6}$")
 WCAG_AA = 4.5
@@ -51,3 +51,44 @@ def test_stylesheet_is_generated_from_tokens() -> None:
 def test_tokens_for_returns_the_requested_theme() -> None:
     assert tokens_for(ThemeName.DARK) is DARK
     assert tokens_for(ThemeName.LIGHT) is LIGHT
+
+
+def test_status_chips_meet_wcag_aa_in_both_themes() -> None:
+    for tokens in (DARK, LIGHT):
+        for tone in CHIP_TONES:
+            text, fill = chip_colors(tokens, tone)
+            assert contrast_ratio(text, fill) >= WCAG_AA, (tokens.name, tone)
+        assert contrast_ratio(tokens.text, tokens.hover) >= WCAG_AA
+        assert contrast_ratio(tokens.accent, tokens.accent_soft) >= WCAG_AA
+
+
+def test_the_stylesheet_covers_every_common_control() -> None:
+    qss = build_qss(DARK)
+    for selector in (
+        "QTableView",
+        "QHeaderView::section",
+        "QTabBar::tab:selected",
+        "QComboBox",
+        "QAbstractSpinBox",
+        "QScrollBar::handle:vertical",
+        "QProgressBar::chunk",
+        "QGroupBox",
+        "QMenu::item:selected",
+        'QLabel[chip="loss"]',
+        'QLabel[role="kpi"]',
+        'QPushButton[variant="ghost"]',
+    ):
+        assert selector in qss, selector
+
+
+def test_the_stylesheet_braces_are_balanced() -> None:
+    for tokens in (DARK, LIGHT):
+        depth = 0
+        for char in build_qss(tokens):
+            if char == "{":
+                depth += 1
+                assert depth == 1
+            elif char == "}":
+                depth -= 1
+                assert depth == 0
+        assert depth == 0
