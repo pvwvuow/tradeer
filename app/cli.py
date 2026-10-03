@@ -179,6 +179,26 @@ def check_mt5_helper() -> CheckResult:
     return CheckResult(name, True, f"started as process {pid}, MetaTrader5 {version} loaded")
 
 
+def check_ml_library() -> CheckResult:
+    """Train and reload a tiny LightGBM model, exactly as the Model page does (Phase 11)."""
+    import numpy as np
+
+    from app.ml.model import LightGBMFactory, LightGBMParams, lightgbm_version
+
+    name = "ML library"
+    try:
+        rng = np.random.default_rng(1)
+        x = rng.normal(0.0, 1.0, (200, 3))
+        y = (x[:, 0] > 0).astype(np.float64)
+        factory = LightGBMFactory(LightGBMParams(num_boost_round=5, min_data_in_leaf=5))
+        model = factory.load(factory.fit(x, y).dump())
+        contributions = model.contributions(x[:2])
+    except Exception as error:
+        return CheckResult(name, False, f"{type(error).__name__}: {error}")
+    shape = "x".join(str(size) for size in contributions.shape)
+    return CheckResult(name, True, f"LightGBM {lightgbm_version()} trains and explains ({shape})")
+
+
 def run_self_check(
     importer: Importer = importlib.import_module,
     pointer_bits: int | None = None,
@@ -207,6 +227,6 @@ def emit_report(report: str, report_file: Path | None) -> None:
 
 
 def self_check_main(options: CliOptions) -> int:
-    ok, report = run_self_check(extra_checks=(check_mt5_helper,))
+    ok, report = run_self_check(extra_checks=(check_mt5_helper, check_ml_library))
     emit_report(report, options.report_file)
     return 0 if ok else 1
