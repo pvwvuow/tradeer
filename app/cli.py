@@ -37,6 +37,8 @@ class CliOptions:
     profile: str
     crash_test: bool = False
     mt5_smoke_test: bool = False
+    mt5_trade_test: bool = False
+    symbol: str = "EURUSD"
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="connect with the saved profile, print account, prices, bars and deals (read-only)",
     )
     parser.add_argument(
+        "--mt5-trade-test",
+        action="store_true",
+        help="DEMO only: open, modify and close one minimum-lot trade, read the deal back",
+    )
+    parser.add_argument(
+        "--symbol",
+        default="EURUSD",
+        help="symbol for --mt5-trade-test (default EURUSD; broker suffixes are found)",
+    )
+    parser.add_argument(
         "--report-file",
         type=Path,
         default=None,
@@ -95,6 +107,8 @@ def parse_args(argv: Sequence[str]) -> CliOptions:
         profile=str(namespace.profile),
         crash_test=bool(namespace.crash_test),
         mt5_smoke_test=bool(namespace.mt5_smoke_test),
+        mt5_trade_test=bool(namespace.mt5_trade_test),
+        symbol=str(namespace.symbol),
     )
 
 

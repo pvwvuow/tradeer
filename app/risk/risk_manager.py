@@ -283,8 +283,10 @@ class RiskManager:
             return RiskDecision(False, 0.0, 0.0, "MT5 gave no account information")
         state = self._roll(picture, settings, now)
         account = self._account()
-        loss = self._broker.loss_per_lot(signal.symbol, signal.direction, signal.entry, signal.sl)
-        commission, source = self._commission(account, signal.symbol, settings)
+        # MT5 needs the broker's name ("EURUSD.m"); the signal carries the watchlist name.
+        symbol = spec.name if spec is not None and spec.name else signal.symbol
+        loss = self._broker.loss_per_lot(symbol, signal.direction, signal.entry, signal.sl)
+        commission, source = self._commission(account, symbol, settings)
         capital = picture.capital(settings)
         sizing = size_position(
             SizingInput(
@@ -300,11 +302,11 @@ class RiskManager:
         margin: float | None = None
         if sizing.ok:
             volume = sizing.volume
-            margin = self._broker.margin(signal.symbol, signal.direction, volume, signal.entry)
+            margin = self._broker.margin(symbol, signal.direction, volume, signal.entry)
         base, quote = currencies(signal, spec)
         point = spec.point if spec is not None and spec.point > 0 else 10.0**-signal.digits
         candidate = Candidate(
-            symbol=signal.symbol,
+            symbol=symbol,
             strategy=signal.strategy,
             direction=signal.direction,
             risk_money=sizing.risk_money,
