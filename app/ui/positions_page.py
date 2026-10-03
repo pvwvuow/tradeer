@@ -41,6 +41,7 @@ from app.observability.logger import audit
 from app.ui.pages import PAGE_MARGIN, styled_label
 from app.ui.signals_page import ask
 from app.ui.strategies_page import ParamsForm
+from app.ui.trade_history import TradeHistory, TradeHistoryWidget
 
 REAL_WORD = "REAL"
 KILL_TEXT = (
@@ -83,6 +84,7 @@ class TradingContext:
     engine: ExecutionEngine
     settings: ExecutionSettingsSource
     real_account: Callable[[], bool]
+    history: TradeHistory | None = None
 
 
 class _Bridge(QObject):
@@ -151,6 +153,8 @@ class PositionsPage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("PositionsTabs")
         self.tabs.addTab(self._build_positions(), "Open")
+        self.history = TradeHistoryWidget(context.history if context is not None else None)
+        self.tabs.addTab(self.history, "History")
         self.tabs.addTab(self._build_settings(), "Execution settings")
         layout.addWidget(self.tabs, 1)
         enabled = context is not None
