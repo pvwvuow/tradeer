@@ -9,11 +9,13 @@ description = "Safety-first MetaTrader 5 trading workstation for Windows"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = { text = "Proprietary. All rights reserved." }
-# Exact pins for direct dependencies. Each later phase adds its own pinned libraries
-# (psutil, pandas, lightgbm, scikit-learn, shap).
+# Exact pins for direct dependencies. Each later phase adds its own pinned libraries.
+# Phase 11 adds only lightgbm (it brings numpy and scipy): calibration, metrics and SHAP
+# values need no scikit-learn, shap or joblib (ADR 97).
 dependencies = [
   "httpx==0.28.1",
   "keyring==25.7.0",
+  "lightgbm==4.6.0",
   "loguru==0.7.3",
   "MetaTrader5==5.0.6090; sys_platform == 'win32'",
   "numpy==2.2.6",
@@ -61,6 +63,12 @@ files = ["app"]
 # MetaTrader5 and pyqtgraph ship no type information; keyring is imported lazily on first use.
 module = ["MetaTrader5", "keyring", "keyring.*", "pyqtgraph", "pyqtgraph.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# lightgbm is imported lazily (app/ml/model.py) and used as Any.
+module = ["lightgbm", "lightgbm.*", "scipy", "scipy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

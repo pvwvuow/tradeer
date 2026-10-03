@@ -26,6 +26,8 @@ Invoke-Step "PyInstaller" {
         --hidden-import keyring.backends.Windows `
         --collect-submodules MetaTrader5 `
         --collect-all numpy `
+        --collect-all lightgbm `
+        --collect-submodules scipy.sparse `
         --add-data "$root/app/calendar/mql5/CalendarExporter.mq5;app/calendar/mql5" `
         --distpath "$root/dist" `
         --workpath "$root/build/pyinstaller" `
