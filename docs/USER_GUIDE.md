@@ -1,10 +1,10 @@
 # User guide
 
-## What works today (Phase 7)
+## What works today (Phase 8)
 
-Phase 7 adds risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Signals are suggestions only; nothing is sent to MT5 yet. Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
+Phase 8 adds trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
 
-- **Simple view** (default): a calm Home screen in plain language. It says you are in practice mode and whether the app is connected to MetaTrader 5. The "Stop trading now" button is always visible; it becomes active once trading exists.
+- **Simple view** (default): a calm Home screen in plain language. It says you are in practice mode and whether the app is connected to MetaTrader 5. The "Stop trading now" button is always visible; it is wired to the kill switch in Phase 9 (use the status bar's Stop trading or Ctrl+Shift+K until then).
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
 - **Theme**: click **Switch to light theme** or **Switch to dark theme** (top right). Your choice is remembered.
 - **Command palette**: in the Advanced view press **Ctrl+K**, type part of a page or command name (for example `risk` or `debug`) and press Enter.
@@ -108,14 +108,44 @@ Advanced view > Market. Everything here is information only and never a trade si
 
 ## Signals page
 
-Advanced view > Signals. A signal is a trade idea from a strategy. Nothing is sent to MT5: orders arrive in Phase 8, so **Approve** is off.
+Advanced view > Signals. A signal is a trade idea from a strategy.
 
-- **Feed**: every signal, also the filtered-out ones with the reason. Pick "Waiting for approval", "Filtered out" or "Expired or dismissed" to narrow it.
+- **Feed**: every signal, also the filtered-out ones with the reason. Pick "Waiting for approval", "Sent or open", "Closed or failed", "Filtered out" or "Expired or dismissed" to narrow it.
+- **Approve**: select a waiting signal, click Approve and confirm. The dialog shows the lot and about how much you could lose at the stop loss. See "Approving a signal".
 - **Decision trace**: select a signal to see every step: the closed bar, each strategy rule with its value and limit, the features, the probability, the EV, each filter (✓ passed, ✗ failed, · not applied), risk and the decision.
 - **Lot and Risk**: the lot size and the money the trade would lose at its stop loss (commission included), for signals within every risk limit. A signal that breaks a limit says "rejected by risk" and which limit.
 - **Probability**: "unknown" until the strategy has 30 resolved signals; the app never shows a made-up number.
 - **Dismiss**: rejects a waiting signal. Waiting signals also expire by themselves (trend pullback after 2 bars, London breakout at 11:00 London time).
 - **Scanner**: symbols ranked by setup (ready before forming), then by probability x EV, or by rules passed while no probability exists.
+
+## Approving a signal
+
+1. Select a signal that is "waiting for approval" and click **Approve**, then **Yes**.
+2. Within a few seconds the app checks it again with the live price: is it still valid, did the price move more than 0.25 R from the entry, is the spread too wide, are the stops far enough? If anything fails, the signal becomes "expired" with the reason and nothing is sent.
+3. The risk manager sizes it again at the live price. Then the order is placed with its stop loss and take profit:
+   - **Paper** (default): simulated on live prices, nothing in MT5.
+   - **Semi-auto**: a real order on your MT5 account, checked first with MT5's `order_check`. It shows in MT5 with the strategy's magic number (26070001 trend pullback, 26070002 London breakout) and a `tw-` comment.
+4. The signal then shows "filled", "open (managed)" and finally "closed" with the net result and R. A London breakout order that fills cancels its other side.
+
+Approve is off in Analysis-only mode and after the kill switch.
+
+## Positions & Trades
+
+Advanced view > Positions & Trades.
+
+- **Trading mode**: Paper, Semi-auto or Analysis-only, then **Use this mode**. On a REAL account, Semi-auto asks you to type REAL. Auto mode needs the Go-Live checks of a later phase and cannot be chosen yet.
+- **Open**: the positions and pending orders this app opened (manual trades are not listed and never touched), with P/L, the best (MFE) and worst (MAE) move in R. **Close position** closes the selected one at the market price after a confirmation.
+- **Execution events**: fills, slippage, stop loss moves, closes and failures, newest first.
+- **Execution settings**: max deviation, retries, entry tolerance, spread limit, paper slippage, commission and start balance; and per strategy the optional management (break-even at X R, ATR trailing, partial close, time exit). All management rules are off (0) by default.
+- If the app or the PC restarts, the app finds its trades in MT5 again and keeps managing them. Your stop loss and take profit are on the broker's server, so they protect you while the app is closed.
+
+## Kill switch
+
+Click **Stop trading** in the status bar, the kill switch on Positions & Trades, or press **Ctrl+Shift+K**, then confirm. The app closes every position it opened, cancels its pending orders and stops new entries. Manual trades stay open. To trade again: type ENABLE on the Risk page and click "Allow approvals again" on Positions & Trades.
+
+## Trade test (demo only)
+
+With MT5 open on a **demo** account and Algo Trading ON, run `MT5TradingWorkstation.exe --mt5-trade-test --symbol EURUSD`. It opens the minimum lot with a stop loss and take profit, checks it in MT5, moves the stop loss, closes it, reads the closed deal back and prints every step with ✓ or ✗ and MT5's return codes. It refuses to run on a REAL account. Use `--report-file report.txt` to save the report.
 
 ## Strategies page
 
@@ -134,7 +164,7 @@ Advanced view > Risk. The limits are enforced by the app on every signal; this p
 - **Currency exposure**: your net risk per currency over all open positions (manual ones too, unless you turn that off). Long EURUSD and long GBPUSD are both short USD, so a third USD-short trade can be blocked.
 - **Risk events**: limits hit, trades blocked, stops and re-enables.
 - **Profile**: pick Conservative (0.25% per trade), Normal (0.5%) or Prop-firm (0.5%, 4% daily loss, 8% static drawdown), click **Use this profile**, then **Save risk settings**. You can change any value; the profile then shows as Custom. No value can go above the safety caps (for example 1% per trade).
-- **Stop new entries**: no new signal passes until you re-enable. The full kill switch (closing positions) arrives with orders in Phase 8.
+- **Stop new entries**: no new signal passes until you re-enable. The kill switch (status bar, Ctrl+Shift+K) also closes the bot's positions.
 - **Re-enable trading**: needed after the drawdown limit or a stop; type ENABLE to confirm. The drawdown then counts from your current equity. A daily-loss stop ends by itself at the next trading day.
 - Lots are calculated with MetaTrader 5's own profit calculator, so gold, JPY pairs and non-USD accounts are sized correctly.
 
@@ -155,6 +185,7 @@ Times are converted to UTC with your broker's clock, including its summer-time r
 `%APPDATA%\MT5TradingWorkstation\profiles\<profile>\`:
 
 - `ui_prefs.json`: theme and view.
+- `execution.json`: trading mode, execution and management settings.
 - `account.json`: login, server and terminal path of the saved account (no password).
 - `instance.lock`: held while the app runs on this profile.
 - `logs\`: one folder per category with one `.jsonl` file per day, plus `all.log`.
