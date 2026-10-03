@@ -143,6 +143,35 @@ class SignalRepository:
             for row in rows
         ]
 
+    def model_results(self, limit: int = RESULTS_LIMIT) -> list[tuple[float, bool]]:
+        """Closed trades whose signal had a model probability, newest first: (p, won)."""
+        rows = self.store.db.query(
+            "SELECT s.win_probability AS p, t.outcome FROM trades t "
+            "JOIN signals s ON s.id = t.signal_id "
+            "WHERE s.probability_source LIKE 'model%' AND s.win_probability IS NOT NULL "
+            "AND t.outcome IN ('win', 'loss', 'breakeven') AND t.close_time IS NOT NULL "
+            "ORDER BY t.close_time DESC LIMIT ?",
+            (limit,),
+        )
+        return [(float(row["p"]), str(row["outcome"]) == "win") for row in rows]
+
+    def recent_features(self, limit: int = 300) -> list[dict[str, float | str]]:
+        """The features of the newest signals (for drift monitoring)."""
+        rows = self.store.db.query(
+            "SELECT features_json FROM signals ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        found: list[dict[str, float | str]] = []
+        for row in rows:
+            try:
+                meta = json.loads(str(row["features_json"] or "{}"))
+            except ValueError:
+                continue
+            features = meta.get("features", {}) if isinstance(meta, dict) else {}
+            if isinstance(features, dict):
+                found.append(features)
+        return found
+
 
 def signal_row(record: SignalRecord, account: str | None) -> dict[str, Any]:
     signal = record.signal
