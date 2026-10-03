@@ -82,10 +82,48 @@ def test_command_palette_is_advanced_only(qtbot: QtBot, tmp_path: Path) -> None:
 
 def test_stop_controls_are_visible_but_inactive(qtbot: QtBot, tmp_path: Path) -> None:
     window = make_window(qtbot, tmp_path)
-    assert window.kill_switch.isVisible()
-    assert not window.kill_switch.isEnabled()
+    # Simple view: the Home screen's Stop button, the full status bar one tap away (spec F2).
     assert window.home.stop_button.isVisible()
     assert not window.home.stop_button.isEnabled()
+    assert not window.kill_switch.isVisible()
+    window.home.status_bar_button.click()
+    assert window.kill_switch.isVisible()
+    assert not window.kill_switch.isEnabled()
+    window.home.status_bar_button.click()
+    assert not window.kill_switch.isVisible()
+    qtbot.mouseClick(window.view_button, Qt.MouseButton.LeftButton)
+    assert window.kill_switch.isVisible()
+
+
+def test_the_first_start_explains_practice_money_then_routes(
+    qtbot: QtBot,
+    tmp_path: Path,
+) -> None:
+    window = make_window(qtbot, tmp_path)
+    assert window.home.welcome.isVisible() and not window.home.scroll.isVisible()
+    assert "practice money, not real" in window.home.practice_label.text()
+    qtbot.mouseClick(window.home.trader_button, Qt.MouseButton.LeftButton)
+    saved = load_prefs(tmp_path)
+    assert saved.onboarded and saved.view_mode is ViewMode.ADVANCED
+    assert not window.sidebar.isHidden()
+    again = make_window(qtbot, tmp_path, UiPrefs(onboarded=True))
+    assert not again.home.welcome.isVisible() and again.home.scroll.isVisible()
+    beginner = make_window(qtbot, tmp_path / "new")
+    qtbot.mouseClick(beginner.home.new_button, Qt.MouseButton.LeftButton)
+    assert beginner.current_page_id() == SIMPLE_HOME.page_id
+    assert load_prefs(tmp_path / "new").onboarded
+
+
+def test_simple_view_reaches_settings_and_back(qtbot: QtBot, tmp_path: Path) -> None:
+    window = make_window(qtbot, tmp_path)
+    assert window.settings_button.isVisible()
+    qtbot.mouseClick(window.settings_button, Qt.MouseButton.LeftButton)
+    assert window.current_page_id() == "settings"
+    assert window.settings_button.text() == "Back to Home"
+    qtbot.mouseClick(window.settings_button, Qt.MouseButton.LeftButton)
+    assert window.current_page_id() == SIMPLE_HOME.page_id
+    qtbot.mouseClick(window.view_button, Qt.MouseButton.LeftButton)
+    assert not window.settings_button.isVisible()
 
 
 def test_logs_page_is_real_when_logging_is_wired(qtbot: QtBot, tmp_path: Path) -> None:
