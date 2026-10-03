@@ -1,14 +1,14 @@
 # User guide
 
-## What works today (Phase 8)
+## What works today (Phase 9)
 
-Phase 8 adds trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
+Phase 9 adds the Simple view's Home screen: one trade suggestion at a time in plain words with Approve and Skip, your balance, your open trades with Close now, and Stop trading now (see "Home (Simple view)"). Phase 8 added trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
 
-- **Simple view** (default): a calm Home screen in plain language. It says you are in practice mode and whether the app is connected to MetaTrader 5. The "Stop trading now" button is always visible; it is wired to the kill switch in Phase 9 (use the status bar's Stop trading or Ctrl+Shift+K until then).
+- **Simple view** (default): the Home screen in plain language (see "Home (Simple view)"). **Settings** (top bar) opens the settings, **Back to Home** returns.
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
 - **Theme**: click **Switch to light theme** or **Switch to dark theme** (top right). Your choice is remembered.
 - **Command palette**: in the Advanced view press **Ctrl+K**, type part of a page or command name (for example `risk` or `debug`) and press Enter.
-- **Status bar** (bottom, always visible): connection state (broker, server and login when connected), the operating mode badge (`PAPER`, or `ANALYSIS-ONLY` with an investor password), the bot state, the cloud state, the session clock, the next high-impact news, the app version and the kill switch.
+- **Status bar** (bottom; in the Simple view only after "Show status bar"): connection state (broker, server and login when connected), the operating mode badge (`PAPER`, or `ANALYSIS-ONLY` with an investor password), the bot state, the cloud state, the session clock, the next high-impact news, the app version and the kill switch.
 
 ## Before you connect
 
@@ -118,6 +118,23 @@ Advanced view > Signals. A signal is a trade idea from a strategy.
 - **Probability**: "unknown" until the strategy has 30 resolved signals; the app never shows a made-up number.
 - **Dismiss**: rejects a waiting signal. Waiting signals also expire by themselves (trend pullback after 2 bars, London breakout at 11:00 London time).
 - **Scanner**: symbols ranked by setup (ready before forming), then by probability x EV, or by rules passed while no probability exists.
+
+## Home (Simple view)
+
+The screen you see first. Everything on it is in plain words; the exact numbers are one click deeper, under **Show details**.
+
+- **First start**: a card says "This is practice money, not real" and asks how much you know about trading. "I'm new to trading: keep it simple" keeps this screen; "I already trade: show the Advanced view" opens the Advanced view. It is asked once.
+- **Mode line** (top): "Practice money: trades are simulated, nothing real is bought or sold." in Paper, "Real orders: a trade is placed only after you approve it." in Semi-auto, "Watching only" in Analysis-only. Change the mode in the Advanced view (Positions & Trades).
+- **Balance**: your practice balance (Paper) or your balance, today's change in money and percent (▲ green, ▼ red), and the result of the last 7 days with a small chart. "not known yet" means the account was not read yet.
+- **Trade suggestion**: one at a time, the one that ends soonest first ("1 of 3 suggestions" when more wait). It says which market (for example "Gold (XAUUSD)"), Buy or Sell, one sentence why, how much you could lose and make in money, a confidence label and when the suggestion ends. "The price has moved since this was found" means it may be cancelled when you approve.
+  - **Approve**: asks once, with the money and whether it is practice or a REAL order. Then it goes through the same checks as on the Signals page (see "Approving a signal"): checked again at the live price, sized, placed with its exits.
+  - **Skip**: removes the suggestion (the same as Dismiss on the Signals page).
+  - **Show details**: the win chance with its range and sample size, the order price, both exit prices, the size in lots, the expected result in R, the chart timeframe, the strategy and its full reason.
+  - Confidence is "not known yet" until a strategy has 30 finished suggestions. It is an estimate, never a promise.
+- **Your open trades**: each trade the app opened, with Buy or Sell and its result now in money and percent. **Close now** closes it at the current price after a confirmation. "Waiting for its price" is an order that has not filled yet.
+- **Status line**: what the app is doing: watching, found a trade, trade running, market closed, paused by a limit, stopped, or not connected.
+- **Stop trading now**: the kill switch (see "Kill switch"). It asks first.
+- **Show status bar**: shows the Advanced status bar at the bottom.
 
 ## Approving a signal
 
