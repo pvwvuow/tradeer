@@ -37,7 +37,7 @@ def plan(**changes: object) -> OrderPlan:
 
 
 def test_retry_only_on_safe_codes() -> None:
-    assert RETRY_CODES == {10004, 10012, 10020, 10021, 10024, 10031}
+    assert {10004, 10012, 10020, 10021, 10024, 10031} == RETRY_CODES
     for code in (10016, 10019, 10017, 10018, 10014, 10030):
         assert describe(code).policy is Policy.FAIL, code
     assert describe(10009).ok and describe(10008).policy is Policy.PLACED

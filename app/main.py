@@ -98,7 +98,7 @@ def crash_test_main(options: CliOptions) -> int:
 def mt5_smoke_test_main(options: CliOptions) -> int:
     from app.mt5.smoke_test import run_smoke_test
 
-    def test(mt5: MT5Api, request: ConnectRequest, emit: Emit, elevated: bool) -> bool:
+    def test(mt5: MT5Api, request: ConnectRequest, emit: Emit, elevated: bool | None) -> bool:
         return run_smoke_test(mt5, request, emit, elevated=elevated)
 
     return _mt5_test_main(options, "Smoke test", "smoke_test", LogCategory.MT5, test)
@@ -107,7 +107,7 @@ def mt5_smoke_test_main(options: CliOptions) -> int:
 def mt5_trade_test_main(options: CliOptions) -> int:
     from app.brokers.trade_test import run_trade_test
 
-    def test(mt5: MT5Api, request: ConnectRequest, emit: Emit, elevated: bool) -> bool:
+    def test(mt5: MT5Api, request: ConnectRequest, emit: Emit, elevated: bool | None) -> bool:
         return run_trade_test(mt5, request, options.symbol, emit, elevated=elevated)
 
     return _mt5_test_main(options, "Trade test", "trade_test", LogCategory.EXECUTION, test)
@@ -118,7 +118,7 @@ def _mt5_test_main(
     title: str,
     name: str,
     category: LogCategory,
-    test: Callable[[MT5Api, ConnectRequest, Emit, bool], bool],
+    test: Callable[[MT5Api, ConnectRequest, Emit, bool | None], bool],
 ) -> int:
     """Connect with the saved profile in the gateway thread and run one test command."""
     from app.core.credentials import CredentialError, KeyringStore, credential_name, read_password
