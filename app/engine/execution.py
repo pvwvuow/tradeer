@@ -55,6 +55,9 @@ from app.storage.trade_store import STATE_KEY, TradeRepository, bot_trade_id
 
 CLOSE_SYNC_CYCLES = 30  # cycles to wait for the closing deal before closing without it
 KEEP_MESSAGES = 30
+DAILY_DAYS = 7  # the Home screen's 7-day result (spec F0)
+DAILY_REFRESH_SECONDS = 60.0
+DAY_SECONDS = 86_400
 
 Log = Callable[[str, str], None]
 Listener = Callable[["ExecutionSnapshot"], None]
@@ -144,6 +147,7 @@ class ExecutionSnapshot:
     messages: tuple[str, ...] = ()
     stopped: str = ""  # why the kill switch stopped trading, "" while running
     updated_at: float = 0.0
+    daily_results: tuple[tuple[str, float], ...] = ()  # (UTC day, net) of the last 7 days
 
 
 def _quiet(level: str, message: str) -> None:
@@ -207,6 +211,9 @@ class ExecutionEngine:
         self._profits: dict[tuple[str, int], float] = {}
         self._messages: list[str] = []
         self._stopped = ""
+        self._daily: tuple[tuple[str, float], ...] = ()
+        self._daily_key: tuple[str, str] | None = None
+        self._daily_at = -math.inf
         self._snapshot = ExecutionSnapshot()
 
     # Public API (any thread) -----------------------------------------------------------
@@ -675,6 +682,7 @@ class ExecutionEngine:
             row.pop("close_time")  # the history import sets it from the deal time
         self._save_row(row)
         self._event(tracked, "close", now, new=summary.net_profit, reason=summary.exit_reason or "")
+        self._daily_at = -math.inf  # the Home screen shows the new result at once
         text = (
             f"closed by {summary.exit_reason or 'unknown'}: net {summary.net_profit:+.2f} "
             f"(profit {summary.profit:+.2f}, commission {summary.commission:+.2f}, "
@@ -943,6 +951,22 @@ class ExecutionEngine:
             return self._brokers.get("live")
         return None
 
+    def _daily_results(self, now: float) -> tuple[tuple[str, float], ...]:
+        """Closed results per day of the mode in use, read at most once a minute."""
+        account = self._account()
+        if self._store is None or account is None:
+            return ()
+        key = (account, "paper" if self.mode() is OperatingMode.PAPER else "live")
+        if key == self._daily_key and now - self._daily_at < DAILY_REFRESH_SECONDS:
+            return self._daily
+        start = now - now % DAY_SECONDS - (DAILY_DAYS - 1) * DAY_SECONDS
+        try:
+            self._daily = tuple(self._store.daily_net(key[0], key[1], iso_time(start)))
+        except Exception as error:
+            self._log("ERROR", f"Daily results could not be read: {type(error).__name__}")
+        self._daily_key, self._daily_at = key, now
+        return self._daily
+
     def _point(self, symbol: str) -> float:
         spec = self._market.spec(symbol)
         return spec.point if spec is not None and spec.point > 0 else 0.0
@@ -978,6 +1002,7 @@ class ExecutionEngine:
             messages=tuple(reversed(self._messages)),
             stopped=self._stopped,
             updated_at=now,
+            daily_results=self._daily_results(now),
         )
         with self._lock:
             self._snapshot = snapshot
