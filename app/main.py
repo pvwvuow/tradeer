@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
@@ -18,9 +18,12 @@ if TYPE_CHECKING:
 
     from app.calendar.exporter import CalendarFileWatcher
     from app.calendar.store import CalendarStore
+    from app.core.execution_settings import ExecutionSettingsSource
     from app.core.strategy_settings import StrategySettingsSource
+    from app.engine.execution import ExecutionEngine
     from app.engine.market_watch import MarketWatch
     from app.engine.signal_pipeline import SignalPipeline
+    from app.mt5.api import MT5Api
     from app.mt5.checklist import ConnectRequest
     from app.mt5.connection import ConnectionService
     from app.mt5.gateway import MT5Gateway
@@ -36,6 +39,7 @@ GATEWAY_FREEZE_SECONDS = 120.0
 SYNC_FREEZE_SECONDS = 600.0
 MARKET_FREEZE_SECONDS = 180.0
 SMOKE_TEST_TIMEOUT_SECONDS = 180.0
+Emit = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,8 @@ class MarketParts:
     settings: StrategySettingsSource
     risk: RiskManager
     risk_settings: RiskSettingsSource
+    execution: ExecutionEngine
+    execution_settings: ExecutionSettingsSource
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -58,6 +64,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return crash_test_main(options)
     if options.mt5_smoke_test:
         return mt5_smoke_test_main(options)
+    if options.mt5_trade_test:
+        return mt5_trade_test_main(options)
     return run_gui(options, args)
 
 
@@ -88,32 +96,59 @@ def crash_test_main(options: CliOptions) -> int:
 
 
 def mt5_smoke_test_main(options: CliOptions) -> int:
+    from app.mt5.smoke_test import run_smoke_test
+
+    def test(mt5: MT5Api, request: ConnectRequest, emit: Emit, elevated: bool) -> bool:
+        return run_smoke_test(mt5, request, emit, elevated=elevated)
+
+    return _mt5_test_main(options, "Smoke test", "smoke_test", LogCategory.MT5, test)
+
+
+def mt5_trade_test_main(options: CliOptions) -> int:
+    from app.brokers.trade_test import run_trade_test
+
+    def test(mt5: MT5Api, request: ConnectRequest, emit: Emit, elevated: bool) -> bool:
+        return run_trade_test(mt5, request, options.symbol, emit, elevated=elevated)
+
+    return _mt5_test_main(options, "Trade test", "trade_test", LogCategory.EXECUTION, test)
+
+
+def _mt5_test_main(
+    options: CliOptions,
+    title: str,
+    name: str,
+    category: LogCategory,
+    test: Callable[[MT5Api, ConnectRequest, Emit, bool], bool],
+) -> int:
+    """Connect with the saved profile in the gateway thread and run one test command."""
     from app.core.credentials import CredentialError, KeyringStore, credential_name, read_password
     from app.core.profiles import load_account
     from app.mt5.errors import MT5Error
     from app.mt5.gateway import MT5Gateway, load_mt5
     from app.mt5.privileges import is_elevated
     from app.mt5.request_log import log_request
-    from app.mt5.smoke_test import run_smoke_test
     from app.observability.logger import get_logger
     from app.observability.runtime import start_observability
 
     lines: list[str] = []
     observability = start_observability(options.profile)
-    log = get_logger(LogCategory.MT5)
+    log = get_logger(category)
+    mt5_log = get_logger(LogCategory.MT5)
 
     def emit(line: str) -> None:
         lines.append(line)
-        log.info("Smoke test: {}", line)
+        log.info(f"{title}: {{}}", line)
+        if category is not LogCategory.MT5:
+            mt5_log.info(f"{title}: {{}}", line)
 
     ok = False
     try:
         account = load_account(app_data_dir(options.profile))
         password = ""
         if account.configured and account.login is not None:
-            name = credential_name(options.profile, account.login, account.server)
+            key = credential_name(options.profile, account.login, account.server)
             try:
-                password = read_password(KeyringStore(), name) or ""
+                password = read_password(KeyringStore(), key) or ""
             except CredentialError as error:
                 emit(f"Saved password not available ({error}); trying the terminal's login.")
         else:
@@ -127,8 +162,8 @@ def mt5_smoke_test_main(options: CliOptions) -> int:
         gateway.start()
         try:
             ok = gateway.run(
-                "smoke_test",
-                lambda mt5: run_smoke_test(mt5, request, emit, elevated=elevated),
+                name,
+                lambda mt5: test(mt5, request, emit, elevated),
                 timeout=SMOKE_TEST_TIMEOUT_SECONDS,
             )
         except MT5Error as error:
@@ -288,6 +323,7 @@ def _open_storage(
     """The local database, the cloud sync and the account tracker (spec E1)."""
     from app.__version__ import __version__
     from app.core.credentials import KeyringStore
+    from app.core.execution_settings import load_execution_config
     from app.domain.config import TradingDefaults
     from app.mt5.history_sync import HistoryImporter
     from app.observability.context import SESSION_ID
@@ -295,6 +331,7 @@ def _open_storage(
     from app.storage.runtime import open_storage
     from app.storage.supabase_client import SupabaseClient
     from app.storage.tracker import AccountTracker
+    from app.strategies.registry import MAGIC_NUMBERS
 
     sync_log = get_logger(LogCategory.SYNC)
 
@@ -313,9 +350,10 @@ def _open_storage(
     )
     try:
         defaults = TradingDefaults()
+        mode, _note = load_execution_config(app_data_dir(profile))
         storage.start_session(
             app_version=__version__,
-            mode=defaults.mode.value,
+            mode=mode.mode.value,
             settings=defaults.model_dump(mode="json"),
         )
         storage.attach_logs(observability.pipeline)
@@ -323,7 +361,11 @@ def _open_storage(
             storage.store,
             storage.session_id,
             status=lambda: service.status,
-            history=HistoryImporter(gateway, storage.store),
+            history=HistoryImporter(
+                gateway,
+                storage.store,
+                bot_magics=frozenset(MAGIC_NUMBERS.values()),
+            ),
             log=log,
         )
         service.add_listener(storage.tracker.on_status)
@@ -345,21 +387,29 @@ def _start_market(
     """The closed-bar analysis thread, the calendar and the signals (spec C2, C3, C5)."""
     import json
 
+    from app.brokers.live_broker import LiveBroker
+    from app.brokers.market import GatewayMarket
+    from app.brokers.paper_broker import ModeRiskBroker, PaperBroker, risk_account
     from app.calendar.exporter import CalendarFileWatcher
     from app.calendar.store import CalendarStore, import_exporter_file
     from app.core.clock import BrokerClock
+    from app.core.execution_settings import ExecutionSettingsSource
     from app.core.strategy_settings import StrategySettingsSource
     from app.core.watchlist import WatchlistSource
+    from app.domain.modes import OperatingMode
+    from app.engine.execution import ExecutionEngine
     from app.engine.market_watch import MarketWatch
     from app.engine.signal_pipeline import SignalPipeline
     from app.mt5.market_data import MarketData
+    from app.mt5.models import MarginMode
     from app.mt5.risk_reads import GatewayRiskBroker
     from app.observability.logger import get_logger
     from app.risk.risk_manager import RiskManager
     from app.risk.settings import RiskSettingsSource
     from app.storage.risk_store import RiskRepository
     from app.storage.signal_store import SignalRepository
-    from app.strategies.registry import strategy_for_magic
+    from app.storage.trade_store import TradeRepository
+    from app.strategies.registry import MAGIC_NUMBERS, strategy_for_magic
 
     analysis_log = get_logger(LogCategory.ANALYSIS)
     strategy_log = get_logger(LogCategory.STRATEGY)
@@ -412,26 +462,83 @@ def _start_market(
         app_data_dir(profile),
         note=lambda text: log_risk("WARNING", text),
     )
+    execution_log = get_logger(LogCategory.EXECUTION)
+
+    def log_execution(level: str, message: str) -> None:
+        execution_log.log(level, "{}", message)
+
+    execution_settings = ExecutionSettingsSource(
+        app_data_dir(profile),
+        note=lambda text: log_execution("WARNING", text),
+    )
+
+    def paper_mode() -> bool:
+        return execution_settings.mode is OperatingMode.PAPER
+
+    market_reads = GatewayMarket(gateway)
+    trades = TradeRepository(store)
+    paper = PaperBroker(
+        market_reads,
+        lambda: execution_settings.config.settings,
+        store=trades,
+        account=storage.current_account,
+    )
     risk = RiskManager(
         lambda: risk_settings.config,
-        GatewayRiskBroker(gateway, strategy_for_magic),
+        ModeRiskBroker(
+            GatewayRiskBroker(gateway, strategy_for_magic),
+            paper,
+            paper_mode,
+            strategy_for_magic,
+        ),
         store=RiskRepository(store),
-        account=storage.current_account,
+        account=lambda: risk_account(storage.current_account(), paper_mode()),
         connected=lambda: service.status.connected,
         log=log_risk,
     )
     log_risk("INFO", f"Risk profile: {risk_settings.config.profile_title()}")
+
+    def netting() -> bool:
+        account = service.status.account
+        return account is not None and account.margin_mode is MarginMode.NETTING
+
+    def broker_symbol(name: str) -> str:
+        return watch.broker_symbol(name)
+
+    execution = ExecutionEngine(
+        lambda: execution_settings.config,
+        market=market_reads,
+        paper=paper,
+        live=LiveBroker(
+            gateway,
+            retries=lambda: execution_settings.config.settings.max_retries,
+            deviation=lambda: execution_settings.config.settings.deviation_points,
+        ),
+        magics=MAGIC_NUMBERS,
+        risk=risk,
+        store=trades,
+        account=storage.current_account,
+        clock=lambda: watch.clock,
+        connected=lambda: service.status.connected,
+        netting=netting,
+        broker_symbol=broker_symbol,
+        stop_trading=risk.request_stop,
+        paper_step=paper.step,
+        log=log_execution,
+    )
+    log_execution("INFO", f"Trading mode: {execution_settings.mode.label}")
     pipeline = SignalPipeline(
         settings.strategies,
         settings.filters,
         store=SignalRepository(store),
         account=storage.current_account,
         risk=risk,
+        executor=execution,
         log=signal_log,
     )
     loaded = pipeline.load()
     enabled = ", ".join(settings.settings.enabled()) or "none"
-    signal_log("INFO", f"Strategies on: {enabled}; {loaded} saved signals loaded (signal only)")
+    signal_log("INFO", f"Strategies on: {enabled}; {loaded} saved signals loaded")
 
     watchdog = observability.watchdog
     watchdog.register("market-analysis", MARKET_FREEZE_SECONDS)
@@ -456,7 +563,17 @@ def _start_market(
         storage.tracker.clock_source = known_clock
     risk.clock_source = lambda: watch.clock
     watch.start()
-    return MarketParts(watch, calendar, calendar_file, pipeline, settings, risk, risk_settings)
+    return MarketParts(
+        watch,
+        calendar,
+        calendar_file,
+        pipeline,
+        settings,
+        risk,
+        risk_settings,
+        execution,
+        execution_settings,
+    )
 
 
 def _show_window(
@@ -474,12 +591,14 @@ def _show_window(
     from app.core.credentials import KeyringStore
     from app.core.profiles import load_account
     from app.core.ui_prefs import load_prefs
+    from app.mt5.models import AccountKind
     from app.mt5.privileges import is_elevated
     from app.observability.logger import get_logger
     from app.ui.connection_page import ConnectionContext, launch_profile_instance
     from app.ui.crash_dialog import CrashNotifier
     from app.ui.main_window import MainWindow
     from app.ui.market_page import MarketContext
+    from app.ui.positions_page import TradingContext
     from app.ui.risk_page import RiskContext
     from app.ui.signals_page import SignalsContext
 
@@ -490,6 +609,10 @@ def _show_window(
     def data_path() -> str:
         terminal = service.status.terminal
         return terminal.data_path if terminal is not None else ""
+
+    def real_account() -> bool:
+        account = service.status.account
+        return account is None or account.kind is not AccountKind.DEMO
 
     watch, calendar, calendar_file = market.watch, market.calendar, market.calendar_file
     try:
@@ -511,6 +634,7 @@ def _show_window(
             MarketContext(watch, prefs_dir, calendar, calendar_file, data_path),
             SignalsContext(market.pipeline, market.settings),
             RiskContext(market.risk, market.risk_settings),
+            TradingContext(market.execution, market.execution_settings, real_account),
         )
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")
