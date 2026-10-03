@@ -56,6 +56,7 @@ Advanced view, sidebar **System**, then **Logs**.
 - Filter by category, by minimum level, or by text (tick **Regex** for a regular expression).
 - Click a line to see its full JSON entry below the table. If the line belongs to a trace, **Show only this trace** shows every line of that trace; click **Show all traces** to go back.
 - Pick a category in the first filter to change **its** level (for example `mt5` to `DEBUG`). The change is recorded in the audit log.
+- Audit lines (category `audit`) say what changed, for example `Audit: trading mode changed (paper → semi_auto)`; the full before and after values are in the line's JSON entry.
 - **Debug mode for 30 min** switches every category to DEBUG and turns itself off after 30 minutes, so it cannot fill your disk by accident.
 - **Open log folder** opens the folder in Explorer.
 
@@ -97,7 +98,7 @@ The app never saves your password. It keeps a sign-in token in Windows Credentia
 Advanced view > Market. Everything here is information only and never a trade signal.
 
 - **Watchlist**: type up to 10 symbols separated by commas (for example `EURUSD, GBPUSD, XAUUSD`) and click Save watchlist. Broker suffixes such as `EURUSD.m` are found automatically; a symbol your broker does not offer is named in the page status.
-- **Cards**: one per symbol, renewed after every closed 5-minute bar. The headline reads like "XAUUSD: H4 uptrend, H1 pullback into support 2,318.20 (0.4 ATR), volatility high, London session, USD CPI in 3h 05m -> wait". The verdict is one of: watch, wait (news, wide spread, market closed, extreme volatility), no clear direction, or data problem (the reason is shown and logged).
+- **Cards**: one per symbol, renewed after every closed 5-minute bar, and once when the market closes on Friday or opens on Sunday. The headline reads like "XAUUSD: H4 uptrend, H1 pullback into support 2,318.20 (0.4 ATR), volatility high, London session, USD CPI in 3h 05m -> wait". The verdict is one of: watch, wait (news, wide spread, market closed, extreme volatility), no clear direction, or data problem (the reason is shown and logged).
 - **Chart**: pick a symbol and a timeframe. Drag to pan, use the mouse wheel to zoom, and move the mouse for the crosshair with open, high, low and close. Tick boxes turn EMAs, levels, swings and session shading on or off.
 - **Trend matrix, Correlation, Currency strength**: hover a cell for its reasons.
 - **Calendar**: events of the next 7 days with countdowns. Add one by hand, import a CSV (columns time, currency, impact, title; optional actual, forecast, previous; times in UTC), or use the MT5 exporter:
@@ -145,7 +146,7 @@ Click **Stop trading** in the status bar, the kill switch on Positions & Trades,
 
 ## Trade test (demo only)
 
-With MT5 open on a **demo** account and Algo Trading ON, run `MT5TradingWorkstation.exe --mt5-trade-test --symbol EURUSD`. It opens the minimum lot with a stop loss and take profit, checks it in MT5, moves the stop loss, closes it, reads the closed deal back and prints every step with ✓ or ✗ and MT5's return codes. It refuses to run on a REAL account. Use `--report-file report.txt` to save the report.
+With MT5 open on a **demo** account and Algo Trading ON, run `MT5TradingWorkstation.exe --mt5-trade-test --symbol EURUSD`. It opens the minimum lot with a stop loss and take profit, checks it in MT5, moves the stop loss, closes it, reads the closed deal back and prints every step with ✓ or ✗ and MT5's return codes. It refuses to run on a REAL account. Run it while the market is open (Monday to Friday): at the weekend MT5 refuses the order with 10018 MARKET_CLOSED. Use `--report-file report.txt` to save the report.
 
 ## Strategies page
 

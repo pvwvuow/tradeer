@@ -21,7 +21,15 @@ Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer,
 
 ## Current phase: 8 Execution (branch `phase/08-execution`, pull request into `phase/07-risk`)
 
-Status: built and tested against the FakeMT5 (a simulated trade server with scripted return codes); not yet run on your PC. Paper is still the default mode: nothing reaches your account until you switch to Semi-auto and approve a signal.
+Status: built and tested against the FakeMT5 (a simulated trade server with scripted return codes). First run on your PC on Saturday 3 October (market closed): the app starts, connects and saves its settings cleanly; the demo trade test and the approvals still need an open market. Paper is still the default mode: nothing reaches your account until you switch to Semi-auto and approve a signal.
+
+### First run on your PC (3 October 2026, 07:15 UTC, Saturday, market closed)
+
+- ✓ The Phase 8 build starts and connects to the FIBO demo account automatically (the first connect took 3.7 s, the next ones were instant); three starts without an error, and no warning except that first slow connect.
+- ✓ Paper is the mode after every start; the risk settings saved as "Custom" were still in use after a restart; the trading mode was changed 4 times and every change was audited.
+- ✗ The trade test, the approvals, the crash recovery and the kill switch need an open market (MT5 answers 10018 MARKET_CLOSED at the weekend): run them on a weekday.
+- Fixed: an audit line only named the action (`Audit: trading mode changed`), so the log did not show which mode was chosen. It now says what changed: `Audit: trading mode changed (paper → semi_auto)`, the changed risk settings (`profile normal → custom, settings.risk_per_trade_pct 0.5 → 1.0`); secrets are masked (`app/observability/audit_text.py`).
+- Fixed: after Friday's close the cards kept "New York session → watch" until a restart, because the last bar of the week never closes in MT5 (no tick after the close). The cards are now redone once when the market closes or opens ("Market closed (weekend) → wait"); the strategies do not run again on that bar.
 
 ### What was built
 
@@ -349,5 +357,5 @@ Acceptance checklist (spec G3 phase 2):
 1. Review and merge the stacked pull requests in order: Phase 2 (#10), Phase 3 (#13), Phase 4 (#14), then Phase 5 (#15). Each one is retargeted to `main` after the one before it is merged.
 2. Run "Test on your PC" from the Phase 3, 4 and 5 pull requests against your MT5 demo account and report the result.
 3. Run "Test on your PC" from the Phase 6 pull request during a London morning, and from the Phase 7 pull request (Risk page).
-4. Run "Test on your PC" from the Phase 8 pull request on your demo account (`--mt5-trade-test`, then a paper and a Semi-auto approval, the restart and the kill switch).
+4. Run "Test on your PC" from the Phase 8 pull request on your demo account on a weekday, while the market is open (`--mt5-trade-test`, then a paper and a Semi-auto approval, the restart and the kill switch).
 5. Phase 9 (Simple Mode: the Home screen with the Trade Suggestion Card, plain-language status and the Stop button) after Phase 8 is reviewed.
