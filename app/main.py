@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from app.engine.execution import ExecutionEngine
     from app.engine.market_watch import MarketWatch
     from app.engine.signal_pipeline import SignalPipeline
+    from app.ml.service import ModelService
     from app.mt5.api import MT5Api
     from app.mt5.checklist import ConnectRequest
     from app.mt5.connection import ConnectionService
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from app.risk.settings import RiskSettingsSource
     from app.storage.runtime import StorageRuntime
     from app.ui.backtest_page import BacktestContext
+    from app.ui.model_page import ModelContext
 
 APP_NAME = "MT5 Trading Workstation"
 UI_HEARTBEAT_MS = 1000
@@ -59,6 +61,7 @@ class MarketParts:
     execution: ExecutionEngine
     execution_settings: ExecutionSettingsSource
     known_clock: Callable[[], BrokerClock | None]
+    models: ModelService
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -562,6 +565,7 @@ def _start_market(
         log=log_execution,
     )
     log_execution("INFO", f"Trading mode: {execution_settings.mode.label}")
+    models = _model_service(profile, storage)
     pipeline = SignalPipeline(
         settings.strategies,
         settings.filters,
@@ -569,6 +573,7 @@ def _start_market(
         account=storage.current_account,
         risk=risk,
         executor=execution,
+        model=models.current,
         log=signal_log,
     )
     loaded = pipeline.load()
@@ -609,6 +614,67 @@ def _start_market(
         execution,
         execution_settings,
         known_clock,
+        models,
+    )
+
+
+def _model_service(profile: str, storage: StorageRuntime) -> ModelService:
+    """The model registry in `<profile>/models` and the active model (spec C10)."""
+    from app.ml.registry import FOLDER, ModelRegistry
+    from app.ml.service import ModelService
+    from app.observability.logger import audit, get_logger
+    from app.storage.signal_store import SignalRepository
+
+    ml_log = get_logger(LogCategory.ML)
+
+    def write(level: str, message: str) -> None:
+        ml_log.log(level, "{}", message)
+
+    def record(action: str, before: str, after: str) -> None:
+        audit(action, before=before, after=after)
+
+    store = storage.store
+    registry = ModelRegistry(store, app_data_dir(profile) / FOLDER, account=storage.current_account)
+    return ModelService(registry, SignalRepository(store), log=write, audit=record)
+
+
+def _model_context(
+    profile: str,
+    service: ConnectionService,
+    market: MarketParts,
+    backtest: BacktestContext,
+) -> ModelContext:
+    """The Model page: training reads history like the Backtest page (spec C10)."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.backtest.service import BacktestRequest
+    from app.core.watchlist import WatchlistSource
+    from app.observability.logger import get_logger
+    from app.ui.model_page import ModelContext, Note
+
+    ml_log = get_logger(LogCategory.ML)
+
+    def write(level: str, message: str) -> None:
+        ml_log.log(level, "{}", message)
+
+    def load(symbol: str, start: float, end: float, note: Note) -> History:
+        first = datetime.fromtimestamp(start, UTC).date()
+        last = datetime.fromtimestamp(end, UTC).date() - timedelta(days=1)
+        request = BacktestRequest(symbol=symbol, start=first, end=last)
+        history, notes = backtest.load(request, note)
+        for text in notes:
+            write("WARNING", f"Training history {symbol}: {text}")
+        return history
+
+    return ModelContext(
+        service=market.models,
+        load=load,
+        strategies=market.settings,
+        risk=market.risk_settings,
+        symbols=WatchlistSource(app_data_dir(profile)),
+        connected=lambda: service.status.connected,
+        events=lambda start, end: market.calendar.between(int(start), int(end)),
+        log=write,
     )
 
 
@@ -703,6 +769,7 @@ def _show_window(
 
     watch, calendar, calendar_file = market.watch, market.calendar, market.calendar_file
     try:
+        backtest = _backtest_context(options.profile, gateway, service, storage, market)
         context = ConnectionContext(
             profile=options.profile,
             profile_dir=prefs_dir,
@@ -722,7 +789,8 @@ def _show_window(
             SignalsContext(market.pipeline, market.settings),
             RiskContext(market.risk, market.risk_settings),
             TradingContext(market.execution, market.execution_settings, real_account),
-            _backtest_context(options.profile, gateway, service, storage, market),
+            backtest,
+            _model_context(options.profile, service, market, backtest),
         )
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")
