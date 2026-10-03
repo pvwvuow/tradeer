@@ -32,6 +32,7 @@ from app.observability.controls import LogControls
 from app.observability.crash_handler import CrashTestError
 from app.storage.runtime import StorageRuntime
 from app.storage.sync import SyncStatus
+from app.ui.backtest_page import BacktestContext, BacktestPage
 from app.ui.command_palette import CommandPalette
 from app.ui.commands import Command
 from app.ui.connection_page import ConnectionContext, ConnectionPage
@@ -64,6 +65,7 @@ class MainWindow(QMainWindow):
         signals: SignalsContext | None = None,
         risk: RiskContext | None = None,
         trading: TradingContext | None = None,
+        backtest: BacktestContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -110,6 +112,7 @@ class MainWindow(QMainWindow):
         self.strategies_page = StrategiesPage(signals.settings if signals is not None else None)
         self.risk_page = RiskPage(risk)
         self.positions_page = PositionsPage(trading)
+        self.backtest_page = BacktestPage(backtest)
         self.trading = trading
         if trading is not None:
             self.signals_page.mode_text = lambda: trading.settings.mode.label
@@ -126,6 +129,8 @@ class MainWindow(QMainWindow):
                 self._add_page(spec.page_id, self.risk_page)
             elif spec.page_id == "positions":
                 self._add_page(spec.page_id, self.positions_page)
+            elif spec.page_id == "backtest":
+                self._add_page(spec.page_id, self.backtest_page)
             elif spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
             elif spec.page_id == "settings" and self.data_page is not None:
