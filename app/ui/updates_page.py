@@ -148,8 +148,8 @@ class UpdatesPage(QWidget):
         hours_row.addStretch(1)
         self.save_button = QPushButton("Save update settings")
         self.save_button.clicked.connect(self.save)
-        for widget in (self.auto_check, self.auto_download, self.paused):
-            layout.addWidget(widget)
+        for box in (self.auto_check, self.auto_download, self.paused):
+            layout.addWidget(box)
         layout.addLayout(hours_row)
         layout.addWidget(self.save_button)
         layout.addStretch(1)

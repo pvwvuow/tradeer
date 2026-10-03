@@ -56,7 +56,7 @@ def correlation_matrix(
         positions = np.searchsorted(bars.time, common)
         columns.append(indicators.log_returns(bars.close[positions]))
     with np.errstate(divide="ignore", invalid="ignore"):
-        matrix = np.corrcoef(np.vstack(columns))
+        matrix = np.atleast_2d(np.asarray(np.corrcoef(np.vstack(columns)), dtype=np.float64))
     values = tuple(
         tuple(float(matrix[row, column]) for column in range(size)) for row in range(size)
     )
