@@ -92,6 +92,16 @@ class TradeRepository:
                 )
         return len(attempts)
 
+    def daily_net(self, account: str, mode: str, since: str) -> list[tuple[str, float]]:
+        """Net result of the trades closed per UTC day since `since` (ISO text), oldest first."""
+        rows = self.store.db.query(
+            "SELECT substr(close_time, 1, 10) AS day, SUM(net_profit) AS net FROM trades "
+            "WHERE account_id = ? AND mode = ? AND close_time >= ? AND net_profit IS NOT NULL "
+            "GROUP BY day ORDER BY day",
+            (account, mode, since),
+        )
+        return [(str(row["day"]), float(row["net"] or 0.0)) for row in rows]
+
     def get_state(self, key: str) -> str | None:
         return self.store.get_state(key)
 

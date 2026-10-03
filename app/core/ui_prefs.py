@@ -1,4 +1,4 @@
-"""Persisted UI preferences (theme, Simple/Advanced view), stored per profile as JSON."""
+"""Persisted UI preferences (theme, Simple/Advanced view, first-run screen), per profile."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ class UiPrefs(BaseModel):
 
     theme: ThemeName = ThemeName.DARK
     view_mode: ViewMode = ViewMode.SIMPLE
+    onboarded: bool = False  # the first-run "practice money" screen was answered (spec F0)
 
 
 def load_prefs(directory: Path) -> UiPrefs:

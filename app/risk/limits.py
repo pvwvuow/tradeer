@@ -127,6 +127,8 @@ class RiskUsage:
     day_start_equity: float
     day_start_estimated: bool
     high_water_mark: float
+    balance: float = math.nan
+    equity: float = math.nan
 
 
 def usage(picture: AccountPicture, state: LimitsState, settings: RiskSettings) -> RiskUsage:
@@ -150,6 +152,8 @@ def usage(picture: AccountPicture, state: LimitsState, settings: RiskSettings) -
         day_start_equity=state.day_start_equity,
         day_start_estimated=state.day_start_estimated,
         high_water_mark=state.high_water_mark,
+        balance=picture.balance,
+        equity=picture.equity,
     )
 
 
