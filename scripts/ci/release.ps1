@@ -1,5 +1,6 @@
 #Requires -Version 7
-# Test, build, create the Inno Setup installer, checksums and latest.json, upload to the release.
+# Test, build, package with Velopack (installer, full package and a delta from the previous
+# release), then upload everything to the GitHub release of the tag (ADR 113).
 param(
     [Parameter(Mandatory = $true)][string]$Tag
 )
@@ -9,48 +10,96 @@ Set-StrictMode -Version Latest
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
 Set-Location $root
 $version = $Tag.TrimStart("v")
+$repo = $env:GITHUB_REPOSITORY
+$repoUrl = "https://github.com/$repo"
+$packId = "MT5TradingWorkstation"
+$vpkVersion = "1.2.0"  # keep equal to the velopack pin in pyproject.toml
 
 & "$PSScriptRoot/check.ps1"
 & "$PSScriptRoot/build.ps1"
 
-choco install innosetup -y --no-progress
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup install failed" }
-$iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6/ISCC.exe"
-& $iscc "/DMyAppVersion=$version" (Join-Path $root "installer/MT5TradingWorkstation.iss")
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed" }
+Write-Host "::group::Install vpk $vpkVersion"
+dotnet tool install --global vpk --version $vpkVersion
+if ($LASTEXITCODE -ne 0) { throw "vpk install failed" }
+$env:PATH = "$env:PATH;$env:USERPROFILE\.dotnet\tools"
+Write-Host "::endgroup::"
 
-$release = Join-Path $root "dist/release"
-New-Item -ItemType Directory -Force -Path $release | Out-Null
-$installerName = "MT5TradingWorkstation-Setup-$version.exe"
-Copy-Item (Join-Path $root "dist/installer/$installerName") (Join-Path $release $installerName)
-$portableName = "MT5TradingWorkstation-$version-portable.zip"
-Copy-Item (Join-Path $root "dist/MT5TradingWorkstation-portable.zip") (Join-Path $release $portableName)
+$releases = Join-Path $root "dist/velopack"
+New-Item -ItemType Directory -Force -Path $releases | Out-Null
 
-$lines = foreach ($file in Get-ChildItem $release -File) {
+# The newest earlier release with a Velopack feed: its full package lets vpk build the delta.
+Write-Host "::group::Previous release for the delta"
+$previous = $null
+if ($env:GH_TOKEN) {
+    $list = gh release list --repo $repo --limit 30 --json tagName,isDraft | ConvertFrom-Json
+    foreach ($item in $list) {
+        if ($item.isDraft -or $item.tagName -eq $Tag) { continue }
+        $assets = (gh release view $item.tagName --repo $repo --json assets | ConvertFrom-Json).assets
+        $names = @($assets | ForEach-Object { $_.name })
+        if ($names -contains "releases.win.json") { $previous = $item.tagName; break }
+    }
+}
+if ($previous) {
+    Write-Host "Delta from $previous"
+    gh release download $previous --repo $repo --dir $releases --pattern "*-full.nupkg" --clobber
+    if ($LASTEXITCODE -ne 0) { Write-Host "::warning::Could not download $previous; this release has no delta"; $previous = $null }
+}
+else {
+    Write-Host "No earlier Velopack release: this one is full only."
+}
+Write-Host "::endgroup::"
+
+# Release notes for the installer and the update dialog: this version's CHANGELOG section.
+$notes = Join-Path $root "dist/release-notes.md"
+$changelog = Get-Content (Join-Path $root "CHANGELOG.md") -Raw
+$pattern = "(?ms)^## \[?$([regex]::Escape($version))\]?.*?(?=^## |\z)"
+$match = [regex]::Match($changelog, $pattern)
+$text = if ($match.Success) { $match.Value.Trim() } else { "Version $version" }
+Set-Content -Path $notes -Value $text -Encoding utf8
+
+Write-Host "::group::vpk pack"
+vpk pack `
+    --packId $packId `
+    --packVersion $version `
+    --packDir (Join-Path $root "dist/MT5TradingWorkstation") `
+    --mainExe "MT5TradingWorkstation.exe" `
+    --packTitle "MT5 Trading Workstation" `
+    --packAuthors "pvwvuow" `
+    --releaseNotes $notes `
+    --skipVeloAppCheck `
+    --outputDir $releases
+if ($LASTEXITCODE -ne 0) { throw "vpk pack failed" }
+Get-ChildItem $releases | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB, 1)) MB" }
+Write-Host "::endgroup::"
+
+# checksums.txt and latest.json (spec J1) next to the Velopack files.
+$setupName = "$packId-win-Setup.exe"
+$extra = Join-Path $root "dist/release"
+New-Item -ItemType Directory -Force -Path $extra | Out-Null
+$lines = foreach ($file in Get-ChildItem $releases -File) {
+    if ($previous -and $file.Name -like "*-full.nupkg" -and $file.Name -notlike "*-$version-full.nupkg") { continue }
     $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $($file.Name)"
 }
-Set-Content -Path (Join-Path $release "checksums.txt") -Value $lines -Encoding utf8
-
-$installerHash = (Get-FileHash (Join-Path $release $installerName) -Algorithm SHA256).Hash
-$repo = $env:GITHUB_REPOSITORY
+Set-Content -Path (Join-Path $extra "checksums.txt") -Value $lines -Encoding utf8
+$setup = Join-Path $releases $setupName
 $latest = [ordered]@{
     version               = $version
-    notes_url             = "https://github.com/$repo/releases/tag/$Tag"
-    installer_url         = "https://github.com/$repo/releases/download/$Tag/$installerName"
-    installer_sha256      = $installerHash.ToLowerInvariant()
+    notes_url             = "$repoUrl/releases/tag/$Tag"
+    installer_url         = "$repoUrl/releases/download/$Tag/$setupName"
+    installer_sha256      = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
     published_at          = (Get-Date).ToUniversalTime().ToString("o")
-    min_supported_version = "0.1.0"
+    min_supported_version = "0.12.0"
+    delta_from            = if ($previous) { $previous.TrimStart("v") } else { "" }
 }
-$latest | ConvertTo-Json | Set-Content -Path (Join-Path $release "latest.json") -Encoding utf8
+$latest | ConvertTo-Json | Set-Content -Path (Join-Path $extra "latest.json") -Encoding utf8
 
 if ($env:GH_TOKEN) {
-    gh release view $Tag *> $null
-    if ($LASTEXITCODE -ne 0) {
-        gh release create $Tag --title $Tag --generate-notes
-        if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
-    }
-    $assets = (Get-ChildItem $release -File).FullName
-    gh release upload $Tag @assets --clobber
+    Write-Host "::group::Upload"
+    vpk upload github --outputDir $releases --repoUrl $repoUrl --token $env:GH_TOKEN `
+        --tag $Tag --releaseName $Tag --merge --publish
+    if ($LASTEXITCODE -ne 0) { throw "vpk upload failed" }
+    gh release upload $Tag (Get-ChildItem $extra -File).FullName --repo $repo --clobber
     if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+    Write-Host "::endgroup::"
 }

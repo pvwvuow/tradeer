@@ -24,6 +24,7 @@ Invoke-Step "PyInstaller" {
         --paths "$root" `
         --hidden-import MetaTrader5 `
         --hidden-import keyring.backends.Windows `
+        --hidden-import velopack `
         --collect-submodules MetaTrader5 `
         --collect-all numpy `
         --collect-all lightgbm `

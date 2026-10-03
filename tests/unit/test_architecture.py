@@ -159,3 +159,17 @@ def test_the_backtest_never_trades_or_imports_qt() -> None:
         assert "PySide6" not in texts[name], name
     engine = texts["backtest/engine.py"]
     assert re.findall(r"app\.mt5\.(gateway|api|terminal_process)\b", engine) == []
+
+
+def test_only_the_update_modules_load_velopack() -> None:
+    loads = re.compile(r'import_module\("velopack"\)|^\s*(import|from) velopack\b', re.MULTILINE)
+    loaders = sorted(name for name, text in sources().items() if loads.search(text))
+    assert loaders == ["updates/bootstrap.py", "updates/velopack_backend.py"]
+
+
+def test_the_update_service_never_trades_or_imports_qt() -> None:
+    for name, text in sources().items():
+        if name.startswith("updates/"):
+            assert "PySide6" not in text, name
+            assert not ORDER_CALLS.search(text), name
+            assert "app.mt5" not in text and "app.engine" not in text, name
