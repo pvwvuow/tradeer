@@ -61,6 +61,10 @@ def test_spread_duplicates_losses_and_trade_mode() -> None:
     assert position["no open position of this strategy on the symbol"] is False
     assert results(data(bars_since_loss=1))["cooldown after a loss"] is False
     assert results(data(losses_in_row=3))["pause after consecutive losses"] is False
+    paused = results(data(losses_in_row=3, hours_since_losses=23.5))
+    assert paused["pause after consecutive losses"] is False
+    over = results(data(losses_in_row=3, hours_since_losses=24.0))
+    assert over["pause after consecutive losses"] is True  # the pause ends after 24 hours
     closed = results(data(trade_mode=SymbolTradeMode.CLOSE_ONLY))
     assert closed["symbol open for new trades"] is False
     long_only = results(data(trade_mode=SymbolTradeMode.LONG_ONLY))

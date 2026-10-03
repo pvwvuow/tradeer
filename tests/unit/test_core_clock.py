@@ -6,8 +6,10 @@ from app.core.clock import (
     BrokerClock,
     DstScheme,
     eu_dst_window,
+    fx_weekend,
     guess_scheme,
     measure_offset,
+    real_offset,
     us_dst_window,
 )
 
@@ -57,14 +59,41 @@ def test_the_trading_day_starts_at_new_york_five_pm() -> None:
     assert clock.day_start_utc(utc(2024, 9, 10, 22, 30)) == utc(2024, 9, 10, 21)
 
 
-def test_the_clock_changes_after_two_agreeing_ticks() -> None:
+def test_the_clock_changes_after_two_agreeing_ticks_ten_minutes_apart() -> None:
     clock = BrokerClock.assumed()
     now = utc(2026, 10, 1, 10)
     assert clock.observe(now + 3 * 3600, now) is None
-    assert not clock.measured
     assert clock.observe(now + 3 * 3600 + 2, now + 2) is None
+    assert not clock.measured  # too soon to tell a live price from a stale one
+    assert clock.observe(now + 3 * 3600 + 600, now + 600) is None
     assert clock.measured and clock.scheme is DstScheme.US
     assert clock.changes == []
+
+
+def test_a_stale_price_never_moves_the_clock() -> None:
+    """The PC log of 3 October: a closed market walked the clock from UTC+3 to UTC-11.5."""
+    clock = BrokerClock(2.0, DstScheme.US, measured=True)
+    thursday = utc(2026, 10, 1, 10)
+    frozen = thursday + 3 * 3600  # a price that stopped (a holiday), seen every minute
+    for minutes in range(6 * 60):
+        clock.observe(frozen, thursday + minutes * 60)
+    assert clock.offset_at(thursday) == 3.0 and clock.changes == []
+    friday_close = utc(2026, 10, 2, 20, 59) + 3 * 3600  # the last price before the weekend
+    saturday = utc(2026, 10, 3, 7, 21)
+    for minutes in range(0, 5 * 60):
+        clock.observe(friday_close, saturday + minutes * 60)
+    assert clock.offset_at(saturday) == 3.0 and clock.changes == []
+
+
+def test_impossible_offsets_and_the_weekend() -> None:
+    now = utc(2026, 10, 1, 10)
+    assert measure_offset(now - 11.5 * 3600, now) is None  # no time zone is UTC-11:30
+    assert measure_offset(now - 3.5 * 3600, now) == -3.5
+    assert real_offset(14) and not real_offset(-13) and not real_offset(-7.5)
+    assert fx_weekend(utc(2026, 10, 3, 12)) and fx_weekend(utc(2026, 10, 2, 21, 30))
+    assert not fx_weekend(utc(2026, 10, 2, 20, 30)) and not fx_weekend(utc(2026, 10, 4, 21, 30))
+    saved = BrokerClock.from_dict({"winter_hours": -11.5, "scheme": "fixed", "measured": True})
+    assert not saved.measured and "assumed" in saved.text()
 
 
 def test_a_summer_time_switch_is_not_a_time_jump_but_a_shift_is() -> None:
@@ -74,7 +103,7 @@ def test_a_summer_time_switch_is_not_a_time_jump_but_a_shift_is() -> None:
     assert clock.observe(winter + 2 * 3600, winter + 1) is None
     assert clock.changes == []
     clock.observe(winter, winter + 2)
-    change = clock.observe(winter + 3, winter + 3)
+    change = clock.observe(winter + 602, winter + 602)
     assert change is not None and (change.old_hours, change.new_hours) == (2.0, 0.0)
     assert clock.scheme is DstScheme.FIXED
     assert "jumped" in change.text()
