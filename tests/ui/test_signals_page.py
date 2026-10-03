@@ -69,3 +69,32 @@ def test_the_window_uses_the_real_pages(qtbot: QtBot, tmp_path: Path) -> None:
     assert isinstance(window.pages.currentWidget(), SignalsPage)
     window.show_page("strategies")
     assert isinstance(window.pages.currentWidget(), StrategiesPage)
+
+
+def test_approve_asks_then_sends_through_the_engine(qtbot: QtBot, tmp_path: Path) -> None:
+    from app.engine.filters import FilterSettings
+    from app.engine.signal_pipeline import SignalPipeline
+    from tests.unit.execution_helpers import NOW, eurusd_record, rig
+    from tests.unit.risk_helpers import connected
+    from tests.unit.storage_helpers import temporary_store
+
+    fake = connected()
+    record = eurusd_record()
+    with temporary_store() as store, rig(fake, store) as r:
+        signals = SignalPipeline(lambda: [], FilterSettings, executor=r.engine, utc_now=lambda: NOW)
+        signals._remember(record)
+        signals.on_cycle(NOW)
+        page = SignalsPage(SignalsContext(signals, StrategySettingsSource(tmp_path)))
+        qtbot.addWidget(page)
+        page.show_snapshot(signals.snapshot)
+        page.feed.selectRow(0)
+        assert page.approve_button.isEnabled()
+        page.confirm = lambda title, text: False
+        assert not page.approve_selected()
+        asked: list[str] = []
+        page.confirm = lambda title, text: asked.append(text) is None
+        assert page.approve_selected()
+        assert "You could lose about" in asked[0]
+        signals.on_cycle(NOW + 2)
+        assert signals.snapshot.signals[0].signal.state is SignalState.MANAGED
+        assert len(fake.positions) == 1
