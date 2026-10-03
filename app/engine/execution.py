@@ -456,11 +456,11 @@ class ExecutionEngine:
                 if tracked.ticket not in order_tickets:
                     updates += self._pending_gone(tracked, by_ticket, broker, now)
                 continue
-            position = by_ticket.get(tracked.ticket)
-            if position is None:
+            current = by_ticket.get(tracked.ticket)
+            if current is None:
                 updates += self._closed(tracked, broker, now)
             else:
-                updates += self._manage(tracked, position, broker, now)
+                updates += self._manage(tracked, current, broker, now)
         for order in orders:
             if (mode, order.ticket) not in self._tracked:
                 self._adopt_order(mode, order, signals)
