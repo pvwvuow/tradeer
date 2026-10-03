@@ -16,8 +16,11 @@ from app.observability.levels import LogLevel
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QApplication
 
+    from app.backtest.engine import History
+    from app.backtest.service import BacktestRequest
     from app.calendar.exporter import CalendarFileWatcher
     from app.calendar.store import CalendarStore
+    from app.core.clock import BrokerClock
     from app.core.execution_settings import ExecutionSettingsSource
     from app.core.strategy_settings import StrategySettingsSource
     from app.engine.execution import ExecutionEngine
@@ -31,6 +34,7 @@ if TYPE_CHECKING:
     from app.risk.risk_manager import RiskManager
     from app.risk.settings import RiskSettingsSource
     from app.storage.runtime import StorageRuntime
+    from app.ui.backtest_page import BacktestContext
 
 APP_NAME = "MT5 Trading Workstation"
 UI_HEARTBEAT_MS = 1000
@@ -39,6 +43,7 @@ GATEWAY_FREEZE_SECONDS = 120.0
 SYNC_FREEZE_SECONDS = 600.0
 MARKET_FREEZE_SECONDS = 180.0
 SMOKE_TEST_TIMEOUT_SECONDS = 180.0
+BACKTEST_TIMEOUT_SECONDS = 6 * 3600.0
 Emit = Callable[[str], None]
 
 
@@ -53,6 +58,7 @@ class MarketParts:
     risk_settings: RiskSettingsSource
     execution: ExecutionEngine
     execution_settings: ExecutionSettingsSource
+    known_clock: Callable[[], BrokerClock | None]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -66,6 +72,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return mt5_smoke_test_main(options)
     if options.mt5_trade_test:
         return mt5_trade_test_main(options)
+    if options.backtest:
+        return backtest_main(options)
     return run_gui(options, args)
 
 
@@ -113,12 +121,39 @@ def mt5_trade_test_main(options: CliOptions) -> int:
     return _mt5_test_main(options, "Trade test", "trade_test", LogCategory.EXECUTION, test)
 
 
+def backtest_main(options: CliOptions) -> int:
+    from app.backtest.command import run_backtest_command
+
+    def test(mt5: MT5Api, request: ConnectRequest, emit: Emit, elevated: bool | None) -> bool:
+        return run_backtest_command(
+            mt5,
+            request,
+            symbol=options.symbol,
+            start=options.start,
+            end=options.end,
+            strategies=options.strategies,
+            directory=app_data_dir(options.profile),
+            emit=emit,
+            elevated=elevated,
+        )
+
+    return _mt5_test_main(
+        options,
+        "Backtest",
+        "backtest",
+        LogCategory.BACKTEST,
+        test,
+        timeout=BACKTEST_TIMEOUT_SECONDS,
+    )
+
+
 def _mt5_test_main(
     options: CliOptions,
     title: str,
     name: str,
     category: LogCategory,
     test: Callable[[MT5Api, ConnectRequest, Emit, bool | None], bool],
+    timeout: float = SMOKE_TEST_TIMEOUT_SECONDS,
 ) -> int:
     """Connect with the saved profile in the gateway thread and run one test command."""
     from app.core.credentials import CredentialError, KeyringStore, credential_name, read_password
@@ -164,7 +199,7 @@ def _mt5_test_main(
             ok = gateway.run(
                 name,
                 lambda mt5: test(mt5, request, emit, elevated),
-                timeout=SMOKE_TEST_TIMEOUT_SECONDS,
+                timeout=timeout,
             )
         except MT5Error as error:
             emit(f"[\u2717] {error.title}")
@@ -573,6 +608,58 @@ def _start_market(
         risk_settings,
         execution,
         execution_settings,
+        known_clock,
+    )
+
+
+def _backtest_context(
+    profile: str,
+    gateway: MT5Gateway,
+    service: ConnectionService,
+    storage: StorageRuntime,
+    market: MarketParts,
+) -> BacktestContext:
+    """The Backtest page's history loader and settings (spec C8, F3 page 7)."""
+    from app.backtest.history import CACHE_FOLDER, load_history, resolve_broker_symbol
+    from app.core.clock import BrokerClock
+    from app.core.watchlist import WatchlistSource
+    from app.observability.logger import get_logger
+    from app.storage.backtest_store import BacktestRepository
+    from app.ui.backtest_page import BacktestContext, Note
+
+    backtest_log = get_logger(LogCategory.BACKTEST)
+    cache = app_data_dir(profile) / CACHE_FOLDER
+
+    def write(level: str, message: str) -> None:
+        backtest_log.log(level, "{}", message)
+
+    def load(request: BacktestRequest, note: Note) -> tuple[History, tuple[str, ...]]:
+        clock = market.known_clock() or BrokerClock.assumed()
+        broker = resolve_broker_symbol(gateway, request.symbol)
+        write("INFO", f"Backtest history {request.symbol} ({broker}) {request.period}")
+        history, report = load_history(
+            gateway,
+            request.symbol,
+            broker,
+            request.utc_start,
+            request.utc_end,
+            clock,
+            cache=cache,
+            note=note,
+        )
+        return history, report.notes
+
+    return BacktestContext(
+        load=load,
+        strategies=market.settings,
+        risk=market.risk_settings,
+        execution=market.execution_settings,
+        symbols=WatchlistSource(app_data_dir(profile)),
+        connected=lambda: service.status.connected,
+        events=lambda start, end: market.calendar.between(int(start), int(end)),
+        runs=BacktestRepository(storage.store),
+        account=storage.current_account,
+        log=write,
     )
 
 
@@ -635,6 +722,7 @@ def _show_window(
             SignalsContext(market.pipeline, market.settings),
             RiskContext(market.risk, market.risk_settings),
             TradingContext(market.execution, market.execution_settings, real_account),
+            _backtest_context(options.profile, gateway, service, storage, market),
         )
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")
