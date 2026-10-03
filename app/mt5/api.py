@@ -59,6 +59,21 @@ ORDER_TYPE_SELL_STOP = 5
 POSITION_TYPE_BUY = 0
 POSITION_TYPE_SELL = 1
 
+# Trade requests (order_send, order_check): action, filling, time, retcodes
+TRADE_ACTION_DEAL = 1
+TRADE_ACTION_PENDING = 5
+TRADE_ACTION_SLTP = 6
+TRADE_ACTION_MODIFY = 7
+TRADE_ACTION_REMOVE = 8
+ORDER_FILLING_FOK = 0
+ORDER_FILLING_IOC = 1
+ORDER_FILLING_RETURN = 2
+ORDER_TIME_GTC = 0
+ORDER_TIME_SPECIFIED = 2
+TRADE_RETCODE_PLACED = 10008
+TRADE_RETCODE_DONE = 10009
+TRADE_RETCODE_DONE_PARTIAL = 10010
+
 # Deals (history_deals_get): type, entry and reason
 DEAL_TYPE_BUY = 0
 DEAL_TYPE_SELL = 1
@@ -94,7 +109,8 @@ RES_E_INTERNAL_FAIL_TIMEOUT = -10005
 
 
 class MT5Api(Protocol):
-    """Read-only functions; `order_calc_*` only calculate. Sending orders arrives in Phase 8."""
+    """The package functions the app uses. Only `app/brokers/live_broker.py` and the trade test
+    may call `order_send` and `order_check`; architecture tests keep them out of the rest."""
 
     def initialize(self, *args: Any, **kwargs: Any) -> bool: ...
 
@@ -152,3 +168,9 @@ class MT5Api(Protocol):
         volume: float,
         price_open: float,
     ) -> float | None: ...
+
+    def orders_get(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def order_check(self, request: dict[str, Any]) -> Any: ...
+
+    def order_send(self, request: dict[str, Any]) -> Any: ...
