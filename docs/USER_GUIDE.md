@@ -1,8 +1,8 @@
 # User guide
 
-## What works today (Phase 10)
+## What works today (Phase 11)
 
-Phase 10 adds backtesting: replay the strategies on MT5 history with the same code that trades live, with walk-forward, Monte-Carlo and a sensitivity heatmap (see "Backtest page" and "Backtest from the command line"). Phase 9 added the Simple view's Home screen: one trade suggestion at a time in plain words with Approve and Skip, your balance, your open trades with Close now, and Stop trading now (see "Home (Simple view)"). Phase 8 added trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
+Phase 11 adds the win-probability model: train it on MT5 history on the Model page, see how it does out of sample next to the baseline, and use it only when it is better (see "Model page"). Phase 10 added backtesting: replay the strategies on MT5 history with the same code that trades live, with walk-forward, Monte-Carlo and a sensitivity heatmap (see "Backtest page" and "Backtest from the command line"). Phase 9 added the Simple view's Home screen: one trade suggestion at a time in plain words with Approve and Skip, your balance, your open trades with Close now, and Stop trading now (see "Home (Simple view)"). Phase 8 added trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
 
 - **Simple view** (default): the Home screen in plain language (see "Home (Simple view)"). **Settings** (top bar) opens the settings, **Back to Home** returns.
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
@@ -202,6 +202,18 @@ Advanced view, Analyze > Backtest. Choose the symbol, the dates (UTC; the last d
 ## Backtest from the command line
 
 `MT5TradingWorkstation.exe --backtest --symbol EURUSD --from 2026-01-01 --to 2026-06-30` connects with the saved profile, reads the history, replays it with the profile's settings and prints the summary and every trade (add `--strategies trend_pullback` for one strategy and `--report-file backtest.txt` to save it). It never sends an order and works at the weekend.
+
+## Model page
+
+Advanced view, Analyze > Model. The model estimates each signal's chance to reach its target before its stop. It is an estimate on noisy data, never a promise.
+
+- **Train**: choose the symbols (comma separated), the dates (the longer the better: two years is the default), the strategies, how many signals are needed (300), the walk-forward folds (5) and the timeout in bars (48). Click **Train model**: the app reads the history from MT5, replays the strategies on it like a backtest, labels every signal (did it reach the target first?) and trains in a separate process, so the window stays usable. **Cancel** stops it.
+- **Baseline only**: with fewer signals than needed no model is trained and the app keeps showing the strategy's own win rate with its range. With the two example strategies this is the usual result.
+- **The report**: the model's scores next to the baseline's on signals it never saw (ROC-AUC: above 0.5 is better than a coin; log-loss and Brier: lower is better), the calibration (predicted vs real win rate), the buckets (signals grouped by their predicted chance, with the real win rate, its range, the expectancy in R and the profit factor), the most important features and the folds.
+- **Versions**: every trained model is kept. **Use selected model** only works for a model that beat the baseline (lower log-loss and lower Brier score); otherwise the page says why. **Roll back** goes to the previous usable version, **Use the baseline** stops using a model. Every change is in the audit log.
+- **In use**: new signals show the model's chance as "62% ± 8 (n = 140, model v3)" (n is how many past signals in that range stand behind it) and, in the decision trace, the three factors that moved it most ("a strong trend +8%").
+- **Drift**: when a model is in use, the page compares its recent trades with what it predicted and checks whether the market looks different from the training data; a warning means: train it again.
+- A model made for an older version of the features cannot be used after an update; train it again.
 
 ## Trade history
 
