@@ -37,10 +37,11 @@ from app.ui.commands import Command
 from app.ui.connection_page import ConnectionContext, ConnectionPage
 from app.ui.crash_dialog import CrashDialog
 from app.ui.data_page import DataPage
+from app.ui.home_page import HomePage
 from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
-from app.ui.pages import PlaceholderPage, SimpleHomePage, styled_label
+from app.ui.pages import PlaceholderPage, styled_label
 from app.ui.positions_page import KILL_TEXT, PositionsPage, TradingContext
 from app.ui.risk_page import RiskContext, RiskPage
 from app.ui.signals_page import SignalsContext, SignalsPage
@@ -99,7 +100,7 @@ class MainWindow(QMainWindow):
         body_layout.addWidget(self.pages, 1)
         root_layout.addWidget(body, 1)
         self.setCentralWidget(root)
-        self.home = SimpleHomePage()
+        self.home = HomePage(signals, risk, trading)
         self._add_page(SIMPLE_HOME.page_id, self.home)
         self.logs_page = LogsPage(log_controls) if log_controls is not None else None
         self.connection_page = ConnectionPage(connection) if connection is not None else None
@@ -139,6 +140,13 @@ class MainWindow(QMainWindow):
             else:
                 self._add_page(spec.page_id, PlaceholderPage(spec))
         self._build_status_bar()
+        self.home.stop = self.ask_kill
+        self.home.on_onboarded = self.finish_onboarding
+        self.home.on_status_bar = self._show_status_bar
+        if market is not None:
+            watch = market.watch
+            self.home.quote = lambda symbol: watch.snapshot.quotes.get(symbol)
+        self.home.show_welcome(not prefs.onboarded)
         if connection is not None and self.connection_page is not None:
             self.connection_page.bridge.status.connect(self.set_connection_status)
             self.set_connection_status(connection.service.status)
@@ -189,9 +197,27 @@ class MainWindow(QMainWindow):
         self.sidebar.setVisible(advanced)
         self._shortcut.setEnabled(advanced)
         self.view_button.setText("Switch to Simple" if advanced else "Switch to Advanced")
+        self.settings_button.setVisible(not advanced)
+        self.settings_button.setText("Settings")
+        # Simple view: the plain status line and Stop button on Home, the full bar on request.
+        self.statusBar().setVisible(advanced or self.home.status_bar_button.isChecked())
         self.show_page("dashboard" if advanced else SIMPLE_HOME.page_id)
         if persist:
             self._persist()
+
+    def finish_onboarding(self, advanced: bool) -> None:
+        """The first-run screen was answered: remember it and open the chosen view."""
+        self.prefs = self.prefs.model_copy(update={"onboarded": True})
+        self.set_view_mode(ViewMode.ADVANCED if advanced else ViewMode.SIMPLE)
+
+    def toggle_simple_settings(self) -> None:
+        """Simple view: Settings (account, connection, data) and back to Home."""
+        if self.current_page_id() == SIMPLE_HOME.page_id:
+            self.show_page("settings")
+            self.settings_button.setText("Back to Home")
+        else:
+            self.show_page(SIMPLE_HOME.page_id)
+            self.settings_button.setText("Settings")
 
     def toggle_view_mode(self) -> None:
         simple = self.prefs.view_mode is ViewMode.SIMPLE
@@ -205,6 +231,7 @@ class MainWindow(QMainWindow):
         if self.logs_page is not None:
             self.logs_page.apply_tokens(tokens)
         self.market_page.apply_tokens(tokens)
+        self.home.apply_tokens(tokens)
         next_theme = "light" if theme is ThemeName.DARK else "dark"
         self.theme_button.setText(f"Switch to {next_theme} theme")
         if persist:
@@ -247,7 +274,7 @@ class MainWindow(QMainWindow):
         self.mode_badge.setText(badge)
         if self.trading is not None:
             self.set_execution_status(self.trading.engine.snapshot)
-        self.home.status_line.setText(plain_status(status))
+        self.home.set_connection(status.connected, plain_status(status))
 
     def operating_mode_label(self) -> str:
         if self.trading is not None:
@@ -274,6 +301,7 @@ class MainWindow(QMainWindow):
         upcoming = f" \u00b7 {change} in {duration_text(seconds)}" if change else ""
         self.session_clock_label.setText(f"{session_label(moment)}{upcoming}")
         self.news_label.setText(self.market_page.next_news_text(moment))
+        self.home.tick()
 
     def set_sync_status(self, status: object) -> None:
         """Slot: show the cloud sync state in the status bar."""
@@ -315,6 +343,10 @@ class MainWindow(QMainWindow):
         self.theme_button = QPushButton()
         self.theme_button.setObjectName("ThemeButton")
         self.theme_button.clicked.connect(self.toggle_theme)
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setObjectName("SimpleSettingsButton")
+        self.settings_button.clicked.connect(self.toggle_simple_settings)
+        layout.addWidget(self.settings_button)
         layout.addWidget(self.view_button)
         layout.addWidget(self.theme_button)
         return bar
@@ -379,6 +411,9 @@ class MainWindow(QMainWindow):
 
     def _add_page(self, page_id: str, widget: QWidget) -> None:
         self._page_index[page_id] = self.pages.addWidget(widget)
+
+    def _show_status_bar(self, shown: bool) -> None:
+        self.statusBar().setVisible(shown or self.prefs.view_mode is ViewMode.ADVANCED)
 
     def _to_simple(self) -> None:
         self.set_view_mode(ViewMode.SIMPLE)
