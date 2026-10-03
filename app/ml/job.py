@@ -86,6 +86,7 @@ def build_training_set(
     parts: list[Dataset] = []
     count = len(request.histories)
     for number, history in enumerate(request.histories):
+
         def step(done: int, total: int, number: int = number, symbol: str = history.symbol) -> None:
             share = (number + done / max(total, 1)) / max(count, 1) * 0.8
             progress(f"Replaying {symbol}: {done * 100 // max(total, 1)}%", share)
