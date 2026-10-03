@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QStackedWidget,
     QStatusBar,
@@ -53,6 +54,7 @@ from app.ui.risk_page import RiskContext, RiskPage
 from app.ui.signals_page import SignalsContext, SignalsPage
 from app.ui.strategies_page import StrategiesPage
 from app.ui.theme import build_qss, tokens_for
+from app.ui.updates_page import UpdateBanner, UpdatesContext, UpdatesPage
 
 SIDEBAR_WIDTH = 232
 KILL_SHORTCUT = "Ctrl+Shift+K"
@@ -76,6 +78,7 @@ class MainWindow(QMainWindow):
         analytics: AnalyticsContext | None = None,
         journal: JournalContext | None = None,
         notifications: NotificationsContext | None = None,
+        updates: UpdatesContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -102,6 +105,11 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
         root_layout.addWidget(self._build_top_bar())
+        self.updates = updates
+        if updates is not None:
+            updates.restart = self.restart_to_update
+        self.update_banner = UpdateBanner(updates, self.show_updates)
+        root_layout.addWidget(self.update_banner)
         body = QWidget()
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
@@ -130,6 +138,8 @@ class MainWindow(QMainWindow):
         self.notifications_page = (
             NotificationsPage(notifications) if notifications is not None else None
         )
+        self.updates_page = UpdatesPage(updates) if updates is not None else None
+        self.confirm_update: Callable[[str], bool] = self._confirm_update
         self.trading = trading
         if trading is not None:
             self.signals_page.mode_text = lambda: trading.settings.mode.label
@@ -166,6 +176,8 @@ class MainWindow(QMainWindow):
                 self.settings_tabs.addTab(self.data_page, "Data & cloud sync")
                 if self.notifications_page is not None:
                     self.settings_tabs.addTab(self.notifications_page, "Notifications")
+                if self.updates_page is not None:
+                    self.settings_tabs.addTab(self.updates_page, "Updates")
                 self._add_page(spec.page_id, self.settings_tabs)
             elif spec.page_id == "settings" and self.connection_page is not None:
                 self._add_page(spec.page_id, self.connection_page)
@@ -251,6 +263,45 @@ class MainWindow(QMainWindow):
             self.show_page(SIMPLE_HOME.page_id)
             self.settings_button.setText("Settings")
 
+    def show_updates(self) -> None:
+        """Open Settings > Updates (from the banner or the command palette)."""
+        self.show_page("settings")
+        if self.prefs.view_mode is ViewMode.SIMPLE:
+            self.settings_button.setText("Back to Home")
+        if self.settings_tabs is not None and self.updates_page is not None:
+            self.settings_tabs.setCurrentWidget(self.updates_page)
+
+    def restart_to_update(self) -> bool:
+        """Confirm, hand the downloaded version to the installer and close the app (J2.4)."""
+        updates = self.updates
+        if updates is None or not updates.service.snapshot.ready:
+            self.show_updates()
+            return False
+        snapshot = updates.service.snapshot
+        open_trades = 0
+        if self.trading is not None:
+            positions = self.trading.engine.snapshot.positions
+            open_trades = sum(1 for view in positions if not view.pending)
+        verb = "go back to" if snapshot.downgrade else "install"
+        text = f"The app closes, will {verb} {snapshot.version} and starts again in about a minute."
+        if open_trades:
+            text += (
+                f"\n\n{open_trades} trade(s) are open. Their stop loss and take profit stay at "
+                "the broker while the app restarts, but nothing is managed for that minute."
+            )
+        if not self.confirm_update(text):
+            return False
+        error = updates.service.apply()
+        if error:
+            QMessageBox.warning(self, "Update", error)
+            return False
+        self.close()
+        return True
+
+    def _confirm_update(self, text: str) -> bool:
+        answer = QMessageBox.question(self, "Restart to update", text)
+        return answer == QMessageBox.StandardButton.Yes
+
     def toggle_view_mode(self) -> None:
         simple = self.prefs.view_mode is ViewMode.SIMPLE
         self.set_view_mode(ViewMode.ADVANCED if simple else ViewMode.SIMPLE)
@@ -290,6 +341,8 @@ class MainWindow(QMainWindow):
             items.append(
                 Command("diagnose", "Run connection diagnostics", "Connection", self._diagnose),
             )
+        if self.updates_page is not None:
+            items.append(Command("updates", "Check for updates", "System", self._check_updates))
         if self.data_page is not None:
             items.append(Command("upload", "Upload to the cloud now", "Data", self._upload))
             items.append(Command("history", "Import trade history", "Data", self._import_history))
@@ -479,6 +532,11 @@ class MainWindow(QMainWindow):
         if self.data_page is not None:
             self._show_data_tab()
             self.data_page.import_history()
+
+    def _check_updates(self) -> None:
+        self.show_updates()
+        if self.updates is not None:
+            self.updates.service.check_now()
 
     def _persist(self) -> None:
         if self._prefs_dir is not None:
