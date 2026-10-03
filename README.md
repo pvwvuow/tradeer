@@ -4,9 +4,13 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 > **Honest expectations.** This app is infrastructure, not an edge. It does not find or guarantee a profitable strategy. Any win probability it shows is an uncertain estimate with a sample size and a confidence interval. Paper (practice) mode is the default.
 
+## Install
+
+Download `MT5TradingWorkstation-win-Setup.exe` from the [latest release](https://github.com/pvwvuow/tradeer/releases/latest) once and run it (per-user, no admin rights). After that the app updates itself from inside: only the changed parts are downloaded, one click and one restart (Velopack delta updates). Details: [docs/USER_GUIDE.md](docs/USER_GUIDE.md), "Install and updates"; design and status: [docs/UPDATES.md](docs/UPDATES.md).
+
 ## Status
 
-Phase 12 of 16 (Analytics, journal & notifications). The Dashboard, Analytics and Journal pages show your real results: statistics checked against hand calculations, breakdowns, charts, trader behavior, risk of ruin and comparisons; every trade has a plain-language story, your notes and ratings; daily and weekly reports; Windows notifications and an optional Telegram bot with a PIN. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+Version 0.12 adds in-app delta updates (spec Part J, planned as Phase 15, done early). Phase 12 of 16 (Analytics, journal & notifications). The Dashboard, Analytics and Journal pages show your real results: statistics checked against hand calculations, breakdowns, charts, trader behavior, risk of ruin and comparisons; every trade has a plain-language story, your notes and ratings; daily and weekly reports; Windows notifications and an optional Telegram bot with a PIN. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
 
 From Phase 11 (ML win probability): the Model page trains a LightGBM model on every signal the strategies made on MT5 history, validates it with purged walk-forward tests against the baseline (the strategy's own win rate), calibrates it, and lets you use it only when it beats the baseline out of sample.
 
@@ -95,7 +99,7 @@ CI is on. `.github/workflows/` contains four workflows:
   - `ci`: Windows job running `scripts/ci/check.ps1` — install, `ruff check`, `ruff format --check`, `mypy` (strict) and `pytest` with coverage; uploads `coverage.xml` as an artifact.
   - `build`: pull requests only — Windows job running `scripts/ci/build.ps1`, which builds the one-folder PyInstaller app, runs the frozen `--self-check`, zips it and uploads the portable build artifact (download it from the pull request under Checks, then Artifacts).
 - **codeql** (`codeql.yml`) — Python security analysis on `main`, pull requests and a weekly schedule.
-- **release** (`release.yml`) — release-please keeps a Release PR up to date; merging it tags `vX.Y.Z` and the `publish` job runs `scripts/ci/release.ps1` to attach the installer, portable zip, `checksums.txt` and `latest.json` to the GitHub Release.
+- **release** (`release.yml`) — release-please keeps a Release PR up to date; merging it tags `vX.Y.Z` and the `publish` job runs `scripts/ci/release.ps1`, which packs the build with Velopack and attaches `MT5TradingWorkstation-win-Setup.exe`, the full and delta packages, `releases.win.json`, a portable zip, `checksums.txt` and `latest.json` to the GitHub Release.
 
 The workflow YAML stays thin; all CI logic lives in `scripts/ci/*.ps1`.
 
@@ -107,7 +111,7 @@ A branch ruleset on `main` enforces this (configured in repository settings):
 2. **Require status checks to pass**: `ci`, `build` and `Tests (Linux, Qt offscreen)`.
 3. **Block force pushes** and **restrict deletions**.
 
-Every phase arrives as a pull request that you review and merge yourself.
+Every build arrives as a pull request into `main`. Since 3 October 2026 the agent merges it once CI is green and publishes the release (owner's decision).
 
 ## Releases
 
@@ -115,7 +119,7 @@ Releases are automated by release-please:
 
 1. Settings, then Actions, then General, then Workflow permissions: enable **Allow GitHub Actions to create and approve pull requests** (done in repository settings).
 2. Optional but recommended: add a repository secret `RELEASE_PLEASE_TOKEN` (a fine-grained token with Contents and Pull requests read/write on this repository). Without it, release pull requests do not trigger CI and need an admin merge.
-3. Merging a phase into `main` updates a "Release PR". Merging that Release PR creates the tag `vX.Y.Z`, builds the installer, and attaches the installer, a portable zip, `checksums.txt` and `latest.json` to the GitHub Release.
+3. Merging into `main` updates a "Release PR". Merging that Release PR creates the tag `vX.Y.Z`; the release job packs it with Velopack (installer, full package, a delta from the previous release) and uploads everything to the GitHub Release, where the installed apps find it.
 
 ## Safety notes
 
