@@ -72,16 +72,15 @@ def test_the_banner_shows_ready_updates_and_can_be_dismissed(
     opened: list[bool] = []
     banner = UpdateBanner(context, lambda: opened.append(True))
     qtbot.addWidget(banner)
-    banner.show()
-    assert not banner.isVisible()
+    assert banner.isHidden()
     context.service.handle(Command.AUTO_CHECK)
-    qtbot.waitUntil(lambda: banner.isVisible())
+    qtbot.waitUntil(lambda: not banner.isHidden())
     assert banner.text.text() == banner_text(context.service.snapshot)
     assert "0.13.0 is ready" in banner.text.text()
     banner.details_button.click()
     assert opened == [True]
     banner.dismiss()
-    assert not banner.isVisible()
+    assert banner.isHidden()
 
 
 def test_restart_to_update_asks_then_applies_and_closes(qtbot: QtBot, tmp_path: Path) -> None:

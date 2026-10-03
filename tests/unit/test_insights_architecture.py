@@ -20,7 +20,8 @@ def test_analytics_journal_and_notify_never_trade_or_import_qt() -> None:
 
 def test_only_the_telegram_module_talks_to_the_network() -> None:
     texts = sources()
-    users = sorted(name for name, text in texts.items() if "api.telegram.org" in text)
+    host = re.compile(r"api\.telegram\.org")
+    users = sorted(name for name, text in texts.items() if host.search(text))
     assert users == ["notify/telegram.py"]
     network = [n for n in texts if n.startswith(PACKAGES) and "urllib.request" in texts[n]]
     assert network == ["notify/telegram.py"]
