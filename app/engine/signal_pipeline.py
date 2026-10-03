@@ -175,6 +175,7 @@ class _History:
     total: int = 0
     losses_in_row: int = 0
     last_loss: dict[str, float] = field(default_factory=dict)  # symbol -> close time
+    streak_end: float | None = None  # close time of the newest loss of the losing streak
 
 
 def _quiet(level: str, message: str) -> None:
@@ -197,6 +198,8 @@ def history_of(results: Sequence[TradeResult]) -> _History:
             found.last_loss.setdefault(result.symbol, result.close_time)
             if streak:
                 found.losses_in_row += 1
+                if found.streak_end is None:
+                    found.streak_end = result.close_time
         elif result.outcome == "win":
             streak = False
     return found
@@ -471,6 +474,8 @@ class SignalPipeline:
             since_loss = int((signal.created_at - last_loss) // seconds)
         age = now - signal.created_at
         fresh = analysis.quality.ok and age <= seconds + FRESH_GRACE_SECONDS
+        end = history.streak_end
+        since_streak = (signal.created_at - end) / 3600.0 if end is not None else None
         data = FilterInput(
             signal=signal,
             now=now,
@@ -483,6 +488,7 @@ class SignalPipeline:
             open_positions=self._open_positions(signal),
             losses_in_row=history.losses_in_row,
             bars_since_loss=since_loss,
+            hours_since_losses=since_streak,
             sessions=strategy.sessions,
             events=ctx.events,
             data_ok=fresh,
