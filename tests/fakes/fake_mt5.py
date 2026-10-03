@@ -10,6 +10,7 @@ never imported by the app and never shipped.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import SimpleNamespace
@@ -62,6 +63,8 @@ class FakeSymbol:
     visible: bool = True
     filling_flags: int = 3  # SYMBOL_FILLING_FOK | SYMBOL_FILLING_IOC
     stops_level: int = 10
+    # Relative price moves per server time; None = the gentle default wave below.
+    path: Callable[[np.ndarray[Any, Any]], np.ndarray[Any, Any]] | None = None
 
 
 def default_symbols() -> list[FakeSymbol]:
@@ -97,6 +100,10 @@ class FakeMT5:
     stale_history: dict[str, int] = field(default_factory=dict)
     # Refuse bigger copy_rates requests, as a real terminal refused 100,000 bars.
     rates_request_limit: int | None = None
+    # The oldest bar the terminal has (server time), as "Max bars in chart" limits history.
+    history_start: int | None = None
+    # Ticks on the synthetic bar path (the bid is the newest bar's close), for replay tests.
+    ticks_follow_bars: bool = False
     initialize_error: tuple[int, str] | None = None
     hang_seconds: float = 0.0
     now: Any = time.time
@@ -235,10 +242,13 @@ class FakeMT5:
         if found is None or not self._ready() or not self.broker_connected:
             return None
         spread = found.spread_points / 10**found.digits
+        bid = found.bid
+        if self.ticks_follow_bars:
+            bid = round(float(synthetic_price(found, np.int64(self._server_now()))), found.digits)
         return SimpleNamespace(
             time=self._server_now(),
-            bid=found.bid,
-            ask=round(found.bid + spread, found.digits),
+            bid=bid,
+            ask=round(bid + spread, found.digits),
             last=0.0,
             volume=0,
             time_msc=self._server_now() * 1000,
@@ -262,6 +272,27 @@ class FakeMT5:
         newest = self._server_now() - self.stale_history.get(symbol, 0)
         last_open = newest // seconds * seconds - seconds * start_pos
         opens = last_open - seconds * np.arange(bars - 1, -1, -1, dtype=np.int64)
+        return synthetic_rates(found, opens, seconds)
+
+    def copy_rates_range(
+        self,
+        symbol: str,
+        timeframe: int,
+        date_from: Any,
+        date_to: Any,
+    ) -> np.ndarray[Any, Any] | None:
+        """Closed bars opening from `date_from` to `date_to` (server time, as MT5 reads it)."""
+        self.calls.append("copy_rates_range")
+        found = self._find(symbol)
+        if found is None or not self._ready():
+            return self._fail_none(api.RES_E_NOT_FOUND, "Symbol not found")
+        seconds = max(60, (timeframe if timeframe < 16000 else (timeframe - 16384) * 60) * 60)
+        first = max(_epoch(date_from), self.history_start or 0)
+        last = min(_epoch(date_to), self._server_now() - seconds)  # no forming bar
+        start = -(-first // seconds) * seconds
+        opens = np.arange(start, last + 1, seconds, dtype=np.int64)
+        if self.rates_request_limit is not None and len(opens) > self.rates_request_limit:
+            return self._fail_none(api.RES_E_INVALID_PARAMS, "Terminal: Invalid params")
         return synthetic_rates(found, opens, seconds)
 
     def history_deals_get(self, *args: Any, **kwargs: Any) -> tuple[SimpleNamespace, ...] | None:
@@ -767,6 +798,8 @@ class FakeMT5:
 def synthetic_price(symbol: FakeSymbol, server_times: np.ndarray[Any, Any]) -> Any:
     """A deterministic price path: the same bar time always gives the same price."""
     moments = np.asarray(server_times, dtype=np.float64)
+    if symbol.path is not None:
+        return symbol.bid * (1.0 + symbol.path(moments))
     seed = sum(ord(char) for char in symbol.name)
     wave = (
         0.004 * np.sin(2 * np.pi * moments / (86_400 * 5.3) + seed)
