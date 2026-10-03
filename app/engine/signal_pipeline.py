@@ -31,6 +31,8 @@ from app.domain.probability import ProbabilityEstimate, baseline, cost_in_r, exp
 from app.domain.signals import TRANSITIONS, Signal, SignalRecord, SignalState
 from app.engine.execution import SignalUpdate
 from app.engine.filters import FilterInput, FilterSettings, run_filters
+from app.ml import features as model_features
+from app.ml.predictor import Prediction
 from app.mt5.models import SymbolSpec, SymbolTradeMode
 from app.observability.decision_trace import DecisionTrace
 from app.risk.risk_manager import RiskDecision
@@ -78,6 +80,17 @@ class RiskHook(Protocol):
     ) -> RiskDecision: ...
 
     def refresh(self, now: float | None = None, *, force: bool = False) -> None: ...
+
+
+class ProbabilityModel(Protocol):
+    """The active win-probability model (Phase 11, `app.ml.predictor.Predictor`)."""
+
+    @property
+    def source(self) -> str: ...
+
+    def covers(self, strategy: str) -> bool: ...
+
+    def predict(self, values: Mapping[str, float]) -> Prediction: ...
 
 
 class ExecutionHook(Protocol):
@@ -206,9 +219,11 @@ class SignalPipeline:
         account: Callable[[], str | None] | None = None,
         risk: RiskHook | None = None,
         executor: ExecutionHook | None = None,
+        model: Callable[[], ProbabilityModel | None] | None = None,
         log: Log = _quiet,
         utc_now: Callable[[], float] = time.time,
     ) -> None:
+        self._model = model or (lambda: None)
         self._strategies = strategies
         self._filters = filters
         self._store = store
@@ -405,6 +420,8 @@ class SignalPipeline:
         range_atr = entry_atr(ctx)
         features: dict[str, float | str] = dict(signal.features)
         features.update(self._features(signal, ctx, range_atr))
+        values = model_features.compute(signal, ctx)
+        features.update(model_features.stored(values))
         signal = replace(
             signal,
             features=features,
@@ -416,12 +433,24 @@ class SignalPipeline:
         # Probability and EV ------------------------------------------------------------
         history = self._history(strategy.name)
         estimate = baseline(history.wins, history.total, settings.baseline_min_samples)
+        prediction = self._predict(strategy.name, values)
+        detail = estimate.text()
+        if prediction is not None:
+            estimate = prediction.estimate
+            detail = estimate.text()
+            if prediction.factors:
+                factors = "; ".join(prediction.factors)
+                detail += f"; main factors: {factors}"
+                signal = replace(
+                    signal,
+                    features={**signal.features, "probability_factors": factors},
+                )
         trace.add(
             "probability",
             "win probability",
             None,
             value=round(estimate.value * 100, 1) if estimate.value is not None else None,
-            detail=estimate.text(),
+            detail=detail,
         )
         ev = self._expected_value(estimate, signal, ctx.spread)
         formula = "probability x reward - (1 - probability) - spread in R"
@@ -544,6 +573,17 @@ class SignalPipeline:
             if math.isfinite(ctx.spread):
                 found[f"spread_atr_{ctx.timeframe}"] = round(ctx.spread / range_atr, 4)
         return found
+
+    def _predict(self, strategy: str, values: Mapping[str, float]) -> Prediction | None:
+        """The active model's estimate, or None (then the baseline is used)."""
+        try:
+            model = self._model()
+            if model is None or not model.covers(strategy):
+                return None
+            return model.predict(values)
+        except Exception as error:
+            self._log("WARNING", f"The model failed, the baseline is used: {error}")
+            return None
 
     def _expected_value(
         self,
