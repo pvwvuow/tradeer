@@ -7,19 +7,22 @@ app/
   __version__.py   single source of the version (bumped by release-please)
   main.py          composition root: CLI, self-check, crash test, GUI start
   cli.py           argument parsing, --self-check build verification, report output
+  analytics/       pure performance analytics on closed trades: stats, breakdowns, chart data, behavior, risk of ruin, comparisons, CSV (phase 12)
   analysis/        pure market analysis on closed bars: indicators, trend, structure, levels, card (phase 5)
   brokers/         the Broker interface, live MT5 broker, paper broker, trade requests, trade test (phase 8)
   calendar/        economic calendar: events, CSV import, store, MQL5 exporter (phase 5)
   core/            per-user paths, UI preferences, account profiles, credentials, instance lock, broker clock, watchlist
   domain/          pure logic: operating modes, validated defaults, trade history, signals, sizing, order checks, position management (no Qt, MT5 or I/O)
+  journal/         trade stories, journal entries, daily and weekly reports and their scheduler (phase 12)
   engine/          background workers: the market-analysis thread (phase 5), signal filters and pipeline (phase 6), execution engine (phase 8)
   ml/              win probability (phase 11): features, labeler, dataset, walk-forward validation, calibration, LightGBM wrapper, trainer, registry, predictor, drift, training process
   mt5/             the MT5 gateway thread, connection checklist, diagnostics, smoke test, market data
+  notify/          notification events, settings, the notification center, the snapshot watcher, the Telegram bot and its commands (phase 12)
   observability/   logging, trace context, masking, crash reports, watchdog (phase 2)
   risk/            risk settings and profiles, limits, currency exposure, limit state, risk manager (phase 7)
   storage/         SQLite database, migrations, outbox, cloud sync, history tracker (phase 4)
   strategies/      strategy interface, market context, the two example strategies (phase 6)
-  ui/              Qt: theme tokens, navigation, command palette, pages, Simple Home (phase 9), Logs, Connection, Data, Market, chart, Signals, Strategies, Risk, Positions & Trades
+  ui/              Qt: theme tokens, navigation, command palette, pages, Simple Home (phase 9), Logs, Connection, Data, Market, chart, Signals, Strategies, Risk, Positions & Trades, Backtest, Model, Dashboard, Analytics, Journal, Notifications, tray (phase 12 wiring in `ui/insights.py`)
 supabase/          SQL to run in the Supabase SQL Editor: schema, RLS, views, cleanup (phase 4)
 tests/
   fakes/           FakeMT5 and FakeSupabase for tests only (never shipped)
@@ -275,6 +278,15 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 103. **Training runs in a `spawn` child process.** The page loads the history through the MT5 gateway in a thread, then starts `ml/job.py` in its own process, which replays the strategies (the backtest engine, so live = training data), labels, trains and sends back the report and the model as text through a queue, polled every 500 ms by the page. The window stays smooth and a crash in training cannot take the app down. `run_app.py` already calls `freeze_support()` for the MT5 helper (ADR 46).
 104. **Drift is checked on demand.** The Model page compares the live win rate of the last 50 closed trades with a model probability against the mean prediction (a gap over two standard errors and 5 points warns) and computes each feature's PSI on the newest signals against the training deciles (over 0.25 warns). Either warning suggests training again.
 
+105. **Analytics read the trades table only, joined with the signal.** `analytics/trades.py` loads every closed row of `trades` (bot trades from the execution engine, everything else from the MT5 history import) with its signal's strategy, config, probability, spread and reason. A bot trade without a signal row gets its strategy from the magic number; manual trades are "manual". Everything after the load is pure functions on `TradeRecord`s, so every number is checked against hand-made trades in tests.
+106. **The analytics reuse the backtest's metric code.** The equity curve starts at the start balance at the first trade's open and adds each net result at its close; drawdown, Sharpe and Sortino come from `backtest/metrics.py` (daily returns, 252 days, no risk-free rate) and the risk of ruin from `backtest/monte_carlo.py` on the trades' returns. The start balance of a filtered view is today's balance minus the shown trades' result: without a balance no percentages are shown, never invented. Under 30 trades a warning is part of the statistics.
+107. **The spread is never subtracted twice.** MT5 prices already contain the spread (bid and ask), so the gross profit includes it; the cost analysis shows commission, swap and fees in money and the spread in R at the signal, and the recorded slippage in points, as information only.
+108. **Behavior checks are for manual trades and say what they measured.** Overtrading, revenge trading (a bigger lot within 30 minutes of a loss), holding losers longer, news trading (15 minutes around high-impact events), lot-size variation and trading outside the best hours each return a finding with the numbers behind it, and need at least 10 manual trades.
+109. **Reports are made once per broker day and week, after the period.** `journal/reports.py` reads the trades, the rejected signals, the WARNING+ log rows, health issues and requotes of the period; the report id is a stable UUID of account, kind and first day, so it is made once even across restarts and PCs. `daily_reports.report_date` is the broker day or the week's Monday (a `date` in Supabase); `summary_json.kind` says which. A Markdown copy goes to `profiles/<profile>/reports`.
+110. **Notifications come from snapshot changes, not from new hooks in the engine.** `notify/watcher.py` listens to the execution, signal, risk, connection and sync snapshots and compares each with the previous one; ERROR log entries come through a log entry sink (rate-limited). The center applies the per-event switches, holds non-urgent notices in quiet hours (limit hits, disconnects and errors always go out) and drops repeats within 10 minutes. No engine code changed for it.
+111. **Telegram is outbound HTTPS with long polling, and commands go through the same calls as the buttons.** No port is opened on the PC. The token is in Windows Credential Manager (and masked in logs); only whitelisted chat ids are answered; a chat unlocks with a PIN stored only as a salted PBKDF2 hash (5 wrong tries lock it for 15 minutes). `/pause` is the risk manager's stop, `/killswitch` the engine's kill switch after a confirmation within 60 seconds, `/approve` the pipeline's approval (checked again at the live price); `/resume` lifts only a stop made by `/pause`, every other stop needs the typed ENABLE in the app. Every command is audit-logged with source `telegram`.
+112. **The broker clock trusts a price only when it moves with real time; the loss pause ends.** From the PC log of 3 October: on a Saturday the stale Friday price "measured" a new offset every 30 minutes (UTC+3 down to UTC-11.5), and the history import and a backtest then used it. Now two agreeing ticks must be at least 10 minutes apart with the server time advancing like real time, nothing is measured at the FX weekend, offsets no time zone uses are refused, and a saved impossible clock is ignored. The "pause after consecutive losses" filter had no end (no new trade could break the streak); it now lasts `pause_hours` (24 by default) from the newest loss.
+
 ## Logging rules for new code
 
 - `log = get_logger(LogCategory.X)` at module level. `print()` is only for CLI reports.
@@ -349,3 +361,10 @@ logs -> LogPipeline -> LogStore sink (WARNING and higher, audit) -> app_logs, au
 - Labels come from `ml/labeler.py` with the backtest's cost model; a change to the backtest broker's bar rules needs the same change there (the agreement test fails otherwise).
 - Never activate a model without its out-of-sample comparison; the registry enforces it.
 - Only `ml/model.py` imports `lightgbm`, and nothing in `app/ml` pickles (architecture test).
+
+## Analytics, journal and notification rules
+
+- `app/analytics`, `app/journal` and `app/notify` never import Qt or the MT5 gateway and never trade (architecture test); only `notify/telegram.py` talks to the network.
+- A new statistic needs a hand-calculated test in `tests/unit/test_analytics_stats.py` or `test_analytics_breakdowns.py`.
+- New notification events are found by comparing snapshots in `notify/events.py`; never call the notification center from inside the engine.
+- A remote command must use the same public call as the app's button and must be audit-logged.
