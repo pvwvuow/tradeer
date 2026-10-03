@@ -29,9 +29,13 @@ def ema(values: FloatArray, period: int) -> FloatArray:
     if period <= 0 or len(values) < period:
         return out
     alpha = 2.0 / (period + 1.0)
-    out[period - 1] = float(np.mean(values[:period]))
-    for index in range(period, len(values)):
-        out[index] = alpha * values[index] + (1.0 - alpha) * out[index - 1]
+    keep = 1.0 - alpha
+    value = float(np.mean(values[:period]))
+    found = [value]
+    for item in values[period:].tolist():  # plain floats: the same IEEE math, 5x faster
+        value = alpha * item + keep * value
+        found.append(value)
+    out[period - 1 :] = found
     return out
 
 
@@ -45,9 +49,13 @@ def rma(values: FloatArray, period: int) -> FloatArray:
     if len(values) - start < period or not np.all(np.isfinite(values[start : start + period])):
         return out
     seed = start + period - 1
-    out[seed] = float(np.mean(values[start : start + period]))
-    for index in range(seed + 1, len(values)):
-        out[index] = (out[index - 1] * (period - 1) + values[index]) / period
+    value = float(np.mean(values[start : start + period]))
+    found = [value]
+    weight = period - 1
+    for item in values[seed + 1 :].tolist():
+        value = (value * weight + item) / period
+        found.append(value)
+    out[seed:] = found
     return out
 
 

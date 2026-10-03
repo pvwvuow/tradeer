@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+import numpy as np
+
 from app.analysis.bars import Bars
 
 DEFAULT_STRENGTH = 3
@@ -84,13 +86,25 @@ def find_swings(bars: Bars, strength: int = DEFAULT_STRENGTH) -> list[Swing]:
     high, low = bars.high, bars.low
     swings: list[Swing] = []
     previous: dict[SwingKind, Swing] = {}
-    for index in range(strength, len(bars) - strength):
-        left = slice(index - strength, index)
-        right = slice(index + 1, index + strength + 1)
+    size = len(bars)
+    if strength < 1 or size < 2 * strength + 1:
+        return swings
+    # Window i covers bars i .. i + strength - 1; candidate index j has its left window at
+    # j - strength and its right window at j + 1 (vectorized; the same comparisons as a loop).
+    middle = np.arange(strength, size - strength)
+    high_windows = np.lib.stride_tricks.sliding_window_view(high, strength).max(axis=1)
+    low_windows = np.lib.stride_tricks.sliding_window_view(low, strength).min(axis=1)
+    is_high = (high[middle] > high_windows[middle - strength]) & (
+        high[middle] >= high_windows[middle + 1]
+    )
+    is_low = (low[middle] < low_windows[middle - strength]) & (
+        low[middle] <= low_windows[middle + 1]
+    )
+    for index in middle[is_high | is_low].tolist():
         found: list[tuple[SwingKind, float]] = []
-        if high[index] > high[left].max() and high[index] >= high[right].max():
+        if is_high[index - strength]:
             found.append((SwingKind.HIGH, float(high[index])))
-        if low[index] < low[left].min() and low[index] <= low[right].min():
+        if is_low[index - strength]:
             found.append((SwingKind.LOW, float(low[index])))
         for kind, price in found:
             swing = Swing(
