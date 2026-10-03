@@ -44,6 +44,8 @@ def test_the_broker_offset_comes_from_the_freshest_quote() -> None:
     fake.login(fake.accounts[0].login, password=fake.accounts[0].password)
     assert broker_offset(status_for(fake), NOW) == 3.0
     assert broker_offset(ConnectionStatus(), NOW) is None
+    saturday = 1_727_524_800.0  # 2024-09-28 12:00 UTC: prices are stale at the weekend
+    assert broker_offset(status_for(fake), saturday) is None
 
 
 def test_a_new_connection_saves_the_account_imports_history_and_snapshots() -> None:

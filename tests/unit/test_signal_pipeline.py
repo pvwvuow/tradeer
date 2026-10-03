@@ -94,6 +94,7 @@ def test_trade_history_feeds_the_baseline_and_the_streak() -> None:
     found = history_of(results)
     assert (found.wins, found.total, found.losses_in_row) == (1, 3, 2)
     assert found.last_loss == {"EURUSD": 300.0, "GBPUSD": 200.0}
+    assert found.streak_end == 300.0  # the newest loss: the pause counts from there
 
 
 def test_a_failing_strategy_is_logged_and_the_rest_still_run() -> None:

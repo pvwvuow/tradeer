@@ -125,6 +125,8 @@ def test_cross_market_views_and_the_broker_clock() -> None:
     saved: list[BrokerClock] = []
     with watch(save_clock=saved.append) as (watcher, fake, clock, logs):
         watcher.cycle()
+        assert not watcher.clock.measured  # one look is not enough
+        clock.now += 600  # ten minutes later the price has moved with the clock
         snapshot = watcher.cycle()
         assert snapshot.correlation is not None
         assert snapshot.correlation.symbols == tuple(SYMBOLS)
