@@ -25,6 +25,7 @@ from app.__version__ import __version__
 from app.analysis.sessions import duration_text, next_change, session_label
 from app.core.ui_prefs import ThemeName, UiPrefs, ViewMode, save_prefs
 from app.domain.config import TradingDefaults
+from app.engine.execution import ExecutionSnapshot
 from app.mt5.connection import ConnectionState, ConnectionStatus
 from app.mt5.models import AccountKind
 from app.observability.controls import LogControls
@@ -40,12 +41,14 @@ from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
 from app.ui.navigation import ADVANCED_GROUPS, ADVANCED_PAGES, SIMPLE_HOME, pages_in_group
 from app.ui.pages import PlaceholderPage, SimpleHomePage, styled_label
+from app.ui.positions_page import KILL_TEXT, PositionsPage, TradingContext
 from app.ui.risk_page import RiskContext, RiskPage
 from app.ui.signals_page import SignalsContext, SignalsPage
 from app.ui.strategies_page import StrategiesPage
 from app.ui.theme import build_qss, tokens_for
 
 SIDEBAR_WIDTH = 232
+KILL_SHORTCUT = "Ctrl+Shift+K"
 
 
 class MainWindow(QMainWindow):
@@ -59,6 +62,7 @@ class MainWindow(QMainWindow):
         market: MarketContext | None = None,
         signals: SignalsContext | None = None,
         risk: RiskContext | None = None,
+        trading: TradingContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -104,6 +108,11 @@ class MainWindow(QMainWindow):
         self.signals_page = SignalsPage(signals)
         self.strategies_page = StrategiesPage(signals.settings if signals is not None else None)
         self.risk_page = RiskPage(risk)
+        self.positions_page = PositionsPage(trading)
+        self.trading = trading
+        if trading is not None:
+            self.signals_page.mode_text = lambda: trading.settings.mode.label
+        self._connected = False
         self.settings_tabs: QTabWidget | None = None
         for spec in ADVANCED_PAGES:
             if spec.page_id == "market":
@@ -114,6 +123,8 @@ class MainWindow(QMainWindow):
                 self._add_page(spec.page_id, self.strategies_page)
             elif spec.page_id == "risk":
                 self._add_page(spec.page_id, self.risk_page)
+            elif spec.page_id == "positions":
+                self._add_page(spec.page_id, self.positions_page)
             elif spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
             elif spec.page_id == "settings" and self.data_page is not None:
@@ -140,6 +151,12 @@ class MainWindow(QMainWindow):
         self.update_session_clock()
         self._shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         self._shortcut.activated.connect(self.open_command_palette)
+        self._kill_shortcut = QShortcut(QKeySequence(KILL_SHORTCUT), self)
+        self._kill_shortcut.activated.connect(self.ask_kill)
+        self._kill_shortcut.setEnabled(trading is not None)
+        self.positions_page.bridge.snapshot.connect(self.set_execution_status)
+        if trading is not None:
+            self.set_execution_status(trading.engine.snapshot)
         self.apply_theme(prefs.theme, persist=False)
         self.set_view_mode(prefs.view_mode, persist=False)
 
@@ -225,9 +242,30 @@ class MainWindow(QMainWindow):
             return
         self._crash_state["mt5"] = status.state.value
         self.connection_label.setText(f"\u25cf {status.status_bar_text()}")
-        badge = "ANALYSIS-ONLY" if status.analysis_only else self.defaults.mode.label.upper()
+        self._connected = status.connected
+        badge = "ANALYSIS-ONLY" if status.analysis_only else self.operating_mode_label().upper()
         self.mode_badge.setText(badge)
+        if self.trading is not None:
+            self.set_execution_status(self.trading.engine.snapshot)
         self.home.status_line.setText(plain_status(status))
+
+    def operating_mode_label(self) -> str:
+        if self.trading is not None:
+            return self.trading.settings.mode.label
+        return self.defaults.mode.label
+
+    def set_execution_status(self, snapshot: object) -> None:
+        """Slot: the bot state and mode in the status bar (spec F2)."""
+        if not isinstance(snapshot, ExecutionSnapshot):
+            return
+        self._crash_state["operating_mode"] = snapshot.mode.value
+        if not self.mode_badge.text().startswith("ANALYSIS-ONLY"):
+            self.mode_badge.setText(snapshot.mode.label.upper())
+        self.bot_state_label.setText(bot_state_text(snapshot, self._connected))
+
+    def ask_kill(self) -> bool:
+        """The kill switch from the status bar or Ctrl+Shift+K, always with a confirmation."""
+        return self.positions_page.ask_kill()
 
     def update_session_clock(self, now: float | None = None) -> None:
         """Status bar (spec F2): the current session, the next open or close, the next news."""
@@ -311,9 +349,12 @@ class MainWindow(QMainWindow):
         self.mode_badge = styled_label(self.defaults.mode.label.upper(), "badge")
         self.bot_state_label = styled_label("Bot: stopped", "status")
         self.kill_switch = QPushButton("Stop trading")
+        self.kill_switch.setObjectName("KillSwitch")
         self.kill_switch.setProperty("variant", "danger")
-        self.kill_switch.setEnabled(False)
-        self.kill_switch.setToolTip("Nothing is running yet. The kill switch arrives in Phase 8.")
+        self.kill_switch.setEnabled(self.trading is not None)
+        tip = f"Kill switch ({KILL_SHORTCUT}): {KILL_TEXT.splitlines()[0]}"
+        self.kill_switch.setToolTip(tip if self.trading is not None else "Nothing is running.")
+        self.kill_switch.clicked.connect(self.ask_kill)
         self.sync_label = styled_label("Cloud: off", "status")
         self.sync_label.setObjectName("SyncLabel")
         self.session_clock_label = styled_label("", "status")
@@ -375,6 +416,15 @@ class MainWindow(QMainWindow):
     def _persist(self) -> None:
         if self._prefs_dir is not None:
             save_prefs(self._prefs_dir, self.prefs)
+
+
+def bot_state_text(snapshot: ExecutionSnapshot, connected: bool) -> str:
+    if snapshot.stopped:
+        return "Bot: stopped (kill switch)"
+    if not connected:
+        return "Bot: disconnected"
+    open_trades = sum(1 for view in snapshot.positions if not view.pending)
+    return f"Bot: running \u00b7 {open_trades} open"
 
 
 def plain_status(status: ConnectionStatus) -> str:
