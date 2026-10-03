@@ -10,7 +10,10 @@ from app.observability.buffer import RecentLogBuffer
 from app.observability.controls import LogControls
 from app.observability.crash_handler import CrashInfo, CrashTestError
 from app.observability.levels import LevelRegistry
+from app.ui.analytics_page import AnalyticsPage
 from app.ui.crash_dialog import CrashNotifier
+from app.ui.dashboard_page import DashboardPage
+from app.ui.journal_page import JournalPage
 from app.ui.logs_page import LogsPage
 from app.ui.main_window import MainWindow
 from app.ui.navigation import ADVANCED_PAGES, SIMPLE_HOME
@@ -178,3 +181,15 @@ def test_crash_notifications_from_any_thread_open_one_dialog(
     assert dialog.summary_box.toPlainText() == "ValueError: boom"
     window.show_crash_dialog(str(report), "second crash")
     assert window.crash_dialog is dialog
+
+
+def test_phase_12_pages_are_real_without_their_services(qtbot: QtBot, tmp_path: Path) -> None:
+    window = make_window(qtbot, tmp_path)
+    for page_id, kind in (
+        ("dashboard", DashboardPage),
+        ("analytics", AnalyticsPage),
+        ("journal", JournalPage),
+    ):
+        window.show_page(page_id)
+        assert isinstance(window.pages.currentWidget(), kind)
+    assert window.notifications_page is None
