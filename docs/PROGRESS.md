@@ -12,7 +12,8 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 6: Strategies & signals, pull request #16, CI green, waiting for review.
 - Phase 7: Risk, pull request #17, CI green, waiting for review.
 - Phase 8: Execution, pull request #18, CI green, waiting for review (demo test on a weekday still open).
-- Phase 9: Simple Mode, stacked on Phase 8, in review.
+- Phase 9: Simple Mode, pull request #19, CI green, waiting for review.
+- Phase 10: Backtesting, pull request #20, in review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -20,7 +21,62 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 9 Simple Mode (branch `phase/09-simple-mode`, pull request into `phase/08-execution`)
+## Current phase: 10 Backtesting (branch `phase/10-backtesting`, pull request #20)
+
+Status: built and tested with unit tests (the broker rules, the engine, the metrics against hand-calculated numbers, Monte-Carlo, walk-forward, sensitivity, the history loader, the command and **the backtest-vs-live equality test**) and Qt tests of the Backtest page that run in CI. Not yet run on your PC. The MT5 Strategy Tester runs MQL5 experts only and cannot be driven from Python, so this engine replaces it.
+
+### What was built
+
+- **Replay engine** (`app/backtest/engine.py`, spec C8, D3.4): the real `SignalPipeline`, `RiskManager` and `ExecutionEngine` in Paper mode on a temporary database, with every signal that waits for approval approved. Per M5 bar: at the open the engine sends the signals approved at the previous close (**entries at the next bar open**) and manages; the broker plays the bar; at the close the symbol is analysed exactly as live (the newest closed bars per timeframe, as many as the live cache keeps: M5/M15/H1 600, H4 400, D1 300) and the strategies run. Open trades are closed at the last price ("end of test").
+- **Backtest broker** (`app/brokers/backtest_broker.py`): the paper broker on bars (bid prices, ask = bid + the bar's spread). Pending orders fill when a bar crosses them, a gap fills at the open (a stop at the worse price, a limit at the better one), expired orders are dropped before the bar; **SL and TP in the same candle count as a loss**; a gap past the SL or TP fills at the open; in the bar an order fills only its SL counts. Slippage on market, stop and stop-loss fills, commission half on entry and half on exit, swap per lot and night (three nights on the triple-swap day, none for weekend nights).
+- **Costs and account** (`app/backtest/costs.py`): start balance, account currency, leverage, a spread floor and an extra spread (MT5 bars store each bar's *minimum* spread), slippage, commission, swap, and a fixed rate for cross pairs. Profit is converted the way `order_calc_profit` does it: no conversion when the quote currency is the account currency (EURUSD, XAUUSD on USD), divided by the price when the base currency is (USDJPY on USD).
+- **Metrics** (`app/backtest/metrics.py`): equity and drawdown curves, trade list, win rate, profit factor, expectancy in R and money, average win and loss, payoff, max drawdown (depth, percent and the longest time below a peak), Sharpe and Sortino from daily returns, longest losing and winning streaks, commission and swap, and breakdowns by month, session, symbol, weekday and strategy. **Fewer than 100 trades gives a warning.**
+- **Monte-Carlo** (`app/backtest/monte_carlo.py`): the trades' returns (on the balance before each trade) in 1,000 other orders (shuffle) or drawn with replacement (bootstrap): the max drawdown distribution (50/90/95/99%), the final return range, how often the real order was beaten, and the **risk of ruin** (a 50% drawdown by default).
+- **Walk-forward** (`app/backtest/walk_forward.py`): rolling windows (default 90 days in-sample, 30 out-of-sample); the parameter set with the best in-sample expectancy (at least 10 trades) trades the next window; only out-of-sample trades count. It passes with at least 100 out-of-sample trades and a positive expectancy (the Go-Live rule of spec C9).
+- **Sensitivity** (`app/backtest/sensitivity.py`): a grid of two parameters; the best cell's neighbours must keep at least half of its result (a stable plateau), otherwise it says "Sharp peak ... probably fitted to noise (overfitting)".
+- **History** (`app/backtest/history.py`): `copy_rates_range` in chunks of 20,000 bars, server time to UTC with the broker clock, enough warm-up bars before the start for every timeframe, a disk cache (`profiles/<profile>/backtest_cache/*.npz`), and a note when MT5 has less history than needed ("Raise Tools > Options > Charts > Max bars in chart").
+- **Backtest page** (`app/ui/backtest_page.py`, spec F3 page 7): symbol, dates, strategies (with the Strategies page settings), costs, Monte-Carlo runs, walk-forward and sensitivity options; Run and Cancel; tabs Summary, Equity (equity and drawdown charts), Trades, Breakdowns, Walk-forward, Monte-Carlo (histogram), Sensitivity (heatmap) and Saved runs to compare. A run reads the history through the MT5 gateway and replays it in a background thread.
+- **Saved runs** (`app/storage/backtest_store.py`): every finished run is a `backtest_runs` row (period, costs, metrics with the symbol, strategies and params, walk-forward, Monte-Carlo), synced like every business table.
+- **`--backtest`** (`app/backtest/command.py`): `MT5TradingWorkstation.exe --backtest --symbol EURUSD --from 2026-01-01 --to 2026-06-30 [--strategies trend_pullback] [--report-file report.txt]`: connects with the saved profile, reads the history, replays it with the profile's settings and prints the report. Read-only.
+- **Speed**: the analysis is 4x faster (vectorized swing search, plain-float smoothing loops; bit-identical results, checked on random data). A year of one symbol takes a few minutes.
+- ADRs 87 to 95 in `docs/ARCHITECTURE.md`.
+
+### Checklist
+
+- ✓ **Backtest = live**: on identical data the replay and the live loop (MarketWatch polling MT5 bars every cycle) give identical signals, with the same ids, prices, strategy checks and features (`tests/unit/test_backtest_equality.py`)
+- ✓ Entries at the next bar open at the ask plus slippage (`test_a_market_entry_fills_at_the_next_bar_open`)
+- ✓ SL and TP in the same candle count as a loss; gaps fill at the open; pending orders, expiry, commission and swap (`tests/unit/test_backtest_broker.py`)
+- ✓ No look-ahead: a different future never changes past signals or trades (`test_future_bars_never_change_the_past`)
+- ✓ The money adds up: the end balance is the start plus every trade's net result
+- ✓ Metrics, drawdown, Sharpe and Sortino match hand-calculated numbers; fewer than 100 trades warns (`tests/unit/test_backtest_metrics.py`)
+- ✓ Walk-forward chooses on the in-sample window only; a sharp peak is flagged as overfitting (`tests/unit/test_backtest_robustness.py`)
+- ✓ Monte-Carlo: drawdown distribution and risk of ruin (`tests/unit/test_backtest_monte_carlo.py`)
+- ✓ History in chunks with warm-up, cache and the short-history note (`tests/unit/test_backtest_history.py`)
+- ✓ The Backtest page runs in the background and fills every tab; the run is saved (Qt test, CI)
+- ✓ The backtest never reaches MT5 trading (architecture test)
+- ✗ **Not yet run on your PC** with real MT5 history (see "Test on your PC")
+- ✗ SL and TP in the same candle are not resolved with M1 bars yet (always a loss, the conservative choice)
+- ✗ One symbol per run; portfolio backtests of several symbols at once are not built
+- ✗ Runs in a background thread of the app, not a separate process (see ADR 95)
+- ✗ News filters use the calendar events saved on this PC; `--backtest` uses none
+
+### Test on your PC
+
+1. Download the build artifact of this pull request, unzip, run `MT5TradingWorkstation.exe --self-check`.
+2. In MT5: Tools > Options > Charts > "Max bars in chart" = Unlimited (or the largest value), then restart MT5 so it keeps enough history.
+3. In a console: `MT5TradingWorkstation.exe --backtest --symbol EURUSD --from 2026-04-01 --to 2026-09-30 --report-file backtest.txt`. It prints the history it read, the progress, the summary and every trade, and ends with "Result: DONE". It works at the weekend too (history only).
+4. Start the app, Advanced view, Analyze > Backtest. Keep EURUSD and the dates, click **Run backtest**. The progress bar moves while the window stays usable. When it is done, look at Summary, Equity, Trades and Breakdowns.
+5. Tick Walk-forward (90 in-sample, 30 out-of-sample days) and Sensitivity, run again on 12 months: Walk-forward says PASSED or NOT PASSED with the reason, the heatmap shows the grid and the plateau/peak verdict.
+6. Saved runs lists both runs. Send `backtest.txt` and `logs/all.log` (the `backtest` category) if something looks wrong.
+
+### Limitations
+
+- MT5 history is limited by "Max bars in chart"; the app says when it is too short instead of testing a shorter period silently.
+- The bar spread is MT5's minimum spread of each bar; set the spread floor or the extra spread to be more pessimistic.
+- Cross pairs (for example EURGBP on a USD account) need the fixed quote rate in the costs, else the run refuses to size them.
+- Past results do not promise future ones; a backtest only shows how the rules would have behaved.
+
+## Phase 9: Simple Mode (branch `phase/09-simple-mode`, pull request #19)
 
 Status: built and tested with unit tests (the texts, the jargon check, the balance and the daily results) and Qt tests (the Home screen, the onboarding, Approve, Skip and Stop) that run in CI. Not yet run on your PC. The Home screen is a plain-language view over the same engine as the Advanced view: Approve, Skip, Close now and Stop call exactly the same code as the Signals page, Positions & Trades and the kill switch.
 
@@ -411,4 +467,5 @@ Acceptance checklist (spec G3 phase 2):
 3. Run "Test on your PC" from the Phase 6 pull request during a London morning, and from the Phase 7 pull request (Risk page).
 4. Run "Test on your PC" from the Phase 8 pull request on your demo account on a weekday, while the market is open (`--mt5-trade-test`, then a paper and a Semi-auto approval, the restart and the kill switch).
 5. Run "Test on your PC" from the Phase 9 pull request (the Home screen, the first start, Approve, Skip, Close now and Stop) on a weekday.
-6. Phase 10 (Backtesting) after Phase 9 is reviewed.
+6. Run "Test on your PC" from the Phase 10 pull request (`--backtest` and the Backtest page); it works at the weekend too.
+7. Phase 11 (ML win probability) is stacked on Phase 10.
