@@ -14,7 +14,8 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 8: Execution, pull request #18, CI green, waiting for review (demo test on a weekday still open).
 - Phase 9: Simple Mode, pull request #19, CI green, waiting for review.
 - Phase 10: Backtesting, pull request #20, CI green, waiting for review.
-- Phase 11: ML win probability, stacked on Phase 10, in review.
+- Phase 11: ML win probability, pull request #21, CI green, waiting for review.
+- Phase 12: Analytics, journal & notifications, pull request #22, stacked on Phase 11, in review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -22,7 +23,66 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 11 ML win probability (branch `phase/11-ml`, pull request into `phase/10-backtesting`)
+## Current phase: 12 Analytics, journal & notifications (branch `phase/12-analytics`, pull request #22 into `phase/11-ml`)
+
+Status: built and tested. Every statistic is checked against hand-calculated numbers on small trade lists; the reports, the journal store, the notification rules and the Telegram bot (with a fake Telegram server) have unit tests, and the four new pages have headless Qt tests in CI. Not yet run on your PC.
+
+### What was built
+
+- **Analytics core** (`app/analytics/`, pure, spec C11): closed trades from the `trades` table joined with their signal (strategy, config, predicted probability, spread); filters by date, account, symbol, strategy, mode and bot/manual. Statistics: win rate, profit factor, expectancy in money and R, average win and loss, payoff ratio, largest win and loss, streaks, Sharpe and Sortino (daily returns, as the backtest), max drawdown in money and percent with its duration, recovery factor and time to recover. Under 30 trades a warning says the numbers are mostly luck.
+- **Breakdowns**: by symbol, strategy, direction, session, hour, weekday, month, holding time, probability bucket, config version, bot vs manual and live vs paper.
+- **Chart data**: equity and drawdown curve, monthly returns heatmap, P/L calendar, R distribution, MFE/MAE scatter with "profit left on the table" and "losers that were 1 R ahead", and the cost analysis (commission, swap and fees as a share of the gross profit, the spread in R at the signal, the recorded slippage).
+- **Trader behavior** (manual trades, at least 10): overtrading days, revenge trades (a bigger lot within 30 minutes after a loss), losers held longer than winners, trades within 15 minutes of high-impact news, lot-size inconsistency, trading outside the best hours.
+- **Risk of ruin and projection**: the real trades' returns reshuffled with replacement (the backtest's Monte-Carlo) for the risk of ruin, and a 100-trade projection with the 5th, 50th and 95th percentile.
+- **Comparisons**: live vs paper (and the latest saved backtests), strategy vs strategy, config vs config, the last 30 days vs the 30 before.
+- **Export**: CSV of the trades and of the shown breakdown, PNG of the shown chart, in `profiles/<profile>/exports`.
+- **Journal** (`app/journal/`, spec C12): the plain-language story of every trade (side, lots, price, why, SL/TP and risk, chance, every SL/TP change, result in money and R with costs, best and worst move), your notes, tags, a 1 to 5 rating and an emotion for manual trades, in the synced `journal` table.
+- **Reports**: a daily report after each broker trading day and a weekly one after each week: P/L, trades, win rate, best and worst trade, rejected signals by reason, costs, log warnings and errors, health issues and anomalies (high slippage, many requotes). Saved in `daily_reports` (synced), as Markdown in `profiles/<profile>/reports` and sent as a notification (and so to Telegram).
+- **Notifications** (`app/notify/`, spec C14): trade opened or closed, approval needed, a limit hit or the kill switch, MT5 disconnected, an error, cloud sync failing, model drift and the reports, found by comparing the engine's snapshots. Per-event switches for the Windows notification and Telegram, quiet hours (urgent alerts always go out), repeats within 10 minutes dropped.
+- **Telegram bot** (optional): long polling over HTTPS (nothing listens on this PC); token in Windows Credential Manager; only whitelisted chat ids; `/pin` unlocks a chat for 15 minutes (the PIN is stored only as a salted hash; 5 wrong PINs lock it for 15 minutes); `/status`, `/positions`, `/pnl`, `/pause`, `/resume` (only after `/pause`), `/approve <id>`, `/killswitch` with a confirmation within 60 seconds. Every command is in the audit log with source `telegram`.
+- **Pages**: the Dashboard (balance, equity, today, open risk, last 30 days, equity curve, limit usage bars, open positions, latest signals, market bias), Analytics (filters, Summary, Breakdowns, Equity, Monthly returns, R and MFE/MAE, Costs, Behavior, Risk of ruin, Compare, export), Journal (trades with the editor and a tag filter, the P/L calendar, reports with "make now"), Settings > Notifications, the tray notifications, and a History tab on Positions & Trades with filters and a detail view (story, reasoning, features, decision trace, events, journal notes).
+- **Fixed from your PC log of 3 October** (ADR 112): on Saturday the stale Friday price moved the broker clock every 30 minutes (UTC+3 down to UTC-11.5), and the next history import and your backtest used it, so trade times, sessions and the "market open" check were wrong. The clock now needs two ticks 10 minutes apart that move with real time, ignores the weekend and impossible offsets, and drops a saved impossible clock (your trades are re-imported with the right times when the market opens). The "pause after consecutive losses" filter never ended (122 backtest signals were blocked by it); it now lasts 24 hours from the newest loss (setting "Pause length after those losses").
+- ADRs 105 to 112 in `docs/ARCHITECTURE.md`.
+
+### Checklist
+
+- ✓ **Numbers match hand-checked examples**: win rate, profit factor, expectancy, payoff, drawdown in money and percent, recovery factor, time to recover, streaks, monthly returns, R distribution, MFE/MAE, costs (`tests/unit/test_analytics_stats.py`, `test_analytics_breakdowns.py`)
+- ✓ Breakdowns by every key add up to all trades
+- ✓ Behavior checks flag revenge trades, overtrading, lots, news trades and long-held losers on made-up trades
+- ✓ Daily and weekly reports by hand, made once per period, saved and sent (`test_journal.py`)
+- ✓ Journal entries round-trip, values are checked (rating 1 to 5, known emotions)
+- ✓ Notifications: changes notify once, quiet hours hold non-urgent ones, urgent ones always go out, repeats are dropped (`test_notify.py`)
+- ✓ Telegram: only whitelisted chats, PIN unlock and lockout, kill switch confirmation in time, every command audited; the PIN is never saved in clear
+- ✓ The pages: Analytics, Journal, Dashboard, Notifications and the tray (`tests/ui/`, CI)
+- ✓ Architecture test: analytics, journal and notify never trade or import Qt; only `notify/telegram.py` talks to the network
+- ✓ The broker clock never moves on a stale price (the PC log case is a test) and the loss pause ends after its hours (`test_core_clock.py`, `test_signal_filters.py`)
+- ✗ **Not yet run on your PC** (see "Test on your PC")
+- ✗ The journal keeps no chart pictures of the entry and exit (only the data hook); the History detail has no chart
+- ✗ The Dashboard positions show P/L, not the live R or the distance to the SL
+- ✗ Go-Live readiness is Phase 13 (the Dashboard says so)
+- ✗ No LLM summaries (Phase 15)
+- ✗ The P/L calendar uses UTC days; the reports use broker days
+- ✗ Drift is not checked on a schedule yet, so the drift notification only comes from the Model page
+
+### Test on your PC
+
+1. Download the build artifact, run `MT5TradingWorkstation.exe --self-check`: all lines OK.
+2. Start the app, Settings > Data & cloud sync > **Import history now** (the analytics read your closed trades).
+3. Advanced view > Dashboard: balance, equity, today and the limit bars fill in after MT5 connects.
+4. Analyze > Analytics: set the dates, click **Update**; look at Summary, Breakdowns, Equity, Monthly returns, Behavior (your manual trades) and Risk of ruin. Click **Export CSV** and **Save chart PNG**; the files are in `profiles/<profile>/exports`.
+5. Analyze > Journal: select a trade, read its story, add a note, tags and a rating, **Save**. Open the P/L calendar. In Reports click **Make yesterday's report**.
+6. Settings > Notifications: click **Send a test notification**; a Windows notification must appear. Optional Telegram: create a bot with @BotFather, paste the token, add your chat id (send /start to @userinfobot to see it), set a PIN, tick "Use the Telegram bot", **Save**, then send `/pin <PIN>` and `/status` to your bot.
+7. Positions & Trades > History: select a trade; the detail shows the story, the decision trace and the events.
+8. On Monday after the market opens, `all.log` should say `Broker time: UTC+2/+3 (US summer time)` within about 10 minutes and import the history again; no "Broker time jumped" lines at the weekend any more.
+9. Send `logs/all.log` (categories `notify` and `audit`) and a screenshot of Analytics.
+
+### Limitations
+
+- Percentages and the projection need the account balance (MT5 connected); without it the page shows money only.
+- The start balance of the shown period is today's balance minus the shown trades' result, so it is approximate when you deposited or withdrew in that period.
+- Telegram commands are polled every few seconds; the bot works only while the app runs.
+
+## Phase 11: ML win probability (branch `phase/11-ml`, pull request #21)
 
 Status: built and tested with unit tests (features, labels, metrics, calibration, purged walk-forward, training, registry, predictor, drift, the pipeline hook) on a small test model, and with the real LightGBM in CI (training, TreeSHAP, the text format, the registry, training in a separate process, the self-check). Not yet run on your PC. The model is an estimate on noisy data; it may well never beat the baseline, and then the app keeps using the baseline (spec B0).
 
