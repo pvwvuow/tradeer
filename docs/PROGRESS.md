@@ -13,7 +13,8 @@ Continue in a new chat with: "Read docs/SPEC.md and docs/PROGRESS.md and continu
 - Phase 7: Risk, pull request #17, CI green, waiting for review.
 - Phase 8: Execution, pull request #18, CI green, waiting for review (demo test on a weekday still open).
 - Phase 9: Simple Mode, pull request #19, CI green, waiting for review.
-- Phase 10: Backtesting, pull request #20, in review.
+- Phase 10: Backtesting, pull request #20, CI green, waiting for review.
+- Phase 11: ML win probability, stacked on Phase 10, in review.
 
 ## Phase 1: Foundation (pull request #1, merged)
 
@@ -21,7 +22,61 @@ Built: Python 3.11 project with exact pins, ruff, mypy (strict), pytest, pytest-
 
 Follow-up: the full pipeline (mypy, frozen self-check and crash test, installer, CodeQL, release-please) was enabled in `.github/workflows/` by the CI maintainer through pull request #11.
 
-## Current phase: 10 Backtesting (branch `phase/10-backtesting`, pull request #20)
+## Current phase: 11 ML win probability (branch `phase/11-ml`, pull request into `phase/10-backtesting`)
+
+Status: built and tested with unit tests (features, labels, metrics, calibration, purged walk-forward, training, registry, predictor, drift, the pipeline hook) on a small test model, and with the real LightGBM in CI (training, TreeSHAP, the text format, the registry, training in a separate process, the self-check). Not yet run on your PC. The model is an estimate on noisy data; it may well never beat the baseline, and then the app keeps using the baseline (spec B0).
+
+### What was built
+
+- **Features** (`app/ml/features.py`, spec C10): 32 numbers known when the signal is made (EMA distances and slope, RSI, ADX, ATR percentile, Bollinger width, candle shape, H1/H4 structure, the last H1 break, room to the next level, support behind, daily range used, minutes to high-impact news, sessions, hour and weekday, R:R, strategy, order type), normalized by ATR and signed in the trade's direction. Every new signal stores them (`ml.*` in its features and its decision trace), live and in backtests. Versioned by a schema hash.
+- **Labels** (`app/ml/labeler.py`): every signal replayed forward with the backtest's rules and cost model: next-bar entries, pending fills, SL and TP in the same candle = loss, timeout after N bars (by the sign of R, as a loss, or left out), and the continuous R with commission and swap. A test checks the labels against the backtest's own trades.
+- **Training set** (`app/ml/dataset.py`, `app/ml/job.py`): the strategies replayed on MT5 history with the backtest engine (every signal, filtered ones too), labelled, for one or more symbols.
+- **Validation** (`app/ml/validation.py`, `app/ml/trainer.py`): purged walk-forward folds with a 24-hour embargo, never shuffled; out-of-sample ROC-AUC, log-loss, Brier score, the calibration curve, and the win rate, expectancy (R) and profit factor per probability bucket; the same signals scored with the **baseline** (the strategy's win rate).
+- **Baseline rule**: fewer than 300 labelled signals (setting) gives no model; a model that does not have both a lower log-loss and a lower Brier score than the baseline out of sample is saved but **cannot be activated**.
+- **Calibration** (`app/ml/calibration.py`): isotonic from 1,000 out-of-fold predictions, else a sigmoid; checked out of sample (each fold calibrated on the folds before it).
+- **Model** (`app/ml/model.py`): LightGBM 4.6.0 (the only new dependency), loaded only when needed; saved in LightGBM's text format inside a JSON file, never as a pickle.
+- **Explanations** (`app/ml/predictor.py`): the three factors that moved the probability most, from LightGBM's exact TreeSHAP values, in plain words ("a strong trend +8%", "a wide spread -5%"), in the decision trace.
+- **Registry** (`app/ml/registry.py`): version, training period, symbols, strategies, feature list and schema hash, metrics and file hash in `profiles/<profile>/models/` and the synced `model_versions` table; activate, roll back, use the baseline; a changed file or another feature schema is refused.
+- **Pipeline** (`app/engine/signal_pipeline.py`): the active model gives the probability ("62% ± 8 (n = 140, model v3)") for the strategies it was trained on; the EV and the filters use it; if the model fails, the baseline is used and a warning is logged.
+- **Drift** (`app/ml/drift.py`): the live win rate of the last 50 model trades against the mean prediction, and each feature's PSI against the training data; a warning suggests training again.
+- **Model page** (`app/ui/model_page.py`): symbols, dates, strategies, signals needed, folds and timeout; Train (history from MT5 in a thread, training in a separate process, progress, Cancel); the report (scores vs baseline, calibration, buckets, importance, folds); versions with Use selected model, Roll back and Use the baseline; drift.
+- **Self-check**: `--self-check` now trains and reloads a tiny LightGBM model ("ML library"), also in the frozen build.
+- ADRs 96 to 104 in `docs/ARCHITECTURE.md`.
+
+### Checklist
+
+- ✓ **The out-of-sample report and the baseline comparison**: a real pattern beats the baseline and can be activated; noise does not and **activation is refused** with the reason (`tests/unit/test_ml_trainer.py`, `test_ml_registry.py`)
+- ✓ Below 300 signals the probability stays the baseline (`test_too_few_signals_keep_the_baseline`)
+- ✓ Purged walk-forward: training labels end before each test fold minus the embargo; folds never use future samples (`test_ml_validation.py`, `test_folds_never_use_future_samples`)
+- ✓ Labels follow the backtest's rules and agree with its trades (`test_ml_labeler.py`)
+- ✓ Calibration (isotonic and sigmoid), metrics and buckets against hand-calculated numbers
+- ✓ Registry: versions, file hash, schema check, activate, rollback; three plain-word factors and an interval with n (`test_ml_registry.py`)
+- ✓ The pipeline uses the active model and falls back to the baseline when it fails (`test_ml_pipeline.py`)
+- ✓ Drift: PSI and the live-vs-predicted warning (`test_ml_drift.py`)
+- ✓ LightGBM: TreeSHAP sums to the prediction, the text format reloads exactly, missing values work, training in a separate process (`test_ml_lightgbm.py`, CI)
+- ✓ Architecture test: the model code never trades, never imports Qt or the MT5 gateway, never pickles; only `ml/model.py` imports LightGBM
+- ✗ **Not yet run on your PC** (see "Test on your PC")
+- ✗ The currency-strength difference (spec C10) is not a feature: it needs the other pairs at the same bar
+- ✗ SL and TP in the same candle are always a loss (no M1 resolution), as in the backtest
+- ✗ Drift is checked when the Model page opens or a version changes, not on a schedule; no notification yet (Phase 12)
+- ✗ Models are saved in Supabase as their registry row (metrics, hashes); the model file itself stays on this PC
+
+### Test on your PC
+
+1. Download the build artifact of this pull request, unzip, run `MT5TradingWorkstation.exe --self-check`: the new line "ML library: LightGBM 4.6.0 trains and explains" must say OK.
+2. In MT5 set Tools > Options > Charts > "Max bars in chart" to Unlimited and restart MT5 (training needs long history).
+3. Start the app, Advanced view, Analyze > Model. Keep the symbols (or type `EURUSD, GBPUSD, XAUUSD`), keep the last two years and both strategies, click **Train model**. The window must stay usable; the progress bar moves (replaying, labelling, walk-forward folds).
+4. Read the result: either "Baseline only: N labelled signals, 300 needed" (normal for two example strategies), or the report with the model and the baseline side by side, the buckets and the importance. "Not better than the baseline" means it is saved but cannot be used.
+5. If a version beats the baseline: select it, click **Use selected model**. New signals then show "model v1" in their probability (Signals page, decision trace) with three factors. **Roll back** and **Use the baseline** switch back.
+6. Send `logs/all.log` (categories `ml` and `audit`) and a screenshot of the report.
+
+### Limitations
+
+- Two example strategies make few signals: two years on three symbols may still stay below 300. That is the honest answer, not an error.
+- The model estimates the chance at entry only; it is never shown for open trades.
+- Training takes about as long as a backtest of the same period per symbol (minutes per symbol-year).
+
+## Phase 10: Backtesting (branch `phase/10-backtesting`, pull request #20)
 
 Status: built and tested with unit tests (the broker rules, the engine, the metrics against hand-calculated numbers, Monte-Carlo, walk-forward, sensitivity, the history loader, the command and **the backtest-vs-live equality test**) and Qt tests of the Backtest page that run in CI. Not yet run on your PC. The MT5 Strategy Tester runs MQL5 experts only and cannot be driven from Python, so this engine replaces it.
 
@@ -468,4 +523,5 @@ Acceptance checklist (spec G3 phase 2):
 4. Run "Test on your PC" from the Phase 8 pull request on your demo account on a weekday, while the market is open (`--mt5-trade-test`, then a paper and a Semi-auto approval, the restart and the kill switch).
 5. Run "Test on your PC" from the Phase 9 pull request (the Home screen, the first start, Approve, Skip, Close now and Stop) on a weekday.
 6. Run "Test on your PC" from the Phase 10 pull request (`--backtest` and the Backtest page); it works at the weekend too.
-7. Phase 11 (ML win probability) is stacked on Phase 10.
+7. Run "Test on your PC" from the Phase 11 pull request (the self-check line and one training run on the Model page).
+8. Phase 12 (analytics, journal, reports, notifications) is stacked on Phase 11.
