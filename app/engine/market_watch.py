@@ -2,9 +2,10 @@
 
 Every 2 seconds one cheap MT5 request reads each watched symbol's price and newest closed M5
 bar. Only when a new M5 bar has closed is a symbol analysed again: its bars on every
-timeframe are brought up to date and `analyze_symbol` builds a fresh card. Correlation and
-currency strength follow every new H1 bar. Listeners receive a `MarketSnapshot` (plain data,
-safe to hand to the UI thread).
+timeframe are brought up to date and `analyze_symbol` builds a fresh card; the cards are
+also redone once when the market closes or opens. Correlation and currency strength follow
+every new H1 bar. Listeners receive a `MarketSnapshot` (plain data, safe to hand to the UI
+thread).
 
 While MT5 still loads a symbol's history (its bars trail the live price), the card waits
 instead of judging old bars (ADR 49).
@@ -128,6 +129,7 @@ class MarketWatch:
         self._strength: tuple[CurrencyStrength, ...] = ()
         self._strength_hour: int | None = None
         self._calendar_at: float | None = None
+        self._market_was_open: bool | None = None
         self._snapshot = MarketSnapshot("waiting", "Waiting for the MT5 connection")
 
     # Public API --------------------------------------------------------------------------
@@ -268,20 +270,26 @@ class MarketWatch:
             self._observe(quote, now)
         events = list(self._events(now))
         is_open = market_open(now)  # a closed market has no new bars to wait for
+        # The last bar of the week never closes in MT5 (no tick after Friday's close), so the
+        # cards are redone once when the market opens or closes; strategies do not run again.
+        flipped = self._market_was_open is not None and is_open != self._market_was_open
+        self._market_was_open = is_open
         for name, broker in self._mapping.items():
             newest = poll.newest_m5.get(broker)
             why = poll.loading(broker) if is_open else None
             if self._history_loading(name, broker, why, now):
                 continue
             due = force or name not in self._analyses or broker in self._pending
-            if not due and newest == self._last_bar.get(broker):
+            new_bar = newest != self._last_bar.get(broker)
+            if not due and not new_bar and not flipped:
                 continue
             self._pending.discard(broker)
             for timeframe in ANALYSIS_TIMEFRAMES:
                 self.market.update(broker, timeframe)
             self._last_bar[broker] = newest
             self._analyses[name] = self._analyze(name, broker, now, events)
-            self._fresh.append(name)
+            if due or new_bar:
+                self._fresh.append(name)
 
     def _history_loading(self, name: str, broker: str, why: str | None, now: float) -> bool:
         """True while MT5 still loads this symbol's bars: the card waits for them."""

@@ -192,3 +192,31 @@ def test_the_signal_hook_runs_after_each_new_analysis() -> None:
         watcher.cycle()  # no new closed bar: strategies do not run again
         assert sorted(hook.analysed) == sorted(SYMBOLS)
         assert hook.cycles == 2
+
+
+class SymbolsHook:
+    def __init__(self) -> None:
+        self.analysed: list[str] = []
+
+    def on_analysis(self, analysis: object, **options: object) -> None:
+        self.analysed.append(getattr(analysis, "symbol", ""))
+
+    def on_cycle(self, now: float | None = None) -> None:
+        return None
+
+
+def test_the_cards_say_market_closed_when_the_week_ends() -> None:
+    hook = SymbolsHook()
+    with watch(["EURUSD"], signals=hook) as (watcher, fake, clock, logs):
+        clock.now = datetime(2026, 10, 2, 20, 57, 30, tzinfo=UTC).timestamp()  # Friday
+        first = watcher.cycle().analyses["EURUSD"]
+        assert "New York session" in first.card.headline
+        clock.now += 4 * 60  # 21:01:30 UTC: the market closed; no tick, so no new bar
+        fake.stale_history["EURUSD.m"] = 4 * 60
+        closed = watcher.cycle().analyses["EURUSD"]
+        assert "Market closed (weekend)" in closed.card.headline
+        assert closed.bar_time == first.bar_time
+        assert hook.analysed == ["EURUSD"]  # strategies did not run again on the same bar
+        clock.now += 30
+        assert watcher.cycle().analyses["EURUSD"] is closed  # redone once, not every poll
+        assert sum(1 for _, text in logs if "Market closed (weekend)" in text) == 1
