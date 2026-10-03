@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/pvwvuow/tradeer/compare/v0.12.0...v0.13.0) (2026-10-03)
+
+
+### Features
+
+* **ui:** UI rework for 0.13.0 (design system 2) ([#24](https://github.com/pvwvuow/tradeer/issues/24)) ([8be1308](https://github.com/pvwvuow/tradeer/commit/8be1308eea092cd8362e2446f9205b81c5f9dada))
+
 ## [0.12.0](https://github.com/pvwvuow/tradeer/compare/v0.1.0...v0.12.0) (2026-10-03)
 
 
