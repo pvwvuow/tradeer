@@ -126,7 +126,7 @@ def test_audit_entries_record_before_and_after() -> None:
         finally:
             pipeline.stop()
         records = entries(root, "audit")
-    assert records[0]["message"] == "Audit: log_level_changed"
+    assert records[0]["message"] == "Audit: log_level_changed (level INFO \u2192 DEBUG)"
     assert records[0]["context"]["before"] == {"level": "INFO"}
     assert records[0]["context"]["after"] == {"level": "DEBUG"}
     assert records[0]["context"]["source"] == "user"

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger as _loguru
 
+from app.observability.audit_text import change_summary
 from app.observability.buffer import RecentLogBuffer
 from app.observability.categories import DEFAULT_CATEGORY, LogCategory
 from app.observability.files import LogFileWriter
@@ -55,7 +56,8 @@ def audit(
         before=before,
         after=after,
     )
-    log.opt(depth=1).info("Audit: {}", action)
+    summary = change_summary(before, after)
+    log.opt(depth=1).info("Audit: {}", f"{action} ({summary})" if summary else action)
 
 
 def log_startup(details: Mapping[str, object]) -> None:
