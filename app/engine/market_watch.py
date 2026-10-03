@@ -135,6 +135,14 @@ class MarketWatch:
     def clock(self) -> BrokerClock:
         return self.market.clock
 
+    def broker_symbol(self, name: str) -> str:
+        """The broker's name for a watchlist symbol ("EURUSD" -> "EURUSD.m")."""
+        with self._lock:
+            mapping = dict(self._mapping)
+        if name in mapping.values():
+            return name
+        return mapping.get(name, name)
+
     @property
     def snapshot(self) -> MarketSnapshot:
         with self._lock:
