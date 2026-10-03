@@ -58,6 +58,12 @@ class FilterSettings(BaseModel):
         le=20,
         description="Pause after this many losses",
     )
+    pause_hours: float = Field(
+        default=24.0,
+        ge=0,
+        le=720,
+        description="Pause length after those losses (hours)",
+    )
     max_spread_atr: float = Field(
         default=0.25,
         gt=0,
@@ -116,6 +122,7 @@ class FilterInput:
     data_text: str
     trade_mode: SymbolTradeMode
     duplicate_of: str = ""
+    hours_since_losses: float | None = None  # since the newest loss of the losing streak
 
 
 def _minutes(text: str) -> int:
@@ -218,11 +225,18 @@ def run_filters(data: FilterInput, settings: FilterSettings) -> list[TraceStep]:
         settings.cooldown_bars_after_loss,
         "no recent loss" if waited is None else f"{waited} bars since the last loss",
     )
+    since = data.hours_since_losses
+    paused = data.losses_in_row >= settings.pause_after_losses
+    over = since is not None and since >= settings.pause_hours
+    pause_text = f"{data.losses_in_row} losses in a row"
+    if paused and since is not None:
+        pause_text += f", {since:.1f} h of the {settings.pause_hours:g} h pause"
     add(
         "pause after consecutive losses",
-        data.losses_in_row < settings.pause_after_losses,
+        not paused or over,
         data.losses_in_row,
         settings.pause_after_losses,
+        pause_text,
     )
     spread, atr, risk = data.spread, data.atr, signal.risk
     known = math.isfinite(spread) and spread >= 0
