@@ -146,3 +146,16 @@ def test_the_trade_test_refuses_real_accounts_before_any_order() -> None:
     text = sources()["brokers/trade_test.py"]
     refuse = text.index("AccountKind.DEMO")
     assert refuse < text.index("send_open(")
+
+
+def test_the_backtest_never_trades_or_imports_qt() -> None:
+    """Spec C8: the backtest replays history through the backtest broker only."""
+    texts = sources()
+    names = [name for name in texts if name.startswith("backtest/")]
+    names.append("brokers/backtest_broker.py")
+    for name in names:
+        assert "live_broker" not in texts[name], name
+        assert not ORDER_CALLS.search(texts[name]), name
+        assert "PySide6" not in texts[name], name
+    engine = texts["backtest/engine.py"]
+    assert re.findall(r"app\.mt5\.(gateway|api|terminal_process)\b", engine) == []
