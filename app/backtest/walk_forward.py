@@ -61,9 +61,7 @@ class WalkForwardResult:
         """The Go-Live rule: enough out-of-sample trades with a positive expectancy."""
         expectancy = self.metrics.expectancy_r
         return (
-            self.metrics.trades >= self.minimum_trades
-            and expectancy is not None
-            and expectancy > 0
+            self.metrics.trades >= self.minimum_trades and expectancy is not None and expectancy > 0
         )
 
     def to_json(self) -> dict[str, Any]:
