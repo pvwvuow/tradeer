@@ -1,8 +1,8 @@
 # User guide
 
-## What works today (Phase 11)
+## What works today (Phase 12)
 
-Phase 11 adds the win-probability model: train it on MT5 history on the Model page, see how it does out of sample next to the baseline, and use it only when it is better (see "Model page"). Phase 10 added backtesting: replay the strategies on MT5 history with the same code that trades live, with walk-forward, Monte-Carlo and a sensitivity heatmap (see "Backtest page" and "Backtest from the command line"). Phase 9 added the Simple view's Home screen: one trade suggestion at a time in plain words with Approve and Skip, your balance, your open trades with Close now, and Stop trading now (see "Home (Simple view)"). Phase 8 added trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
+Phase 12 adds the Dashboard, the Analytics and Journal pages, daily and weekly reports, Windows notifications and an optional Telegram bot (see "Dashboard", "Analytics page", "Journal page" and "Notifications and Telegram"). Phase 11 added the win-probability model: train it on MT5 history on the Model page, see how it does out of sample next to the baseline, and use it only when it is better (see "Model page"). Phase 10 added backtesting: replay the strategies on MT5 history with the same code that trades live, with walk-forward, Monte-Carlo and a sensitivity heatmap (see "Backtest page" and "Backtest from the command line"). Phase 9 added the Simple view's Home screen: one trade suggestion at a time in plain words with Approve and Skip, your balance, your open trades with Close now, and Stop trading now (see "Home (Simple view)"). Phase 8 added trading: approve a signal and the app places the order with its stop loss and take profit, manages it and records the result (see "Approving a signal", "Positions & Trades" and "Kill switch"). Paper is the default, so nothing reaches your MT5 account until you choose Semi-auto. Phase 7 added risk management: every signal is sized from your account and checked against your limits, and the Risk page shows them (see "Risk page"). Phase 6 added strategies and signals: the Signals page and the Strategies page (see below). Phase 5 added the Market page: analysis cards, a trend matrix, an interactive chart, correlation, currency strength and the economic calendar. See "Market page" below. Phase 4 added the local database, optional cloud sync and trade history import.
 
 - **Simple view** (default): the Home screen in plain language (see "Home (Simple view)"). **Settings** (top bar) opens the settings, **Back to Home** returns.
 - **Advanced view**: click **Switch to Advanced** (top right). The sidebar groups the pages into Trade, Analyze and System. Pages that are not built yet say in which phase they arrive and never show sample data.
@@ -154,6 +154,7 @@ Advanced view > Positions & Trades.
 - **Trading mode**: Paper, Semi-auto or Analysis-only, then **Use this mode**. On a REAL account, Semi-auto asks you to type REAL. Auto mode needs the Go-Live checks of a later phase and cannot be chosen yet.
 - **Open**: the positions and pending orders this app opened (manual trades are not listed and never touched), with P/L, the best (MFE) and worst (MAE) move in R. **Close position** closes the selected one at the market price after a confirmation.
 - **Execution events**: fills, slippage, stop loss moves, closes and failures, newest first.
+- **History**: your closed trades with filters; select one to see its story, the signal's reasoning, features and decision trace, the events and your journal notes.
 - **Execution settings**: max deviation, retries, entry tolerance, spread limit, paper slippage, commission and start balance; and per strategy the optional management (break-even at X R, ATR trailing, partial close, time exit). All management rules are off (0) by default.
 - If the app or the PC restarts, the app finds its trades in MT5 again and keeps managing them. Your stop loss and take profit are on the broker's server, so they protect you while the app is closed.
 
@@ -215,6 +216,44 @@ Advanced view, Analyze > Model. The model estimates each signal's chance to reac
 - **Drift**: when a model is in use, the page compares its recent trades with what it predicted and checks whether the market looks different from the training data; a warning means: train it again.
 - A model made for an older version of the features cannot be used after an update; train it again.
 
+## Dashboard
+
+Advanced view, Trade > Dashboard: balance, equity, today's closed result, open risk and the last 30 days (net and win rate), the equity curve of your closed trades, how much of each risk limit is used (daily loss, drawdown, open risk, open trades), your open positions, the latest signals and the market bias of every watched symbol. It only shows; it never changes anything. The Go-Live checklist comes in Phase 13.
+
+## Analytics page
+
+Analyze > Analytics. Choose the dates, the account, symbol, strategy, mode (live or paper) and bot or manual, then click **Update**.
+
+- **Summary**: trades, win rate, net profit and return, profit factor, expectancy (money and R), average win and loss, payoff ratio, largest win and loss, streaks, Sharpe and Sortino, max drawdown with how long it lasted, recovery factor, time to recover and costs. Under 30 trades the page warns that the numbers are mostly luck.
+- **Breakdowns**: the same numbers per symbol, strategy, direction, session, hour, weekday, month, holding time, probability bucket, config, bot or manual, and mode.
+- **Equity**, **Monthly returns** (a green and red heatmap), **R and MFE/MAE** (how far trades went for and against you: "winners gave back 0.8 R", "4 losers were 1 R ahead first"), **Costs** (commission, swap and fees as a share of the gross profit; the spread is already inside the prices).
+- **Behavior** (your manual trades): overtrading days, revenge trades, losers held longer than winners, trades around high-impact news, changing lot sizes, trading outside your best hours.
+- **Risk of ruin**: your real trades reshuffled thousands of times: the chance of a 50% drawdown and a 100-trade projection with a likely range. Past trades do not promise future ones.
+- **Compare**: live vs paper (and your latest backtests), strategy vs strategy, config vs config, the last 30 days vs the 30 before.
+- **Export CSV** saves the trades and the shown breakdown, **Save chart PNG** the shown tab, in `profiles/<profile>/exports`.
+
+Percentages need MT5 connected (the account balance). The start balance of the period is today's balance minus the shown trades' result, so deposits and withdrawals in the period make it approximate.
+
+## Journal page
+
+Analyze > Journal.
+
+- **Trades**: every closed trade with its story in plain words (what, why, the SL and TP, every change the app made, the result with costs). Add your notes, tags (comma separated), a rating from 1 to 5 and, for your own trades, how you felt; click **Save**. Filter the list by a tag.
+- **P/L calendar**: each day of the month with its result and number of trades (UTC days); the arrows change the month.
+- **Reports**: a daily report after each trading day and a weekly one after each week: result, trades, win rate, best and worst trade, rejected signals by reason, costs, warnings and errors, health issues and anomalies. **Make yesterday's report** and **Make last week's report** make them now. Reports are also saved as files in `profiles/<profile>/reports` and sent as a notification.
+
+## Notifications and Telegram
+
+Settings > Notifications. Choose for each event (trade opened or closed, approval needed, a limit hit, MT5 disconnected, an error, cloud sync failing, model drift, reports) whether it shows a Windows notification and whether it goes to Telegram. Quiet hours hold the others at night; urgent ones (a limit hit, a disconnect, an error) always go out. **Send a test notification** checks it.
+
+Telegram (optional):
+1. In Telegram, talk to @BotFather, send `/newbot`, copy the token.
+2. Send `/start` to your new bot, and get your chat id (for example from @userinfobot).
+3. Paste the token (it is kept in Windows Credential Manager), add the chat id, choose a PIN (4 to 12 digits), tick **Use the Telegram bot**, **Save**.
+4. In Telegram send `/pin <your PIN>` (valid 15 minutes), then `/status`, `/positions`, `/pnl`, `/pause` (stop new entries), `/resume` (only after `/pause`), `/approve <id>` (the first characters of a waiting signal's id) or `/killswitch` (then `/killswitch CONFIRM` within a minute). Other chats are ignored. Every command is in the audit log.
+
+The bot works only while the app runs.
+
 ## Trade history
 
 Open Settings, tab "Data & cloud sync", and click Import history now, or use the command "Import trade history". The first import reads your whole history; later imports read only the last few days. Importing again never creates duplicates. Each trade is marked manual, bot or external (another EA).
@@ -233,6 +272,8 @@ Times are converted to UTC with your broker's clock, including its summer-time r
 
 - `ui_prefs.json`: theme and view.
 - `execution.json`: trading mode, execution and management settings.
+- `notifications.json`: notification switches, quiet hours, Telegram chat ids and the PIN hash (the bot token is in Windows Credential Manager).
+- `exports\`: CSV and PNG files from the Analytics page; `reports\`: the daily and weekly reports.
 - `account.json`: login, server and terminal path of the saved account (no password).
 - `instance.lock`: held while the app runs on this profile.
 - `logs\`: one folder per category with one `.jsonl` file per day, plus `all.log`.

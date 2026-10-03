@@ -6,7 +6,9 @@ A Windows desktop app that will connect to **your own** MetaTrader 5 terminal, a
 
 ## Status
 
-Phase 11 of 16 (ML win probability). The Model page trains a LightGBM model on every signal the strategies made on MT5 history, validates it with purged walk-forward tests against the baseline (the strategy's own win rate), calibrates it, and lets you use it only when it beats the baseline out of sample; signals then show the estimate with its range and the three factors behind it. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+Phase 12 of 16 (Analytics, journal & notifications). The Dashboard, Analytics and Journal pages show your real results: statistics checked against hand calculations, breakdowns, charts, trader behavior, risk of ruin and comparisons; every trade has a plain-language story, your notes and ratings; daily and weekly reports; Windows notifications and an optional Telegram bot with a PIN. The honest checklist is in [docs/PROGRESS.md](docs/PROGRESS.md).
+
+From Phase 11 (ML win probability): the Model page trains a LightGBM model on every signal the strategies made on MT5 history, validates it with purged walk-forward tests against the baseline (the strategy's own win rate), calibrates it, and lets you use it only when it beats the baseline out of sample.
 
 From Phase 10 (Backtesting): the Backtest page and `--backtest` replay the strategies on MT5 history with the same code that trades live (entries at the next bar open, the same-candle rule, costs), with walk-forward, Monte-Carlo and a sensitivity heatmap; a test proves the backtest gives the same signals as live on the same data.
 
