@@ -3,7 +3,7 @@
 import json
 import os
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -16,9 +16,10 @@ from app.observability.debug_bundle import (
     BundleInputs,
     build_bundle,
     bundle_name,
-    hide_logins,
+    hide_private,
     plain,
     read_tail,
+    scrubber,
     versions,
 )
 from app.observability.health import HealthStatus
@@ -145,14 +146,55 @@ class Row:
     where: Path
 
 
-def test_plain_values_logins_and_versions() -> None:
+def test_plain_values_private_keys_and_versions() -> None:
     row = Row("disk", HealthStatus.WARNING, Path("a"))
     assert plain([row, (1, 2)]) == [{"name": "disk", "status": "warning", "where": "a"}, [1, 2]]
-    nested = {"accounts": [{"login": 123, "trade_login": "77", "name": "x"}], "login": None}
-    assert hide_logins(nested) == {
+    nested = {
+        "accounts": [{"login": 123, "trade_login": "77", "name": "x"}],
+        "login": None,
+        "chat_ids": [42],
+        "pin_hash": "",
+    }
+    assert hide_private(nested) == {
         "accounts": [{"login": MASK, "trade_login": MASK, "name": "x"}],
         "login": None,
+        "chat_ids": MASK,
+        "pin_hash": "",
     }
+    scrub = scrubber(["abc", "", "x"])
+    assert scrub("abc abcd xabc ABC") == "*** abcd xabc ***"
+    assert scrubber([])("same") == "same"
     found = versions("default", {"mt5_connection": "connected"})
     assert found["profile"] == "default" and found["mt5_connection"] == "connected"
     assert "app_version" in found and "PySide6" in found["packages"]
+
+
+def test_personal_values_are_hidden_everywhere(tmp_path: Path) -> None:
+    # Found in the first real bundle (0.18.0): the login and the account holder's name were
+    # in every "Connected to MT5" log line, also inside the crash reports' recent logs.
+    inputs = folders(tmp_path)
+    line = "Connected to MT5: 5123456 · Jane Trader · FIBO · C:\\Users\\winuser7\\AppData\n"
+    (inputs.log_dir / "all.log").write_bytes(line.encode("utf-8"))
+    os.utime(inputs.log_dir / "all.log", (NOW - 5, NOW - 5))
+    crash = {"recent_logs": [line], "ticket": 51234560}
+    (inputs.crash_dir / "crash_20260922.json").write_text(json.dumps(crash), encoding="utf-8")
+    notices = {"chat_ids": [123456789], "pin_hash": "ab12cd", "pin_salt": "", "telegram": True}
+    (inputs.settings_dir / "notifications.json").write_text(json.dumps(notices), encoding="utf-8")
+    private = ["5123456", "jane trader", "winuser7", "123456789", "", "7"]
+    found = replace(inputs, private=private)
+    result = build_bundle(found, tmp_path / "debug", now=NOW, masker=SecretMasker())
+    files = read(result.path)
+    everything = "\n".join(files.values())
+    for value in ("Jane Trader", "winuser7", "123456789", "ab12cd"):
+        assert value not in everything, value
+    assert "5123456" not in everything.replace("51234560", "")
+    assert "51234560" in everything  # a longer number that contains the login stays
+    expected = "Connected to MT5: *** · *** · FIBO · C:\\Users\\***\\AppData\n"
+    assert files["logs/all.log"] == expected
+    assert json.loads(files["settings/notifications.json"]) == {
+        "chat_ids": MASK,
+        "pin_hash": MASK,
+        "pin_salt": "",
+        "telegram": True,
+    }
+    assert "3.11" in files["versions.json"]  # short values are never masked
