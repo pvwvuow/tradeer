@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/pvwvuow/tradeer/compare/v0.14.0...v0.15.0) (2026-10-04)
+
+
+### Features
+
+* Go-Live gate and Auto mode (Phase 13b) ([#28](https://github.com/pvwvuow/tradeer/issues/28)) ([8fa8049](https://github.com/pvwvuow/tradeer/commit/8fa8049c84e8b0847795172f0de03efabcc08323))
+
 ## [0.14.0](https://github.com/pvwvuow/tradeer/compare/v0.13.0...v0.14.0) (2026-10-04)
 
 
