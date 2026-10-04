@@ -3,7 +3,7 @@ gateway, with the live broker, the paper broker and a temporary database (test c
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -12,7 +12,7 @@ from app.brokers.market import GatewayMarket
 from app.brokers.paper_broker import PaperBroker
 from app.core.execution_settings import ExecutionConfig
 from app.domain.modes import OperatingMode
-from app.domain.signals import SignalRecord
+from app.domain.signals import Signal, SignalRecord
 from app.engine.execution import ExecutionEngine
 from app.mt5.gateway import MT5Gateway
 from app.mt5.risk_reads import GatewayRiskBroker
@@ -62,6 +62,7 @@ def rig(
     fake: FakeMT5,
     store: Store,
     mode: OperatingMode = OperatingMode.SEMI_AUTO,
+    auto_gate: Callable[[Signal], str] | None = None,
 ) -> Iterator[Rig]:
     gateway = MT5Gateway(lambda: fake, idle_seconds=0.05)
     gateway.start()
@@ -99,6 +100,7 @@ def rig(
             clock=lambda: CLOCK,
             stop_trading=risk.request_stop,
             paper_step=paper.step,
+            auto_gate=auto_gate,
             log=lambda level, message: logs.append((level, message)),
             utc_now=lambda: clock[0],
         )

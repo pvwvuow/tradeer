@@ -1,9 +1,10 @@
 """The Dashboard (spec F3 page 1): balance, equity, today's result, open risk and the last
 30 days at a glance; the equity and drawdown curve; open positions; the latest signals; how
-much of each risk limit is used; and the market bias of every watched symbol.
+much of each risk limit is used; the market bias of every watched symbol; and the Go-Live
+readiness of the strategies that are on (Phase 13b).
 
-The page only reads snapshots (it polls them every two seconds) and the closed trades (every
-minute); it never changes anything.
+The page only reads snapshots (it polls them every two seconds) and the closed trades and the
+readiness (every minute); it never changes anything.
 """
 
 from __future__ import annotations
@@ -41,8 +42,8 @@ TRADES_SECONDS = 60.0
 DAY = 86_400.0
 LATEST_SIGNALS = 8
 GO_LIVE_NOTE = (
-    "Go-Live readiness (the checklist before real money) arrives in Phase 13. Until then, use "
-    "Paper or a demo account."
+    "Go-Live readiness: the checklist before Auto trades real money is on the Strategies page. "
+    "Until a strategy is approved, use Paper, Semi-auto or a demo account."
 )
 
 
@@ -53,6 +54,7 @@ class DashboardContext:
     risk: Callable[[], RiskSnapshot] | None = None
     market: Callable[[], MarketSnapshot] | None = None
     trades: Callable[[], Sequence[TradeRecord]] | None = None
+    go_live: Callable[[], str] | None = None
 
 
 def _utc(seconds: float) -> str:
@@ -130,6 +132,7 @@ class DashboardPage(QWidget):
         self.context = context or DashboardContext()
         self.trades: list[TradeRecord] = []
         self._trades_at = -math.inf
+        self._go_live_at = -math.inf
         layout = QVBoxLayout(self)
         layout.setContentsMargins(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN)
         layout.setSpacing(12)
@@ -193,7 +196,9 @@ class DashboardPage(QWidget):
         self.status = styled_label("", "muted", wrap=True)
         self.status.setObjectName("DashboardStatus")
         layout.addWidget(self.status)
-        layout.addWidget(styled_label(GO_LIVE_NOTE, "muted", wrap=True))
+        self.go_live_label = styled_label(GO_LIVE_NOTE, "muted", wrap=True)
+        self.go_live_label.setObjectName("DashboardGoLive")
+        layout.addWidget(self.go_live_label)
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_MS)
         self.timer.timeout.connect(self.refresh)
@@ -210,6 +215,9 @@ class DashboardPage(QWidget):
             except Exception as error:
                 self.status.setText(f"Trades could not be read: {type(error).__name__}")
             self._show_trades(moment)
+        if context.go_live is not None and abs(moment - self._go_live_at) >= TRADES_SECONDS:
+            self._go_live_at = moment
+            self._show_go_live(context.go_live)
         risk = context.risk() if context.risk is not None else None
         self._show_account(risk, moment)
         if context.execution is not None:
@@ -220,6 +228,13 @@ class DashboardPage(QWidget):
             pairs = bias_text(context.market())
             if pairs:
                 self.bias.setText("Market bias: " + "   ".join(f"{s} {t}" for s, t in pairs))
+
+    def _show_go_live(self, readiness: Callable[[], str]) -> None:
+        try:
+            text = readiness()
+        except Exception as error:
+            text = f"Go-Live readiness could not be read: {type(error).__name__}"
+        self.go_live_label.setText(text)
 
     def _show_account(self, risk: RiskSnapshot | None, now: float) -> None:
         usage = risk.usage if risk is not None else None

@@ -2,9 +2,10 @@
 and pending orders with Close, the kill switch and the execution settings.
 
 Only the bot's own positions are listed and can be closed here: manual trades are never
-touched (spec G4). Switching to Semi-auto on a REAL account needs the typed word REAL, Auto
-needs the Go-Live gate (Phase 13) and is not offered. Every change is in the audit log.
-Snapshots arrive from the analysis thread through a queued Qt signal.
+touched (spec G4). Switching to Semi-auto on a REAL account needs the typed word REAL. Auto
+needs the typed word AUTO and, on a REAL account, the Go-Live approval of every strategy that
+is on (Strategies page, Phase 13b). Every change is in the audit log. Snapshots arrive from
+the analysis thread through a queued Qt signal.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from app.ui.strategies_page import ParamsForm
 from app.ui.trade_history import TradeHistory, TradeHistoryWidget
 
 REAL_WORD = "REAL"
+AUTO_WORD = "AUTO"
 KILL_TEXT = (
     "Close every position this app opened, cancel its pending orders and stop new entries?\n\n"
     "Manual trades are not touched. New entries stay stopped until you re-enable trading on "
@@ -52,14 +54,25 @@ KILL_TEXT = (
 MODES: tuple[OperatingMode, ...] = (
     OperatingMode.PAPER,
     OperatingMode.SEMI_AUTO,
+    OperatingMode.AUTO,
     OperatingMode.ANALYSIS_ONLY,
 )
 MODE_NOTES: dict[OperatingMode, str] = {
     OperatingMode.PAPER: "Paper: approved signals are simulated on live prices. No real orders.",
     OperatingMode.SEMI_AUTO: "Semi-auto: approved signals become real orders on your account.",
+    OperatingMode.AUTO: (
+        "Auto: signals that pass every filter and risk check are sent without asking."
+    ),
     OperatingMode.ANALYSIS_ONLY: "Analysis-only: signals are shown, nothing is ever sent.",
 }
-AUTO_NOTE = "Auto mode needs the Go-Live gate (Phase 13) and cannot be chosen yet."
+AUTO_NOTE = (
+    "Auto needs the Go-Live gate: on a REAL account every strategy that is on needs its "
+    "approval on the Strategies page."
+)
+AUTO_TEXT = (
+    "Auto mode sends every signal that passes the filters and the risk checks without asking "
+    "you. The kill switch stops it at any time.\nType {word} to switch to Auto mode:"
+)
 COLUMNS = [
     "Mode",
     "Ticket",
@@ -85,6 +98,7 @@ class TradingContext:
     settings: ExecutionSettingsSource
     real_account: Callable[[], bool]
     history: TradeHistory | None = None
+    auto_check: Callable[[], str] | None = None  # why Auto may not be switched on, "" if it may
 
 
 class _Bridge(QObject):
@@ -119,6 +133,8 @@ def position_row(view: PositionView) -> list[str]:
 
 def mode_change_word(new: OperatingMode, real: bool) -> str:
     """The word the user must type for this change, "" when a plain confirmation is enough."""
+    if new is OperatingMode.AUTO:
+        return AUTO_WORD
     return REAL_WORD if new.places_real_orders and real else ""
 
 
@@ -320,17 +336,33 @@ class PositionsPage(QWidget):
         self.status.setText("Approvals allowed again. Re-enable new entries on the Risk page.")
         self.resume_button.setEnabled(False)
 
+    def auto_block(self) -> str:
+        """Why Auto may not be switched on now, "" when it may."""
+        if self.context is None or self.context.auto_check is None:
+            return AUTO_NOTE
+        return self.context.auto_check()
+
     def ask_mode_change(self) -> bool:
         if self.context is None:
             return False
         new = OperatingMode(str(self.mode.currentData()))
+        if new is OperatingMode.AUTO:
+            block = self.auto_block()
+            if block:
+                self.status.setText(f"Auto not switched on: {block}")
+                self._show_mode(self.context.settings.mode)
+                return False
         word = mode_change_word(new, self.context.real_account())
         if word:
-            typed = self.typed(
-                "Real money",
-                f"This is a REAL account: approved signals will place real orders.\n"
-                f"Type {word} to switch to {new.label} mode:",
-            )
+            if new is OperatingMode.AUTO:
+                title, text = "Auto mode", AUTO_TEXT.format(word=word)
+            else:
+                title = "Real money"
+                text = (
+                    f"This is a REAL account: approved signals will place real orders.\n"
+                    f"Type {word} to switch to {new.label} mode:"
+                )
+            typed = self.typed(title, text)
             if typed.strip() != word:
                 self.status.setText(f"Mode not changed: type {word} exactly.")
                 self._show_mode(self.context.settings.mode)
@@ -341,9 +373,14 @@ class PositionsPage(QWidget):
         return self.change_mode(new)
 
     def change_mode(self, new: OperatingMode) -> bool:
-        if self.context is None or new is OperatingMode.AUTO:
+        if self.context is None:
             self.status.setText(AUTO_NOTE)
             return False
+        if new is OperatingMode.AUTO:
+            block = self.auto_block()
+            if block:
+                self.status.setText(f"Auto not switched on: {block}")
+                return False
         before = self.context.settings.config
         config = before.model_copy(update={"mode": new})
         self.context.settings.save(config)

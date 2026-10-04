@@ -6,7 +6,7 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.cli import CliOptions, emit_report, parse_args, run_self_check, self_check_main
 from app.core.paths import app_data_dir
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from app.core.execution_settings import ExecutionSettingsSource
     from app.core.strategy_settings import StrategySettingsSource
     from app.engine.execution import ExecutionEngine
+    from app.engine.go_live_desk import GoLiveDesk
     from app.engine.market_watch import MarketWatch
     from app.engine.signal_pipeline import SignalPipeline
     from app.ml.service import ModelService
@@ -64,6 +65,7 @@ class MarketParts:
     execution_settings: ExecutionSettingsSource
     known_clock: Callable[[], BrokerClock | None]
     models: ModelService
+    go_live: GoLiveDesk
 
 
 @dataclass(frozen=True)
@@ -505,14 +507,17 @@ def _start_market(
     from app.core.watchlist import WatchlistSource
     from app.domain.modes import OperatingMode
     from app.engine.execution import ExecutionEngine
+    from app.engine.go_live_desk import GoLiveDesk
+    from app.engine.go_live_gate import GoLiveSource, error_counts
     from app.engine.market_watch import MarketWatch
     from app.engine.signal_pipeline import SignalPipeline
     from app.mt5.market_data import MarketData
-    from app.mt5.models import MarginMode
+    from app.mt5.models import AccountKind, MarginMode
     from app.mt5.risk_reads import GatewayRiskBroker
-    from app.observability.logger import get_logger
+    from app.observability.logger import audit, get_logger
     from app.risk.risk_manager import RiskManager
     from app.risk.settings import RiskSettingsSource
+    from app.storage.backtest_store import BacktestRepository
     from app.storage.risk_store import RiskRepository
     from app.storage.signal_store import SignalRepository
     from app.storage.trade_store import TradeRepository
@@ -612,6 +617,26 @@ def _start_market(
     def broker_symbol(name: str) -> str:
         return watch.broker_symbol(name)
 
+    def real_account() -> bool:
+        account = service.status.account
+        return account is None or account.kind is not AccountKind.DEMO
+
+    def record(action: str, before: Any, after: Any) -> None:
+        audit(action, before=before, after=after)
+
+    def errors(now: float, days: int) -> tuple[int, int]:
+        return error_counts(store.db, now, days)
+
+    go_live = GoLiveDesk(
+        gate=GoLiveSource(app_data_dir(profile)),
+        strategies=settings,
+        risk=lambda: risk_settings.config,
+        account=storage.current_account,
+        real=real_account,
+        runs=BacktestRepository(store).recent,
+        errors=errors,
+        record=record,
+    )
     execution = ExecutionEngine(
         lambda: execution_settings.config,
         market=market_reads,
@@ -631,9 +656,12 @@ def _start_market(
         broker_symbol=broker_symbol,
         stop_trading=risk.request_stop,
         paper_step=paper.step,
+        auto_gate=go_live.guard,
         log=log_execution,
     )
     log_execution("INFO", f"Trading mode: {execution_settings.mode.label}")
+    if execution_settings.mode is OperatingMode.AUTO:
+        log_execution("WARNING", "Auto mode: signals are sent without a click (Go-Live gate)")
     models = _model_service(profile, storage)
     pipeline = SignalPipeline(
         settings.strategies,
@@ -684,6 +712,7 @@ def _start_market(
         execution_settings,
         known_clock,
         models,
+        go_live,
     )
 
 
@@ -866,11 +895,15 @@ def _show_window(
             logs=observability.pipeline,
         )
         updates = _updates_context(options.profile, launch.start)
+        if insights.dashboard.trades is not None:
+            market.go_live.trades = insights.dashboard.trades
+        insights.dashboard.go_live = market.go_live.readiness
         trading = TradingContext(
             market.execution,
             market.execution_settings,
             real_account,
             insights.history,
+            auto_check=market.go_live.auto_check,
         )
         window = MainWindow(
             load_prefs(prefs_dir),
@@ -891,6 +924,7 @@ def _show_window(
             updates,
         )
         insights.attach(window)
+        window.strategies_page.attach_go_live(market.go_live)
     except Exception as error:
         reporter.report_exception(type(error), error, error.__traceback__, source="startup")
         QMessageBox.critical(None, APP_NAME, "The app could not start. A crash report was saved.")
