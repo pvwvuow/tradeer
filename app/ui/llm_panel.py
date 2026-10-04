@@ -1,0 +1,350 @@
+"""The AI Lab's optional "Ask AI" card (spec C13): the user's own OpenAI-compatible endpoint.
+
+Off by default. Saving stores the endpoint, model and prices in the profile and the API key
+in Windows Credential Manager (never in a file or a log). Asking sends only the compact
+summary from `app.analytics.llm_client`; the answer goes to the AI Lab's answer box, so the
+usual check, backtest and Paper-only activation decide what happens with it.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Callable
+from typing import Any
+
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.analytics.ai_export import ExportData
+from app.analytics.llm_client import (
+    DEFAULT_BASE_URL,
+    DEFAULT_MODEL,
+    DEFAULT_QUESTION,
+    LlmAnswer,
+    LlmContext,
+    LlmError,
+    LlmSettings,
+    ask,
+    build_messages,
+    compact_summary,
+    local_endpoint,
+    redact,
+    url_problem,
+    usage_text,
+)
+from app.core.credentials import CredentialError, read_password, save_password
+from app.ui.pages import card_frame, styled_label
+
+NOTE = (
+    "Off by default. Uses your own API key with any OpenAI-compatible endpoint (or a local "
+    "server). Only a short summary is sent: statistics, breakdowns, costs and the strategy "
+    "settings, never a password, the API key or the trade list. The answer is advice: it "
+    "goes to step 2 and nothing changes until you test and activate it."
+)
+NO_CONTEXT = "The AI connection needs the local database and the settings."
+Job = Callable[[], None]
+
+
+def _start_thread(job: Job) -> None:
+    threading.Thread(target=job, name="ai-lab-llm", daemon=True).start()
+
+
+def _no_data(now: float) -> ExportData | None:
+    return None
+
+
+def _ignore(text: str) -> str:
+    return ""
+
+
+def _price_box(name: str) -> QDoubleSpinBox:
+    box = QDoubleSpinBox()
+    box.setObjectName(name)
+    box.setRange(0.0, 1000.0)
+    box.setDecimals(3)
+    box.setPrefix("$")
+    box.setToolTip("USD per one million tokens (0 = unknown)")
+    return box
+
+
+class _Bridge(QObject):
+    answered = Signal(object)
+    failed = Signal(str)
+
+
+class LlmPanel(QWidget):
+    def __init__(
+        self,
+        data: Callable[[float], ExportData | None] = _no_data,
+        deliver: Callable[[str], str] = _ignore,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.data = data
+        self.deliver = deliver
+        self.llm: LlmContext | None = None
+        self.start_job: Callable[[Job], None] = _start_thread
+        self._asking = False
+        self.bridge = _Bridge()
+        self.bridge.answered.connect(self.show_answer, Qt.ConnectionType.QueuedConnection)
+        self.bridge.failed.connect(self.show_failure, Qt.ConnectionType.QueuedConnection)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card, layout = card_frame()
+        outer.addWidget(card)
+        layout.addWidget(styled_label("Or ask your own AI from here (optional)", "heading"))
+        layout.addWidget(styled_label(NOTE, "muted", wrap=True))
+        self.enabled_box = QCheckBox("Use my AI endpoint")
+        self.enabled_box.setObjectName("AiLlmEnabled")
+        self.url = QLineEdit()
+        self.url.setObjectName("AiLlmUrl")
+        self.url.setPlaceholderText(DEFAULT_BASE_URL)
+        self.model = QLineEdit()
+        self.model.setObjectName("AiLlmModel")
+        self.model.setPlaceholderText(DEFAULT_MODEL)
+        self._row(
+            layout,
+            self.enabled_box,
+            styled_label("Endpoint", "muted"),
+            self.url,
+            styled_label("Model", "muted"),
+            self.model,
+        )
+        self.key = QLineEdit()
+        self.key.setObjectName("AiLlmKey")
+        self.key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_price = _price_box("AiLlmInputPrice")
+        self.output_price = _price_box("AiLlmOutputPrice")
+        self.login = QCheckBox("Send the account number")
+        self.login.setObjectName("AiLlmLogin")
+        self.save_button = QPushButton("Save")
+        self.save_button.setObjectName("AiLlmSave")
+        self.save_button.clicked.connect(self.save)
+        self.forget_button = QPushButton("Remove key")
+        self.forget_button.setObjectName("AiLlmForget")
+        self.forget_button.clicked.connect(self.forget_key)
+        self._row(
+            layout,
+            styled_label("API key", "muted"),
+            self.key,
+            styled_label("Price in / out per 1M tokens", "muted"),
+            self.input_price,
+            self.output_price,
+            self.login,
+            self.save_button,
+            self.forget_button,
+        )
+        self.question = QLineEdit()
+        self.question.setObjectName("AiLlmQuestion")
+        self.question.setPlaceholderText(DEFAULT_QUESTION)
+        self.ask_button = QPushButton("Ask AI")
+        self.ask_button.setObjectName("AiLlmAsk")
+        self.ask_button.setProperty("variant", "accent")
+        self.ask_button.clicked.connect(self.ask_ai)
+        self._row(layout, styled_label("Question", "muted"), self.question, self.ask_button)
+        self.status = styled_label(NO_CONTEXT, "muted", wrap=True)
+        self.status.setObjectName("AiLlmStatus")
+        layout.addWidget(self.status)
+        self.show_settings()
+
+    @staticmethod
+    def _row(layout: QVBoxLayout, *widgets: QWidget) -> None:
+        row = QHBoxLayout()
+        for widget in widgets:
+            row.addWidget(widget)
+        layout.addLayout(row)
+
+    @property
+    def asking(self) -> bool:
+        return self._asking
+
+    def attach(self, llm: LlmContext) -> None:
+        self.llm = llm
+        self.show_settings()
+
+    def has_key(self) -> bool:
+        llm = self.llm
+        if llm is None:
+            return False
+        try:
+            return bool(read_password(llm.credentials, llm.key_name))
+        except CredentialError:
+            return False
+
+    def show_settings(self) -> None:
+        llm = self.llm
+        settings = llm.source.settings if llm is not None else LlmSettings()
+        self.enabled_box.setChecked(settings.enabled)
+        self.url.setText(settings.base_url)
+        self.model.setText(settings.model)
+        self.input_price.setValue(settings.input_price)
+        self.output_price.setValue(settings.output_price)
+        self.login.setChecked(settings.include_login)
+        saved = self.has_key()
+        self.key.clear()
+        self.key.setPlaceholderText(
+            "saved (type a new one to replace it)" if saved else "kept in Credential Manager",
+        )
+        if llm is None:
+            self.status.setText(NO_CONTEXT)
+        elif not settings.enabled:
+            self.status.setText("Off: nothing is ever sent.")
+        else:
+            key = "" if saved or local_endpoint(settings.base_url) else " Save your API key."
+            self.status.setText(
+                f"On: {settings.model}. Nothing is sent until you press Ask AI.{key}",
+            )
+        self._update()
+
+    def form_settings(self) -> LlmSettings | str:
+        """The settings in the form, or why they cannot be saved."""
+        current = self.llm.source.settings if self.llm is not None else LlmSettings()
+        values: dict[str, Any] = current.model_dump()
+        values.update(
+            enabled=self.enabled_box.isChecked(),
+            base_url=self.url.text().strip() or DEFAULT_BASE_URL,
+            model=self.model.text().strip() or DEFAULT_MODEL,
+            input_price=self.input_price.value(),
+            output_price=self.output_price.value(),
+            include_login=self.login.isChecked(),
+        )
+        try:
+            found = LlmSettings.model_validate(values)
+        except ValueError as error:
+            return f"Check the settings: {error}"
+        problem = url_problem(found.base_url) if found.enabled else ""
+        return problem or found
+
+    def save(self) -> bool:
+        llm = self.llm
+        if llm is None:
+            self.status.setText(NO_CONTEXT)
+            return False
+        found = self.form_settings()
+        if isinstance(found, str):
+            self.status.setText(found)
+            return False
+        key = self.key.text().strip()
+        before = llm.source.settings
+        try:
+            if key:
+                save_password(llm.credentials, llm.key_name, key)
+            llm.source.save(found)
+        except (CredentialError, OSError) as error:
+            self.status.setText(f"Not saved: {redact(str(error), (key,))}")
+            return False
+        llm.record(
+            "llm settings changed",
+            before.model_dump(mode="json"),
+            found.model_dump(mode="json"),
+        )
+        if key:
+            llm.record("llm api key saved", "", llm.key_name)
+        state = "on" if found.enabled else "off"
+        llm.log("INFO", f"AI connection {state}: {found.model} at {found.base_url}")
+        self.show_settings()
+        return True
+
+    def forget_key(self) -> bool:
+        llm = self.llm
+        if llm is None:
+            return False
+        try:
+            llm.credentials.delete(llm.key_name)
+        except CredentialError as error:
+            self.status.setText(f"The key was not removed: {error}")
+            return False
+        llm.record("llm api key removed", llm.key_name, "")
+        self.show_settings()
+        self.status.setText("The API key was removed.")
+        return True
+
+    def ask_ai(self) -> bool:
+        llm = self.llm
+        if llm is None:
+            self.status.setText(NO_CONTEXT)
+            return False
+        if self._asking:
+            return False
+        settings = llm.source.settings
+        if not settings.enabled:
+            self.status.setText("The AI connection is off: tick it and press Save first.")
+            return False
+        problem = url_problem(settings.base_url)
+        if problem:
+            self.status.setText(problem)
+            return False
+        try:
+            key = read_password(llm.credentials, llm.key_name) or ""
+        except CredentialError as error:
+            self.status.setText(f"The API key could not be read: {error}")
+            return False
+        if not key and not local_endpoint(settings.base_url):
+            self.status.setText("Save your API key first.")
+            return False
+        now = time.time()
+        try:
+            data = self.data(now)
+            if data is None:
+                self.status.setText(NO_CONTEXT)
+                return False
+            login = llm.login() if settings.include_login else None
+            summary = compact_summary(data, now, login=login, secrets=(key,))
+        except Exception as error:
+            self.status.setText(f"The summary failed: {type(error).__name__}: {error}")
+            return False
+        messages = build_messages(summary, self.question.text())
+        transport = llm.transport
+        self._asking = True
+        self.status.setText(f"Asking {settings.model}: only the summary is sent...")
+        self._update()
+
+        def job() -> None:
+            try:
+                answer = ask(settings, key, messages, transport=transport)
+            except LlmError as error:
+                self.bridge.failed.emit(str(error))
+                return
+            except Exception as error:
+                self.bridge.failed.emit(redact(f"{type(error).__name__}: {error}", (key,)))
+                return
+            self.bridge.answered.emit(answer)
+
+        llm.log("INFO", f"AI request to {settings.model}: {len(summary)} characters of summary")
+        self.start_job(job)
+        return True
+
+    def show_answer(self, answer: object) -> None:
+        self._asking = False
+        if isinstance(answer, LlmAnswer):
+            usage = usage_text(answer)
+            if self.llm is not None:
+                self.llm.log("INFO", f"AI answer from {answer.model}: {usage}")
+            result = self.deliver(answer.text)
+            self.status.setText(
+                f"Answer from {answer.model} in {answer.seconds:.0f}s ({usage}). {result} "
+                "Advice only: nothing changes until you test and activate it.",
+            )
+        self._update()
+
+    def show_failure(self, text: str) -> None:
+        self._asking = False
+        self.status.setText(f"The AI request failed: {text}")
+        if self.llm is not None:
+            self.llm.log("WARNING", f"AI request failed: {text}")
+        self._update()
+
+    def _update(self) -> None:
+        ready = self.llm is not None
+        self.ask_button.setEnabled(ready and not self._asking)
+        for widget in (self.save_button, self.forget_button):
+            widget.setEnabled(ready)
