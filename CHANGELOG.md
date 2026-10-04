@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/pvwvuow/tradeer/compare/v0.13.0...v0.14.0) (2026-10-04)
+
+
+### Features
+
+* Phase 13a AI loop (AI export, suggestion import, backtest comparison, Paper-only activation) ([#26](https://github.com/pvwvuow/tradeer/issues/26)) ([46f40e7](https://github.com/pvwvuow/tradeer/commit/46f40e71024de82c3dbafeacfba61ab7e82dced6))
+
 ## [0.13.0](https://github.com/pvwvuow/tradeer/compare/v0.12.0...v0.13.0) (2026-10-03)
 
 
