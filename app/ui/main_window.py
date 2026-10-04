@@ -610,8 +610,9 @@ class MainWindow(QMainWindow):
     def _keep_english_left_to_right(self) -> None:
         """The Advanced pages, Settings and the status bar stay English: left to right."""
         for page_id, index in self._page_index.items():
-            if page_id != SIMPLE_HOME.page_id:
-                self.pages.widget(index).setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+            page = self.pages.widget(index)
+            if page_id != SIMPLE_HOME.page_id and page is not None:
+                page.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.statusBar().setLayoutDirection(Qt.LayoutDirection.LeftToRight)
 
     def _retranslate(self) -> None:
