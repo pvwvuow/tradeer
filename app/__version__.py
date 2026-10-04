@@ -1,3 +1,3 @@
 """Single source of truth for the application version (bumped by release-please)."""
 
-__version__ = "0.14.0"  # x-release-please-version
+__version__ = "0.15.0"  # x-release-please-version
