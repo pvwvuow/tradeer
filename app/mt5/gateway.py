@@ -107,6 +107,11 @@ class MT5Gateway:
     def running(self) -> bool:
         return self._running
 
+    @property
+    def queue_size(self) -> int:
+        """Requests waiting for the gateway thread (a performance metric)."""
+        return self._queue.qsize()
+
     def busy(self) -> ActiveRequest | None:
         """The request that runs right now and for how long, or None when the gateway is idle."""
         active = self._active

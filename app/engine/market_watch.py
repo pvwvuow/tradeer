@@ -8,7 +8,8 @@ every new H1 bar. Listeners receive a `MarketSnapshot` (plain data, safe to hand
 thread).
 
 While MT5 still loads a symbol's history (its bars trail the live price), the card waits
-instead of judging old bars (ADR 49).
+instead of judging old bars (ADR 49). `on_bars(milliseconds, symbols)` hears how long each
+cycle with newly closed bars took (the performance metric of spec D4).
 """
 
 from __future__ import annotations
@@ -93,6 +94,8 @@ class MarketWatch:
         utc_now: Callable[[], float] = time.time,
         interval: float = POLL_SECONDS,
         calendar_interval: float = CALENDAR_SECONDS,
+        on_bars: Callable[[float, int], None] | None = None,
+        timer: Callable[[], float] = time.perf_counter,
     ) -> None:
         self.market = market
         self._symbols = symbols
@@ -107,6 +110,8 @@ class MarketWatch:
         self._now = utc_now
         self._interval = interval
         self._calendar_interval = calendar_interval
+        self._on_bars = on_bars
+        self._timer = timer
         self._listeners: list[Listener] = []
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -192,9 +197,12 @@ class MarketWatch:
                 self._on_connected()
             self._was_connected = True
             self._update_calendar(now)
+            started = self._timer()
             self._update_symbols(now)
+            analysed = len(self._fresh)
             self._update_cross_market(now)
             self._new_signals(now)
+            self._report_bars(started, analysed)
         except MT5Error as error:
             self._log("WARNING", f"Market analysis: MT5 request failed: {error}")
             return self._publish(self._build("error", f"MT5 request failed: {error.title}", now))
@@ -404,6 +412,12 @@ class MarketWatch:
                 )
             except Exception as error:
                 self._log("ERROR", f"{name}: strategies failed: {type(error).__name__}: {error}")
+
+    def _report_bars(self, started: float, analysed: int) -> None:
+        if not analysed or self._on_bars is None:
+            return
+        with contextlib.suppress(Exception):
+            self._on_bars((self._timer() - started) * 1000.0, analysed)
 
     # Helpers -----------------------------------------------------------------------------
     def _status_text(self) -> str:
