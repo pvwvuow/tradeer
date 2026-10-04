@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from app.risk.settings import RiskSettingsSource
     from app.storage.runtime import StorageRuntime
     from app.ui.backtest_page import BacktestContext
+    from app.ui.health_page import HealthContext
     from app.ui.model_page import ModelContext
     from app.ui.updates_page import UpdatesContext
     from app.updates.state import LaunchTracker, StartInfo
@@ -47,6 +48,7 @@ UI_FREEZE_SECONDS = 10.0
 GATEWAY_FREEZE_SECONDS = 120.0
 SYNC_FREEZE_SECONDS = 600.0
 MARKET_FREEZE_SECONDS = 180.0
+HEALTH_FREEZE_SECONDS = 240.0
 SMOKE_TEST_TIMEOUT_SECONDS = 180.0
 BACKTEST_TIMEOUT_SECONDS = 6 * 3600.0
 Emit = Callable[[str], None]
@@ -827,6 +829,84 @@ def _backtest_context(
     )
 
 
+def _health_context(
+    observability: Observability,
+    profile: str,
+    service: ConnectionService,
+    storage: StorageRuntime,
+    market: MarketParts,
+) -> HealthContext:
+    """The health monitor (spec E3): reads snapshots only, never calls MT5 itself."""
+    import shutil
+    import time
+
+    from app.core.clock import fx_weekend
+    from app.engine.health_monitor import HealthMonitor, folder_size
+    from app.observability.health import HealthInputs
+    from app.observability.logger import get_logger
+    from app.storage.health_store import HealthRepository
+    from app.ui.health_page import HealthContext
+
+    health_log = get_logger(LogCategory.APP)
+    watchdog = observability.watchdog
+    repository = HealthRepository(storage.store, storage.current_account)
+    directory = app_data_dir(profile)
+
+    def write(level: str, message: str) -> None:
+        health_log.log(level, "{}", message)
+
+    def disk_free() -> float | None:
+        try:
+            return float(shutil.disk_usage(directory).free)
+        except OSError:
+            return None
+
+    def collect() -> HealthInputs:
+        now = time.time()
+        status = service.status
+        terminal = status.terminal
+        clock = market.watch.clock
+        quotes = list(market.watch.snapshot.quotes.values())
+        times = [
+            float(clock.to_utc(quote.server_time))
+            for quote in quotes
+            if quote.valid and quote.server_time > 0
+        ]
+        sync = storage.worker.engine.status
+        counts = storage.store.outbox_counts()
+        return HealthInputs(
+            now=now,
+            mt5_state=status.state.value,
+            algo_trading=terminal.trade_allowed if terminal is not None else None,
+            trade_api_disabled=terminal.tradeapi_disabled if terminal is not None else False,
+            ping_ms=terminal.ping_ms if terminal is not None else None,
+            quote_times=times,
+            market_closed=fx_weekend(now),
+            clock_measured=clock.measured,
+            clock_text=clock.text(),
+            clock_changes=[float(change.utc_time) for change in clock.changes],
+            sync_state=sync.state.value,
+            sync_message=sync.message,
+            pending=counts.pending,
+            failed=counts.failed,
+            disk_free_bytes=disk_free(),
+            log_bytes=folder_size(observability.log_dir),
+            workers=watchdog.statuses(),
+        )
+
+    def history(limit: int) -> Sequence[Any]:
+        return repository.recent(limit, problems_only=True)
+
+    watchdog.register("health", HEALTH_FREEZE_SECONDS)
+    monitor = HealthMonitor(
+        collect,
+        save=repository.record,
+        log=write,
+        heartbeat=partial(watchdog.beat, "health"),
+    )
+    return HealthContext(monitor, watchdog.statuses, history)
+
+
 def _show_window(
     observability: Observability,
     options: CliOptions,
@@ -895,6 +975,7 @@ def _show_window(
             logs=observability.pipeline,
         )
         updates = _updates_context(options.profile, launch.start)
+        health = _health_context(observability, options.profile, service, storage, market)
         if insights.dashboard.trades is not None:
             market.go_live.trades = insights.dashboard.trades
         insights.dashboard.go_live = market.go_live.readiness
@@ -922,6 +1003,7 @@ def _show_window(
             insights.journal,
             insights.notifications,
             updates,
+            health,
         )
         insights.attach(window)
         window.strategies_page.attach_go_live(market.go_live)
@@ -943,6 +1025,7 @@ def _show_window(
     window.show()
     ui_log.info("Main window shown")
     updates.service.start()
+    health.monitor.start()
     QTimer.singleShot(int(HEALTHY_SECONDS * 1000), launch.tracker.mark_healthy)
     account = load_account(prefs_dir)
     if account.configured and account.auto_connect and window.connection_page is not None:
@@ -953,6 +1036,8 @@ def _show_window(
         launch.tracker.mark_healthy()
         return code
     finally:
+        health.monitor.stop()
+        observability.watchdog.unregister("health")
         updates.service.stop()
         insights.stop()
         heartbeat.stop()

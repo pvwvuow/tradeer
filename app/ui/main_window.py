@@ -42,6 +42,7 @@ from app.ui.connection_page import ConnectionContext, ConnectionPage
 from app.ui.crash_dialog import CrashDialog
 from app.ui.dashboard_page import DashboardContext, DashboardPage
 from app.ui.data_page import DataPage
+from app.ui.health_page import HealthContext, HealthPage
 from app.ui.home_page import HomePage
 from app.ui.journal_page import JournalContext, JournalPage
 from app.ui.logs_page import LogsPage
@@ -98,6 +99,7 @@ class MainWindow(QMainWindow):
         journal: JournalContext | None = None,
         notifications: NotificationsContext | None = None,
         updates: UpdatesContext | None = None,
+        health: HealthContext | None = None,
     ) -> None:
         super().__init__()
         self.prefs = prefs
@@ -156,6 +158,7 @@ class MainWindow(QMainWindow):
         self.analytics_page = AnalyticsPage(analytics)
         self.journal_page = JournalPage(journal)
         self.ai_lab_page = AiLabPage(ai_lab_context(analytics, backtest))
+        self.health_page = HealthPage(health)
         self.notifications_page = (
             NotificationsPage(notifications) if notifications is not None else None
         )
@@ -189,6 +192,8 @@ class MainWindow(QMainWindow):
                 self._add_page(spec.page_id, self.model_page)
             elif spec.page_id == "ai_lab":
                 self._add_page(spec.page_id, self.ai_lab_page)
+            elif spec.page_id == "health":
+                self._add_page(spec.page_id, self.health_page)
             elif spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
             elif spec.page_id == "settings" and self.data_page is not None:
