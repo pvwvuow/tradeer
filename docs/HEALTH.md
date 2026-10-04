@@ -82,3 +82,4 @@ cloud sync is off the sync queue shows n/a: the rows wait on this PC (0.18.1).
 2. Logs: select a line with a trace id, Show only this trace: the timeline appears below.
 3. Logs: Export, then Open log folder > `..\exports`: the `.csv` opens in Excel.
 4. Monday to Friday: leave the app on demo for 24 hours, then Health > Create soak report.
+5. Start the run by Thursday morning so all 24 hours fall before the market closes on Friday.
