@@ -288,6 +288,10 @@ def sync_check(inputs: HealthInputs) -> HealthCheck:
 def queue_check(inputs: HealthInputs) -> HealthCheck:
     title = "Sync queue"
     pending, failed = inputs.pending, inputs.failed
+    if inputs.sync_state == "disabled":
+        # Rows wait on this PC for the day sync is switched on: nothing to fix now.
+        text = f"Cloud sync is off: {pending:,} row(s) are kept on this PC."
+        return HealthCheck("sync_queue", title, HealthStatus.UNKNOWN, text, float(pending), "rows")
     if pending > QUEUE_CRITICAL:
         status = HealthStatus.CRITICAL
     elif pending > QUEUE_WARNING or failed:

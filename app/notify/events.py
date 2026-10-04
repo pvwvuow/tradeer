@@ -121,6 +121,8 @@ def risk_notices(old: RiskSnapshot | None, new: RiskSnapshot) -> list[Notice]:
 def connection_notices(old: ConnectionStatus | None, new: ConnectionStatus) -> list[Notice]:
     if old is None or not old.connected or new.connected:
         return []
+    if new.state is ConnectionState.CONNECTING:
+        return []  # the user pressed Connect again: nothing was lost
     if new.state is ConnectionState.DISCONNECTED and not new.open_positions:
         return []  # the user disconnected on purpose
     extra = f" with {new.open_positions} open position(s)" if new.open_positions else ""
