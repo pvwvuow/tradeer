@@ -42,6 +42,7 @@ def make_desk(
         trades=lambda: trades,
         record=record,
         now=lambda: NOW,
+        health=lambda: "",
     )
     return desk, audits
 
@@ -120,3 +121,16 @@ def test_errors_and_failing_health_checks_fail_the_gate(tmp_path: Path) -> None:
     desk.errors = lambda now, days: (1, 0)
     report = desk.report(STRATEGY)
     assert not report.passed and report.failed == ["Errors and health"]
+
+
+def test_the_health_checks_must_be_green_right_now(tmp_path: Path) -> None:
+    desk, _ = make_desk(tmp_path)
+    desk.review_risk()
+    desk.health = lambda: None  # the monitor has not run yet
+    assert desk.report(STRATEGY).failed == ["Health checks now"]
+    desk.health = lambda: "Health: 1 issue(s): Algo Trading on"
+    report = desk.report(STRATEGY)
+    assert not report.passed and "Algo Trading on" in check(report, "health_now").value
+    assert "6 of 7 Go-Live checks passed" in desk.readiness()
+    desk.health = lambda: ""
+    assert desk.report(STRATEGY).passed

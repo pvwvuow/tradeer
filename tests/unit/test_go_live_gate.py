@@ -62,6 +62,7 @@ def inputs(**changes: Any) -> GateInputs:
         trades=paper(),
         risk_hash=RISK,
         reviewed_risk_hash=RISK,
+        health_now="",
     )
     return replace(base, **changes)
 
@@ -85,6 +86,7 @@ def test_everything_ready_passes() -> None:
         "slippage",
         "calibration",
         "health",
+        "health_now",
         "risk",
     ]
     assert all(line.startswith("\u2713") for line in report.lines)
@@ -134,6 +136,18 @@ def test_errors_health_and_the_risk_review() -> None:
     changed = evaluate_gate(inputs(reviewed_risk_hash="old"))
     assert check(changed, "risk").value == "changed since the review"
     assert not check(changed, "risk").passed
+
+
+def test_every_health_check_must_be_green_now() -> None:
+    unknown = check(evaluate_gate(inputs(health_now=None)), "health_now")
+    assert not unknown.passed and unknown.value == "not checked yet"
+    assert "30 seconds" in unknown.line
+    issues = evaluate_gate(inputs(health_now="Health: 1 issue(s): Disk space"))
+    found = check(issues, "health_now")
+    assert not found.passed and "Disk space" in found.value
+    assert issues.failed == ["Calibration", "Health checks now"]
+    green = check(evaluate_gate(inputs()), "health_now")
+    assert green.passed and green.value == "all green"
 
 
 def test_a_failed_gate_needs_the_typed_phrase_and_records_the_override() -> None:
