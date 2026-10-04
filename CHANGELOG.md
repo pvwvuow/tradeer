@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/pvwvuow/tradeer/compare/v0.19.0...v0.20.0) (2026-10-04)
+
+
+### Features
+
+* **i18n:** Phase 16a Persian and right to left Simple view ([#40](https://github.com/pvwvuow/tradeer/issues/40)) ([17c8e50](https://github.com/pvwvuow/tradeer/commit/17c8e500d71665abd2eec2b752026a8fb26629ca))
+
 ## [0.19.0](https://github.com/pvwvuow/tradeer/compare/v0.18.1...v0.19.0) (2026-10-04)
 
 
