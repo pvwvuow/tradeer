@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from app.mt5.checklist import ConnectRequest
     from app.mt5.connection import ConnectionService
     from app.mt5.gateway import MT5Gateway
+    from app.observability.metrics import PerfProbes
     from app.observability.runtime import Observability
     from app.risk.risk_manager import RiskManager
     from app.risk.settings import RiskSettingsSource
@@ -52,6 +54,7 @@ HEALTH_FREEZE_SECONDS = 240.0
 SMOKE_TEST_TIMEOUT_SECONDS = 180.0
 BACKTEST_TIMEOUT_SECONDS = 6 * 3600.0
 Emit = Callable[[str], None]
+STARTED_AT = time.perf_counter()  # the start-up metric (spec D4: launch to window < 5 s)
 
 
 @dataclass(frozen=True)
@@ -271,11 +274,12 @@ def _already_running(options: CliOptions, qt_args: list[str]) -> int:
 def _start_connection(
     observability: Observability,
     profile: str,
+    probes: PerfProbes,
 ) -> tuple[MT5Gateway, ConnectionService]:
     from app.core.credentials import CredentialError, KeyringStore, credential_name, read_password
     from app.core.profiles import load_account
     from app.mt5.connection import ConnectionService
-    from app.mt5.gateway import MT5Gateway, load_mt5
+    from app.mt5.gateway import MT5Gateway, RequestRecord, load_mt5
     from app.mt5.privileges import is_elevated
     from app.mt5.request_log import log_event, log_request
 
@@ -286,9 +290,14 @@ def _start_connection(
         how = "started" if start == 1 else f"restarted ({start} starts)"
         log_event("INFO", f"MT5 helper process {how}: pid {pid}, MetaTrader5 {version}")
 
+    def on_request(record: RequestRecord) -> None:
+        log_request(record)
+        if not record.skipped and record.duration_ms > 0:
+            probes.mt5_call(record.duration_ms)
+
     gateway = MT5Gateway(
         partial(load_mt5, on_start=helper_started),
-        on_request=log_request,
+        on_request=on_request,
         heartbeat=partial(watchdog.beat, "mt5-gateway"),
     )
     gateway.start()
@@ -349,14 +358,16 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
             else:
                 QMessageBox.critical(None, APP_NAME, report)
             return 1
+    from app.observability.metrics import PerfProbes
     from app.storage.runtime import StorageError
 
-    gateway, service = _start_connection(observability, options.profile)
+    probes = PerfProbes()
+    gateway, service = _start_connection(observability, options.profile, probes)
     storage: StorageRuntime | None = None
     market: MarketParts | None = None
     try:
         storage = _open_storage(observability, options.profile, gateway, service)
-        market = _start_market(observability, options.profile, gateway, service, storage)
+        market = _start_market(observability, options.profile, gateway, service, storage, probes)
         return _show_window(
             observability,
             options,
@@ -366,6 +377,7 @@ def _run_window(observability: Observability, options: CliOptions, qt_args: list
             storage,
             market,
             launch,
+            probes,
         )
     except StorageError as error:
         ui_log.critical("Local storage failed: {}", error)
@@ -494,6 +506,7 @@ def _start_market(
     gateway: MT5Gateway,
     service: ConnectionService,
     storage: StorageRuntime,
+    probes: PerfProbes,
 ) -> MarketParts:
     """The closed-bar analysis thread, the calendar and the signals (spec C2, C3, C5)."""
     import json
@@ -692,6 +705,7 @@ def _start_market(
         log=log,
         heartbeat=partial(watchdog.beat, "market-analysis"),
         signals=pipeline,
+        on_bars=probes.bar_cycle,
     )
 
     def known_clock() -> BrokerClock | None:
@@ -832,28 +846,49 @@ def _backtest_context(
 def _health_context(
     observability: Observability,
     profile: str,
+    gateway: MT5Gateway,
     service: ConnectionService,
     storage: StorageRuntime,
     market: MarketParts,
+    probes: PerfProbes,
 ) -> HealthContext:
-    """The health monitor (spec E3): reads snapshots only, never calls MT5 itself."""
+    """The health and performance monitors and the debug bundle (spec E3).
+
+    They read snapshots only and never call MT5 themselves.
+    """
     import shutil
-    import time
 
     from app.core.clock import fx_weekend
     from app.engine.health_monitor import HealthMonitor, folder_size
+    from app.engine.perf_monitor import PerfMonitor
+    from app.observability.debug_bundle import (
+        BUNDLE_FOLDER,
+        TRACE_LIMIT,
+        BundleInputs,
+        BundleResult,
+        build_bundle,
+        plain,
+        versions,
+    )
     from app.observability.health import HealthInputs
     from app.observability.logger import get_logger
+    from app.observability.metrics import PerfInputs
+    from app.observability.process_stats import CpuMeter, memory_bytes
     from app.storage.health_store import HealthRepository
+    from app.storage.perf_store import PerfRepository, recent_traces
     from app.ui.health_page import HealthContext
 
     health_log = get_logger(LogCategory.APP)
+    perf_log = get_logger(LogCategory.PERF)
     watchdog = observability.watchdog
     repository = HealthRepository(storage.store, storage.current_account)
     directory = app_data_dir(profile)
 
     def write(level: str, message: str) -> None:
         health_log.log(level, "{}", message)
+
+    def write_perf(level: str, message: str) -> None:
+        perf_log.log(level, "{}", message)
 
     def disk_free() -> float | None:
         try:
@@ -894,17 +929,64 @@ def _health_context(
             workers=watchdog.statuses(),
         )
 
+    cpu = CpuMeter()
+
+    def measure() -> PerfInputs:
+        return PerfInputs(
+            now=time.time(),
+            cpu_percent=cpu.sample(),
+            memory_bytes=memory_bytes(),
+            mt5_ms=probes.mt5.values(),
+            bar_cycles=probes.bars.samples(),
+            mt5_queue=gateway.queue_size,
+            sync_queue=storage.store.outbox_counts().pending,
+            startup_seconds=probes.startup_seconds,
+        )
+
     def history(limit: int) -> Sequence[Any]:
         return repository.recent(limit, problems_only=True)
 
+    perf = PerfMonitor(
+        measure,
+        save=PerfRepository(storage.store, storage.current_account).record,
+        log=write_perf,
+    )
     watchdog.register("health", HEALTH_FREEZE_SECONDS)
     monitor = HealthMonitor(
         collect,
         save=repository.record,
         log=write,
         heartbeat=partial(watchdog.beat, "health"),
+        after=(perf.run_once,),
     )
-    return HealthContext(monitor, watchdog.statuses, history)
+
+    def bundle() -> BundleResult:
+        checked = monitor.snapshot
+        measured = perf.snapshot
+        inputs = BundleInputs(
+            log_dir=observability.log_dir,
+            crash_dir=observability.crash_dir,
+            settings_dir=directory,
+            versions=versions(profile, {"mt5_connection": service.status.state.value}),
+            health={
+                "summary": checked.text,
+                "checked_at": checked.at,
+                "checks": plain(list(checked.checks)),
+                "workers": plain(list(watchdog.statuses())),
+                "recent_issues": plain(repository.recent(50, problems_only=True)),
+            },
+            performance={
+                "summary": measured.text,
+                "measured_at": measured.at,
+                "metrics": plain(list(measured.metrics)),
+            },
+            traces=recent_traces(storage.store, TRACE_LIMIT),
+        )
+        result = build_bundle(inputs, directory / BUNDLE_FOLDER, now=time.time())
+        write("INFO", result.text)
+        return result
+
+    return HealthContext(monitor, watchdog.statuses, history, perf, bundle)
 
 
 def _show_window(
@@ -916,6 +998,7 @@ def _show_window(
     storage: StorageRuntime,
     market: MarketParts,
     launch: Launch,
+    probes: PerfProbes,
 ) -> int:
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtWidgets import QMessageBox
@@ -975,9 +1058,18 @@ def _show_window(
             logs=observability.pipeline,
         )
         updates = _updates_context(options.profile, launch.start)
-        health = _health_context(observability, options.profile, service, storage, market)
+        health = _health_context(
+            observability,
+            options.profile,
+            gateway,
+            service,
+            storage,
+            market,
+            probes,
+        )
         if insights.dashboard.trades is not None:
             market.go_live.trades = insights.dashboard.trades
+        market.go_live.health = lambda: health.monitor.snapshot.go_live_text
         insights.dashboard.go_live = market.go_live.readiness
         trading = TradingContext(
             market.execution,
@@ -1023,7 +1115,9 @@ def _show_window(
     heartbeat.timeout.connect(partial(observability.watchdog.beat, "ui"))
     heartbeat.start(UI_HEARTBEAT_MS)
     window.show()
+    probes.startup_seconds = time.perf_counter() - STARTED_AT
     ui_log.info("Main window shown")
+    get_logger(LogCategory.PERF).info("Start-up took {:.1f} s", probes.startup_seconds)
     updates.service.start()
     health.monitor.start()
     QTimer.singleShot(int(HEALTHY_SECONDS * 1000), launch.tracker.mark_healthy)

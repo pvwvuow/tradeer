@@ -1,9 +1,10 @@
 """The Go-Live desk (Phase 13b, spec C9): the gate's checklist with the app's real data.
 
-It joins the saved backtests, the closed trades, the error log and the risk settings into a
-`GateReport` per strategy, records the risk review and the approvals (each in the audit log),
-and answers the two questions the app asks: may Auto be switched on now (`auto_check`, the
-Positions page) and may Auto send this signal (`guard`, the execution engine).
+It joins the saved backtests, the closed trades, the error log, the health monitor and the
+risk settings into a `GateReport` per strategy, records the risk review and the approvals
+(each in the audit log), and answers the two questions the app asks: may Auto be switched on
+now (`auto_check`, the Positions page) and may Auto send this signal (`guard`, the execution
+engine).
 """
 
 from __future__ import annotations
@@ -48,6 +49,10 @@ def _no_errors(now: float, days: int) -> tuple[int, int]:
     return 0, 0
 
 
+def _not_checked() -> str | None:
+    return None
+
+
 def _no_audit(action: str, before: Any, after: Any) -> None:
     return None
 
@@ -68,6 +73,8 @@ class GoLiveDesk:
     errors: Errors = _no_errors
     record: Audit = _no_audit
     now: Callable[[], float] = time.time
+    # The health monitor's verdict: None = not checked yet, "" = all green, else the issues.
+    health: Callable[[], str | None] = _not_checked
 
     @property
     def account_id(self) -> str:
@@ -90,6 +97,7 @@ class GoLiveDesk:
             failing_health=failing,
             risk_hash=config_hash(self.risk()),
             reviewed_risk_hash=state.risk_hash,
+            health_now=self.health(),
         )
         return evaluate_gate(inputs, state.thresholds)
 

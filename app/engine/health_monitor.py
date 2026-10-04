@@ -4,6 +4,7 @@
 snapshots, never calls MT5), `evaluate` applies the rules. Status changes are logged
 (WARNING for a warning, ERROR for a problem, INFO when it is OK again) and saved with
 `HealthRecorder`'s policy. The Health page reads `snapshot` and can ask for a check now.
+`after` runs once after every check in the same thread (the performance monitor).
 """
 
 from __future__ import annotations
@@ -54,6 +55,13 @@ class HealthSnapshot:
         """No warning and no problem (unknown checks do not count)."""
         return bool(self.checks) and not any(check.problem for check in self.checks)
 
+    @property
+    def go_live_text(self) -> str | None:
+        """For the Go-Live gate: None before the first check, "" when green, else the issues."""
+        if not self.checks:
+            return None
+        return "" if self.green else self.text
+
 
 def folder_size(folder: Path) -> float | None:
     """Bytes of every file below `folder`, or None when it cannot be read."""
@@ -80,6 +88,7 @@ class HealthMonitor:
         recorder: HealthRecorder | None = None,
         clock: Callable[[], float] = time.time,
         first_delay_seconds: float = FIRST_DELAY_SECONDS,
+        after: Sequence[Callable[[], object]] = (),
     ) -> None:
         self._collect = collect
         self._first_delay = first_delay_seconds
@@ -89,6 +98,7 @@ class HealthMonitor:
         self._heartbeat = heartbeat
         self._recorder = recorder or HealthRecorder()
         self._clock = clock
+        self._after = tuple(after)
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()
         self._snapshot = HealthSnapshot()
@@ -125,6 +135,11 @@ class HealthMonitor:
         for listener in listeners:
             with contextlib.suppress(Exception):
                 listener(fresh)
+        for extra in self._after:
+            try:
+                extra()
+            except Exception as error:
+                self._log("WARNING", f"After the health check: {type(error).__name__}: {error}")
         return fresh
 
     def check_now(self) -> None:
