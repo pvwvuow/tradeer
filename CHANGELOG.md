@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/pvwvuow/tradeer/compare/v0.18.0...v0.18.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **health:** problems found in the first debug bundle (privacy, sync off, reconnect alert, Go-Live) ([#36](https://github.com/pvwvuow/tradeer/issues/36)) ([504ee49](https://github.com/pvwvuow/tradeer/commit/504ee493fb5a3dc0a2cae05cc406ea567163749a))
+
 ## [0.18.0](https://github.com/pvwvuow/tradeer/compare/v0.17.0...v0.18.0) (2026-10-04)
 
 
