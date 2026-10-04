@@ -44,6 +44,14 @@ the approvals. A missing or broken file means no approvals (the safe side).
 - Dashboard: the Go-Live line shows, per strategy that is on, how many checks pass and whether
   it is approved (refreshed every minute).
 
+## Safety notes
+
+- Passing the gate is evidence, not a promise: the example strategies are not proven to be
+  profitable. Start Auto on a demo account, then on REAL with the smallest risk per trade.
+- Every Auto order still goes through the same re-check, sizing and risk limits as a manual
+  approval; the daily loss and drawdown stops apply unchanged.
+- Semi-auto (you approve every signal) stays the recommended everyday mode.
+
 ## Next
 
 - 13c: the optional OpenAI-compatible LLM in the AI Lab (key in the keyring, off by default).
