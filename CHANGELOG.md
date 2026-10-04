@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/pvwvuow/tradeer/compare/v0.16.0...v0.17.0) (2026-10-04)
+
+
+### Features
+
+* health checks every minute and the Health page (Phase 14a) ([#32](https://github.com/pvwvuow/tradeer/issues/32)) ([47b6798](https://github.com/pvwvuow/tradeer/commit/47b6798f9ae806287bfede1cfea80cff7df12f03))
+
 ## [0.16.0](https://github.com/pvwvuow/tradeer/compare/v0.15.0...v0.16.0) (2026-10-04)
 
 
