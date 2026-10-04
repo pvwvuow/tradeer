@@ -108,7 +108,7 @@ def test_big_logs_are_cut_to_their_newest_part(
 ) -> None:
     inputs = folders(tmp_path)
     lines = "".join(f"line {number:05d}\n" for number in range(2_000))
-    (inputs.log_dir / "all.log").write_text(lines, encoding="utf-8")
+    (inputs.log_dir / "all.log").write_bytes(lines.encode("utf-8"))  # \n also on Windows
     os.utime(inputs.log_dir / "all.log", (NOW - 5, NOW - 5))
     monkeypatch.setattr(debug_bundle, "MAX_FILE_BYTES", 120)
     result = build_bundle(inputs, tmp_path / "debug", now=NOW, masker=SecretMasker())
@@ -132,7 +132,7 @@ def test_the_log_budget_leaves_out_the_rest(
 
 def test_read_tail(tmp_path: Path) -> None:
     path = tmp_path / "x.log"
-    path.write_text("first\nsecond\nthird\n", encoding="utf-8")
+    path.write_bytes(b"first\nsecond\nthird\n")
     assert read_tail(path, 1000) == ("first\nsecond\nthird\n", False)
     text, cut = read_tail(path, 10)
     assert cut and text == CUT_NOTE + "third\n"
