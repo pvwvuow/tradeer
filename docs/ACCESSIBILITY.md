@@ -53,3 +53,5 @@ colors, which read on both themes).
 2. Press Tab a few times on Home: the focus ring moves through the buttons. Ctrl+, opens
    Settings.
 3. Windows display scale at 150%: text and icons are sharp, nothing is cut off.
+
+Released in 0.21.0 (Phase 16b).

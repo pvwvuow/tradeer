@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/pvwvuow/tradeer/compare/v0.20.0...v0.21.0) (2026-10-04)
+
+
+### Features
+
+* **ui:** Phase 16b accessibility and light theme polish ([#42](https://github.com/pvwvuow/tradeer/issues/42)) ([d0f0633](https://github.com/pvwvuow/tradeer/commit/d0f0633e42173d44d3152659b3549d33c22d0b91))
+
 ## [0.20.0](https://github.com/pvwvuow/tradeer/compare/v0.19.0...v0.20.0) (2026-10-04)
 
 
