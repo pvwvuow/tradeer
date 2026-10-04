@@ -1,8 +1,9 @@
 """Trading mode and execution settings (spec B3, C7, C8), saved per profile in `execution.json`.
 
-Paper is the default. Auto mode needs the Go-Live gate (Phase 13), so it cannot be saved yet:
-a file that asks for it loads as Paper with a note. Position management rules are kept per
-strategy and are all off until the user turns them on.
+Paper is the default. Auto mode can be saved (Phase 13b); the Positions page switches to it
+only after the typed word AUTO and, on a REAL account, the Go-Live approval of every strategy
+that is on, and the execution engine asks the Go-Live gate again before every Auto order.
+Position management rules are kept per strategy and are all off until the user turns them on.
 """
 
 from __future__ import annotations
@@ -12,13 +13,13 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.domain.management import ManagementSettings
 from app.domain.modes import DEFAULT_MODE, OperatingMode
 
 EXECUTION_FILE_NAME = "execution.json"
-AUTO_NOTE = "Auto mode needs the Go-Live gate (Phase 13); using Paper"
+AUTO_NOTE = "Auto mode: on a REAL account only Go-Live approved strategies are sent"
 
 
 class ExecutionSettings(BaseModel):
@@ -83,13 +84,6 @@ class ExecutionConfig(BaseModel):
     settings: ExecutionSettings = Field(default_factory=_default_settings)
     management: dict[str, ManagementSettings] = Field(default_factory=_no_management)
 
-    @field_validator("mode")
-    @classmethod
-    def _no_auto(cls, mode: OperatingMode) -> OperatingMode:
-        if mode is OperatingMode.AUTO:
-            raise ValueError(AUTO_NOTE)
-        return mode
-
     def management_for(self, strategy: str) -> ManagementSettings:
         return self.management.get(strategy) or ManagementSettings()
 
@@ -106,8 +100,6 @@ def load_execution_config(directory: Path) -> tuple[ExecutionConfig, str]:
     try:
         return ExecutionConfig.model_validate(raw), ""
     except ValidationError as error:
-        if isinstance(raw, dict) and raw.get("mode") == OperatingMode.AUTO.value:
-            return ExecutionConfig(), AUTO_NOTE
         count = error.error_count()
         return ExecutionConfig(), f"{EXECUTION_FILE_NAME}: {count} invalid value(s), using Paper"
 
