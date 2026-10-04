@@ -34,7 +34,7 @@ The detailed notes of phases 1 to 12 (what was built, the checklists and the fix
 | 14c | Soak report and the full Logs page | 0.19.0 | [HEALTH.md](HEALTH.md) |
 | 16a | Persian and right to left (Simple view) | 0.20.0 | [I18N.md](I18N.md) |
 | 16b | Accessibility and light theme polish | 0.21.0 | [ACCESSIBILITY.md](ACCESSIBILITY.md) |
-| 16c | Clean-install test, README and user guide | next release | this page |
+| 16c | Clean-install test, README and user guide | 0.22.0 | this page |
 
 ## Phase 16c: clean install, README and user guide
 

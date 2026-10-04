@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/pvwvuow/tradeer/compare/v0.21.0...v0.22.0) (2026-10-04)
+
+
+### Features
+
+* **release:** Phase 16c clean-install test and the full user guide ([#44](https://github.com/pvwvuow/tradeer/issues/44)) ([0ec8d06](https://github.com/pvwvuow/tradeer/commit/0ec8d06e3efb1d6f71f9803c3b5ae3b3c9c23451))
+
 ## [0.21.0](https://github.com/pvwvuow/tradeer/compare/v0.20.0...v0.21.0) (2026-10-04)
 
 
