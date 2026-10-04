@@ -102,6 +102,7 @@ class PerfInputs:
     mt5_queue: int | None = None
     sync_queue: int | None = None
     startup_seconds: float | None = None
+    sync_enabled: bool = True  # with cloud sync off the waiting rows are no problem
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,11 @@ def mt5_metrics(inputs: PerfInputs) -> list[Metric]:
 def queue_metrics(inputs: PerfInputs) -> list[Metric]:
     mt5 = float(inputs.mt5_queue) if inputs.mt5_queue is not None else None
     sync = float(inputs.sync_queue) if inputs.sync_queue is not None else None
+    sync_status = _status(sync, SYNC_QUEUE_BUDGET)
+    sync_text = "Rows on this PC not yet uploaded to Supabase."
+    if not inputs.sync_enabled:
+        sync_status = HealthStatus.UNKNOWN
+        sync_text = "Cloud sync is off: the rows are kept on this PC."
     return [
         Metric(
             "mt5_queue",
@@ -215,8 +221,8 @@ def queue_metrics(inputs: PerfInputs) -> list[Metric]:
             sync,
             "rows",
             f"<= {SYNC_QUEUE_BUDGET:,}",
-            _status(sync, SYNC_QUEUE_BUDGET),
-            "Rows on this PC not yet uploaded to Supabase.",
+            sync_status,
+            sync_text,
         ),
     ]
 

@@ -4,8 +4,10 @@ It holds the newest log files and crash reports, the profile's settings files, t
 health checks and performance metrics, the versions and the last decision traces, plus
 `README_DEBUG.md`, which says what is inside and gives a prompt for an AI. All text goes
 through the secret masker once more (logs are already masked when written; this is the
-second net) and account logins are hidden as well. Big log files are cut to their newest part
-so the zip stays small enough to attach.
+second net). Personal values are hidden as well: settings keys such as `login`, `chat_ids`
+and `pin_hash`, and every `private` value (the account login and holder name, Telegram chat
+ids, the Windows user name) wherever it appears, also inside log lines and crash reports.
+Big log files are cut to their newest part so the zip stays small enough to attach.
 """
 
 from __future__ import annotations
@@ -13,9 +15,10 @@ from __future__ import annotations
 import dataclasses
 import json
 import platform
+import re
 import sys
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -36,6 +39,8 @@ MAX_CRASH_REPORTS = 20
 MAX_SETTINGS_BYTES = 1024 * 1024
 TRACE_LIMIT = 50
 TEXT_SUFFIXES = frozenset({".jsonl", ".log", ".txt", ".json", ".md"})
+PRIVATE_KEYS = frozenset({"login", "chat_id", "chat_ids", "pin_hash", "pin_salt"})
+MIN_PRIVATE_LENGTH = 3
 CUT_NOTE = "[older lines cut: the file is bigger than a debug bundle allows]\n"
 AI_PROMPT = (
     "Find the root cause of this problem. The attached zip is a debug bundle of MT5 Trading "
@@ -52,7 +57,7 @@ CONTENTS = (
     ("health.json", "The latest health checks, the background workers and recent issues."),
     ("performance.json", "CPU, memory, latencies and queues with their budgets."),
     ("decision_traces.json", "The last decision traces: why each signal was taken or not."),
-    ("settings/", "The profile's settings files (secrets and logins masked)."),
+    ("settings/", "The profile's settings files (secrets and personal values masked)."),
     ("logs/", f"The log files of the last {LOG_DAYS} days (the newest part of big files)."),
     ("crash_reports/", f"The newest {MAX_CRASH_REPORTS} crash reports."),
 )
@@ -67,6 +72,7 @@ class BundleInputs:
     health: Mapping[str, Any] = field(default_factory=dict)
     performance: Mapping[str, Any] = field(default_factory=dict)
     traces: Sequence[Mapping[str, Any]] = ()
+    private: Sequence[str] = ()  # replaced by the mask wherever they appear
 
 
 @dataclass(frozen=True)
@@ -114,25 +120,49 @@ def plain(value: Any) -> Any:
     return value
 
 
-def _is_login(key: str) -> bool:
+def _is_private(key: str) -> bool:
     lowered = key.lower()
-    return lowered == "login" or lowered.endswith("_login")
+    return lowered in PRIVATE_KEYS or lowered.endswith("_login")
 
 
-def hide_logins(value: Any) -> Any:
-    """Replace account login numbers (keys `login`, `*_login`) with the mask."""
+def _empty(value: Any) -> bool:
+    return value is None or value in ("", [])
+
+
+def hide_private(value: Any) -> Any:
+    """Replace personal values (keys `login`, `*_login`, `chat_ids`, `pin_hash`...) with the
+    mask."""
     if isinstance(value, Mapping):
         return {
-            key: MASK if _is_login(str(key)) and item not in (None, "") else hide_logins(item)
+            key: MASK if _is_private(str(key)) and not _empty(item) else hide_private(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [hide_logins(item) for item in value]
+        return [hide_private(item) for item in value]
     return value
 
 
+def _same(text: str) -> str:
+    return text
+
+
+def scrubber(values: Iterable[str]) -> Callable[[str], str]:
+    """A function that masks every one of `values` (whole words, any case) in a text."""
+    words = {value.strip() for value in values if len(value.strip()) >= MIN_PRIVATE_LENGTH}
+    if not words:
+        return _same
+    ordered = sorted(words, key=len, reverse=True)
+    alternatives = "|".join(re.escape(word) for word in ordered)
+    pattern = re.compile(rf"(?<![0-9A-Za-z])(?:{alternatives})(?![0-9A-Za-z])", re.IGNORECASE)
+
+    def scrub(text: str) -> str:
+        return pattern.sub(MASK, text)
+
+    return scrub
+
+
 def masked_json(value: Any, masker: SecretMasker = MASKER) -> str:
-    cleaned = hide_logins(masker.mask_value(plain(value)))
+    cleaned = hide_private(masker.mask_value(plain(value)))
     return json.dumps(cleaned, indent=2, ensure_ascii=False, default=str) + "\n"
 
 
@@ -194,8 +224,9 @@ def readme(
         "",
         f"Created {_utc(now)} by MT5 Trading Workstation {version}".rstrip() + ".",
         "",
-        "Secrets are masked as `***` (passwords, tokens, API keys, account logins). Look "
-        "through it before you share it anyway.",
+        "Secrets and personal values are masked as `***` (passwords, tokens, API keys, the "
+        "account login and name, Telegram chat ids, the Windows user name). Look through it "
+        "before you share it anyway.",
         "",
         "## What is inside",
         "",
@@ -224,14 +255,15 @@ def readme(
 
 
 class _Writer:
-    def __init__(self, archive: zipfile.ZipFile) -> None:
+    def __init__(self, archive: zipfile.ZipFile, clean: Callable[[str], str] = _same) -> None:
         self.archive = archive
+        self.clean = clean
         self.files: list[str] = []
         self.cut: list[str] = []
         self.skipped: list[str] = []
 
     def put(self, name: str, text: str) -> None:
-        self.archive.writestr(name, text)
+        self.archive.writestr(name, self.clean(text))
         self.files.append(name)
 
 
@@ -290,7 +322,7 @@ def build_bundle(
     path = target_dir / bundle_name(now)
     partial = path.with_name(path.name + ".part")
     with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        writer = _Writer(archive)
+        writer = _Writer(archive, scrubber(inputs.private))
         writer.put("versions.json", masked_json(inputs.versions, masker))
         writer.put("health.json", masked_json(inputs.health, masker))
         writer.put("performance.json", masked_json(inputs.performance, masker))
