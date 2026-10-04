@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/pvwvuow/tradeer/compare/v0.17.0...v0.18.0) (2026-10-04)
+
+
+### Features
+
+* **health:** performance metrics, debug bundle and the Go-Live health item (Phase 14b) ([#34](https://github.com/pvwvuow/tradeer/issues/34)) ([227c685](https://github.com/pvwvuow/tradeer/commit/227c68556ea555b47d1665b2bba458c70a51d6bd))
+
 ## [0.17.0](https://github.com/pvwvuow/tradeer/compare/v0.16.0...v0.17.0) (2026-10-04)
 
 

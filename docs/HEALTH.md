@@ -35,6 +35,12 @@ The gate's "Health checks now" item passes only when the last health check was a
 See the table in the 0.17.0 notes: MT5 connected, Algo Trading, quotes fresh, broker offset,
 Supabase, sync queue, disk space, log size, latency, PC clock, background workers.
 
+## Check it on the PC (0.18.0)
+
+1. Health: after about 30 seconds the Performance table fills; Memory well under 500 MB.
+2. Create debug bundle, then Open folder: the zip is there; README_DEBUG.md shows no secret.
+3. Strategies > Go-Live: the checklist has "Health checks now".
+
 ## Next (14c)
 
 The 24-hour soak test on demo with a report, and the full Logs page check.
