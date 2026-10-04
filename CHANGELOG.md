@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/pvwvuow/tradeer/compare/v0.15.0...v0.16.0) (2026-10-04)
+
+
+### Features
+
+* optional Ask AI in the AI Lab with your own OpenAI-compatible endpoint (Phase 13c) ([#30](https://github.com/pvwvuow/tradeer/issues/30)) ([d203801](https://github.com/pvwvuow/tradeer/commit/d203801e762bbeb2a876705d9043867421d04631))
+
 ## [0.15.0](https://github.com/pvwvuow/tradeer/compare/v0.14.0...v0.15.0) (2026-10-04)
 
 
