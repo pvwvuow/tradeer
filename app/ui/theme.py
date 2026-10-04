@@ -1,4 +1,9 @@
-"""Design tokens in one place; the Qt stylesheet is generated from them (spec F1)."""
+"""Design tokens in one place; the Qt stylesheet is generated from them (spec F1).
+
+Accessibility (spec F1, Phase 16b): every text color meets WCAG AA (4.5:1) on every surface it
+is drawn on, controls have a border of at least 3:1 and a visible keyboard focus ring, and
+`contrast_failures` lists any pair that misses (a unit test keeps the list empty).
+"""
 
 from __future__ import annotations
 
@@ -19,6 +24,13 @@ FONT_SMALL = 9
 FONT_BODY = 10.5
 FONT_SECTION = 13.5
 FONT_TITLE = 18
+AA_TEXT = 4.5  # WCAG 2.1 AA, normal text
+AA_NON_TEXT = 3.0  # WCAG 2.1 AA, control borders and the focus ring
+TEXT_COLORS = ("text", "text_secondary", "accent", "profit", "loss", "warning")
+SURFACES = ("bg", "surface", "card")
+# Hover and selection fills only ever carry the plain text colors (selection-color is `text`).
+FILLS = ("hover", "accent_soft")
+PLAIN_TEXT = ("text", "text_secondary")
 
 
 @dataclass(frozen=True)
@@ -43,6 +55,8 @@ class ThemeTokens:
     profit_soft: str
     loss_soft: str
     warning_soft: str
+    # Phase 16b: the border of buttons and inputs, at least 3:1 against the page (WCAG 1.4.11).
+    control_border: str
 
     def colors(self) -> dict[str, str]:
         return {key: value for key, value in asdict(self).items() if key != "name"}
@@ -67,6 +81,7 @@ DARK = ThemeTokens(
     profit_soft="#0F2A1B",
     loss_soft="#2A1214",
     warning_soft="#2E2210",
+    control_border="#6B7488",
 )
 
 LIGHT = ThemeTokens(
@@ -79,15 +94,16 @@ LIGHT = ThemeTokens(
     text_secondary="#5B6475",
     accent="#2563EB",
     accent_text="#FFFFFF",
-    profit="#15803D",
+    profit="#147236",
     loss="#B91C1C",
-    warning="#B45309",
+    warning="#A84B05",
     hover="#EEF1F5",
     accent_soft="#EDF3FF",
     border_strong="#C9CFD9",
     profit_soft="#EEF8F1",
     loss_soft="#FBEAEA",
     warning_soft="#FDF1E3",
+    control_border="#7E8798",
 )
 
 CHIP_TONES: tuple[str, ...] = ("neutral", "accent", "profit", "loss", "warning")
@@ -124,6 +140,35 @@ def contrast_ratio(foreground: str, background: str) -> float:
     second = relative_luminance(background)
     lighter, darker = max(first, second), min(first, second)
     return (lighter + 0.05) / (darker + 0.05)
+
+
+def contrast_pairs(tokens: ThemeTokens) -> list[tuple[str, str, float]]:
+    """(foreground token, background token, minimum ratio) for every pair the app draws."""
+    pairs = [(fg, bg, AA_TEXT) for fg in TEXT_COLORS for bg in SURFACES]
+    pairs += [(fg, bg, AA_TEXT) for fg in PLAIN_TEXT for bg in FILLS]
+    pairs.append(("accent_text", "accent", AA_TEXT))
+    names = {
+        "neutral": ("text_secondary", "hover"),
+        "accent": ("accent", "accent_soft"),
+        "profit": ("profit", "profit_soft"),
+        "loss": ("loss", "loss_soft"),
+        "warning": ("warning", "warning_soft"),
+    }
+    pairs += [(fg, bg, AA_TEXT) for fg, bg in names.values()]
+    for edge in ("control_border", "accent"):
+        pairs += [(edge, bg, AA_NON_TEXT) for bg in SURFACES]
+    return pairs
+
+
+def contrast_failures(tokens: ThemeTokens) -> list[str]:
+    """The pairs below their WCAG AA minimum, e.g. "loss on hover: 4.22 < 4.5"."""
+    colors = tokens.colors()
+    failures = []
+    for fg, bg, minimum in contrast_pairs(tokens):
+        ratio = contrast_ratio(colors[fg], colors[bg])
+        if ratio < minimum:
+            failures.append(f"{fg} on {bg}: {ratio:.2f} < {minimum:g}")
+    return failures
 
 
 def _chip_rules(tokens: ThemeTokens) -> str:
@@ -254,7 +299,7 @@ QLabel[role="badge"] {{
 QPushButton {{
     background-color: {t.card};
     color: {t.text};
-    border: 1px solid {t.border_strong};
+    border: 1px solid {t.control_border};
     border-radius: {RADIUS_CONTROL}px;
     padding: 7px {SPACE_XL}px;
 }}
@@ -266,7 +311,7 @@ QPushButton:pressed {{
     background-color: {t.accent_soft};
 }}
 QPushButton:focus {{
-    border-color: {t.accent};
+    border: 1px solid {t.accent};
 }}
 QPushButton:disabled {{
     color: {t.text_secondary};
@@ -319,15 +364,25 @@ QPushButton[variant="danger"] {{
     border: 1px solid {t.loss};
     font-weight: 600;
 }}
+QPushButton[variant="danger"]:hover {{
+    background-color: {t.loss_soft};
+    border-color: {t.text};
+}}
 QPushButton[variant="danger"]:disabled {{
     color: {t.text_secondary};
     background-color: transparent;
     border-color: {t.border};
 }}
+QPushButton[nav="true"]:focus, QPushButton[variant="ghost"]:focus {{
+    border: 1px solid {t.accent};
+}}
+QPushButton[variant="primary"]:focus, QPushButton[variant="danger"]:focus {{
+    border: 1px solid {t.text};
+}}
 QLineEdit, QAbstractSpinBox, QComboBox {{
     background-color: {t.card};
     color: {t.text};
-    border: 1px solid {t.border_strong};
+    border: 1px solid {t.control_border};
     border-radius: {RADIUS_CONTROL}px;
     padding: 6px {SPACE}px;
     selection-background-color: {t.accent};
@@ -337,7 +392,7 @@ QLineEdit:hover, QAbstractSpinBox:hover, QComboBox:hover {{
     border-color: {t.text_secondary};
 }}
 QLineEdit:focus, QAbstractSpinBox:focus, QComboBox:focus {{
-    border-color: {t.accent};
+    border: 1px solid {t.accent};
 }}
 QLineEdit:disabled, QAbstractSpinBox:disabled, QComboBox:disabled {{
     color: {t.text_secondary};
@@ -355,6 +410,12 @@ QComboBox QAbstractItemView {{
 QCheckBox, QRadioButton {{
     background: transparent;
     spacing: {SPACE}px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 2px;
+}}
+QCheckBox:focus, QRadioButton:focus {{
+    border: 1px solid {t.accent};
 }}
 QTextEdit, QPlainTextEdit, QTextBrowser {{
     background-color: {t.card};
@@ -393,6 +454,10 @@ QTableView, QTreeView {{
     selection-background-color: {t.accent_soft};
     selection-color: {t.text};
     outline: 0;
+}}
+QTableView:focus, QTreeView:focus, QListWidget:focus, QTextEdit:focus, QPlainTextEdit:focus,
+QTextBrowser:focus {{
+    border-color: {t.accent};
 }}
 QHeaderView {{
     background-color: transparent;
