@@ -1,15 +1,16 @@
 """The Go-Live gate (spec C9): the readiness checklist before Auto mode may trade a strategy
 and config on a REAL account.
 
-Five checks, thresholds configurable (saved per profile in `go_live.json`):
+Seven checks, thresholds configurable (saved per profile in `go_live.json`):
 
 1. Walk-forward: the newest saved backtest of this config with a walk-forward has at least
    100 out-of-sample trades and a positive out-of-sample expectancy.
 2. Paper trades: at least 30 paper trades of the strategy with a positive expectancy.
 3. Slippage: their mean slippage stays within the assumption (points).
 4. Calibration: the actual win rate is within the band of the mean predicted probability.
-5. Health: no CRITICAL error and no failing health check in the last 7 days, and the risk
-   settings were reviewed and confirmed (unchanged since).
+5. Errors and health: no CRITICAL error and no failing health check in the last 7 days.
+6. Health now: every health check is green at this moment (not checked yet fails).
+7. Risk settings: reviewed and confirmed, and unchanged since.
 
 An approval is stored per strategy, params hash and account. When a check fails the user can
 still approve, only by typing the override phrase; the approval then says it was an override
@@ -226,6 +227,7 @@ class GateInputs:
     failing_health: int = 0
     risk_hash: str = ""
     reviewed_risk_hash: str = ""
+    health_now: str | None = None  # None = not checked yet, "" = all green, else the issues
 
 
 def _mean(values: Sequence[float]) -> float | None:
@@ -309,6 +311,18 @@ def _health(inputs: GateInputs, limits: GateThresholds) -> GateCheck:
     return GateCheck("health", "Errors and health", passed, found, needed)
 
 
+def _health_now(inputs: GateInputs) -> GateCheck:
+    found = inputs.health_now
+    name = "Health checks now"
+    needed = "every check OK"
+    if found is None:
+        detail = "The first check runs about 30 seconds after the start (Health page)."
+        return GateCheck("health_now", name, False, "not checked yet", needed, detail)
+    if found == "":
+        return GateCheck("health_now", name, True, "all green", needed)
+    return GateCheck("health_now", name, False, found, needed, "See the Health page.")
+
+
 def _risk(inputs: GateInputs) -> GateCheck:
     reviewed = bool(inputs.reviewed_risk_hash) and inputs.reviewed_risk_hash == inputs.risk_hash
     found = "reviewed" if reviewed else "not reviewed"
@@ -326,6 +340,7 @@ def evaluate_gate(inputs: GateInputs, limits: GateThresholds | None = None) -> G
         slippage,
         _calibration(inputs, found),
         _health(inputs, found),
+        _health_now(inputs),
         _risk(inputs),
     )
     return GateReport(inputs.strategy, inputs.params_hash, checks)
