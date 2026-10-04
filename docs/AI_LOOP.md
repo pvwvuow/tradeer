@@ -4,6 +4,10 @@ Spec C13 and F3.9. The app never sends your data anywhere by itself: you choose 
 you give it the files, you paste its answer back. Every suggestion is checked, backtested
 against the current settings and turned on only in Paper (or Analysis-only) mode.
 
+Optional since 13c: the "Ask AI" card sends a compact summary to your own
+OpenAI-compatible endpoint and puts the answer into step 2. It is off by default; see
+[LLM.md](LLM.md).
+
 ## The four steps (Advanced > Analyze > AI Lab)
 
 1. **Export for AI** writes `profiles/<profile>/exports/ai_<UTC stamp>/`:
@@ -41,7 +45,8 @@ against the current settings and turned on only in Paper (or Analysis-only) mode
 - Walk-forward of the suggestion vs the current settings (13a compares two full-period
   backtests). Run a walk-forward on the Backtest page for more confidence.
 - Counterfactuals (what rejected signals would have done): the report says they are missing.
-- The Go-Live gate (C9) for Auto on a real account and the optional built-in LLM call: 13b.
+- The Go-Live gate (C9) for Auto on a real account came in 13b ([GO_LIVE.md](GO_LIVE.md));
+  the optional built-in LLM call in 13c ([LLM.md](LLM.md)).
 
 ## Code
 
@@ -50,7 +55,9 @@ against the current settings and turned on only in Paper (or Analysis-only) mode
 - `app/analytics/ai_import.py`: `parse_suggestion`, `diff_rows`, `apply_suggestion`,
   `config_rows`, `audit_row`, `activation_block`, `RunSummary`, `compare_runs`,
   `summary_rows`.
+- `app/analytics/llm_client.py` and `app/ui/llm_panel.py`: the optional "Ask AI" card.
 - `app/ui/ai_lab_page.py`: `AiLabPage`, `AiLabContext`, `ai_lab_context(analytics, backtest)`
   (the main window builds it from the Analytics and Backtest contexts).
 - Tests: `tests/unit/test_ai_export.py`, `tests/unit/test_ai_import.py`,
-  `tests/ui/test_ai_lab_page.py`.
+  `tests/ui/test_ai_lab_page.py`, `tests/unit/test_llm_client.py`,
+  `tests/ui/test_llm_panel.py`.
