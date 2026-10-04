@@ -40,6 +40,8 @@ GLYPH_NAMES: dict[str, str] = {
     "\u25bc": "Down",
     "\u2715": "Close",
 }
+# Buttons Qt adds by itself, by object name (the corner of a table selects every row).
+BUILT_IN_NAMES: dict[str, str] = {"qt_tableview_cornerbutton": "Select all"}
 _CHART: dict[str, ThemeTokens] = {"tokens": DARK}
 
 
@@ -243,14 +245,15 @@ def accessible_name(button: QAbstractButton) -> str:
 def name_controls(root: QWidget) -> int:
     """Name the icon-only and arrow-only buttons under `root` for screen readers (spec F1).
 
-    The name is the tooltip, or what the arrow means ("Previous", "Next"). Returns how many
-    buttons were named.
+    The name is the tooltip, what the arrow means ("Previous", "Next") or, for the buttons Qt
+    adds itself, what they do ("Select all"). Returns how many buttons were named.
     """
     named = 0
     for button in root.findChildren(QAbstractButton):
         if button.accessibleName() or _readable(button.text()):
             continue
         name = button.toolTip() or GLYPH_NAMES.get(button.text().strip(), "")
+        name = name or BUILT_IN_NAMES.get(button.objectName(), "")
         if name:
             button.setAccessibleName(name)
             named += 1
