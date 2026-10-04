@@ -1,13 +1,15 @@
 """The AI Lab page (spec C13, F3.9): the loop with an outside AI, in four steps.
 
-1. Export the trades and a report with an analysis prompt for the AI of your choice.
+1. Export the trades and a report with an analysis prompt for the AI of your choice, or
+   (optional, off by default) ask your own OpenAI-compatible endpoint from here: only a
+   compact summary is sent and the answer lands in step 2.
 2. Paste its JSON answer: every change is checked against the strategy's parameter schema
    and shown as a difference to the current values.
 3. Backtest the suggestion against the current settings on the same symbol and period.
 4. Activate it, only in Paper or Analysis-only mode: the settings are saved, a new config
    version (created by "ai_suggestion") and an audit row are written.
 
-The app never calls an AI itself here and never sends real orders from this page.
+An AI answer is advice only, and this page never sends real orders.
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ from app.analytics.ai_import import (
     parse_suggestion,
     summary_rows,
 )
+from app.analytics.llm_client import LlmContext
 from app.analytics.trades import TradeRecord
 from app.backtest.costs import BacktestCosts
 from app.backtest.service import BacktestReport, BacktestRequest, run_report, strategy_params
@@ -62,6 +65,7 @@ from app.storage.repositories import Store
 from app.strategies.registry import STRATEGIES
 from app.ui.analytics_page import AnalyticsContext, start_balance
 from app.ui.backtest_page import BacktestContext
+from app.ui.llm_panel import LlmPanel
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
 from app.ui.tables import fill_table, make_table
 
@@ -190,6 +194,8 @@ class AiLabPage(QWidget):
         layout.addWidget(styled_label("AI Lab", "title"))
         layout.addWidget(styled_label(INTRO, "muted", wrap=True))
         layout.addWidget(self._build_export())
+        self.llm_panel = LlmPanel(self.llm_data, self.take_answer)
+        layout.addWidget(self.llm_panel)
         layout.addWidget(self._build_import())
         layout.addWidget(self._build_test())
         layout.addWidget(self._build_activate())
@@ -248,37 +254,41 @@ class AiLabPage(QWidget):
         layout.addWidget(self.export_status)
         return card
 
+    def export_data(self, context: AiLabContext, now: float) -> ExportData:
+        """The trades and settings chosen in step 1 (the export and the summary use them)."""
+        strategy = self.export_strategy.currentText()
+        mode = self.export_mode.currentText()
+        days = self.export_days.value()
+        trades = select_trades(
+            list(context.trades()),
+            now,
+            strategy="" if strategy == ALL else strategy,
+            mode="" if mode == ALL else mode,
+            days=days,
+        )
+        rejected: list[tuple[str, int]] = []
+        if context.store is not None:
+            rejected = rejected_counts(context.store.db)
+        scope = f"strategy {strategy.lower()}, mode {mode.lower()}, "
+        scope += f"last {days} days" if days else "all time"
+        return ExportData(
+            trades=trades,
+            settings=context.strategies.settings,
+            mode=context.execution.mode,
+            start_balance=start_balance(context.balance(), trades),
+            currency=context.currency(),
+            backtests=context.backtests(),
+            rejected=rejected,
+            scope=scope,
+        )
+
     def export_for_ai(self) -> list[Path]:
         context = self.context
         if context is None:
             return []
         now = time.time()
-        strategy = self.export_strategy.currentText()
-        mode = self.export_mode.currentText()
-        days = self.export_days.value()
         try:
-            trades = select_trades(
-                list(context.trades()),
-                now,
-                strategy="" if strategy == ALL else strategy,
-                mode="" if mode == ALL else mode,
-                days=days,
-            )
-            rejected: list[tuple[str, int]] = []
-            if context.store is not None:
-                rejected = rejected_counts(context.store.db)
-            scope = f"strategy {strategy.lower()}, mode {mode.lower()}, "
-            scope += f"last {days} days" if days else "all time"
-            data = ExportData(
-                trades=trades,
-                settings=context.strategies.settings,
-                mode=context.execution.mode,
-                start_balance=start_balance(context.balance(), trades),
-                currency=context.currency(),
-                backtests=context.backtests(),
-                rejected=rejected,
-                scope=scope,
-            )
+            data = self.export_data(context, now)
             stamp = datetime.fromtimestamp(now, UTC).strftime("%Y%m%d_%H%M%S")
             folder = context.export_dir / EXPORT_FOLDER / f"ai_{stamp}"
             paths = write_export(folder, data, now)
@@ -288,10 +298,10 @@ class AiLabPage(QWidget):
             return []
         self.export_paths = paths
         self.export_status.setText(
-            f"Saved {len(trades)} trades in {folder}. Give the AI all three files, or paste "
-            "report.md and attach the CSV.",
+            f"Saved {len(data.trades)} trades in {folder}. Give the AI all three files, or "
+            "paste report.md and attach the CSV.",
         )
-        context.log("INFO", f"AI export: {len(trades)} trades to {folder}")
+        context.log("INFO", f"AI export: {len(data.trades)} trades to {folder}")
         return paths
 
     def copy_prompt(self) -> None:
@@ -299,6 +309,25 @@ class AiLabPage(QWidget):
         if clipboard is not None:
             clipboard.setText(PROMPT)
         self.export_status.setText("The prompt is on the clipboard.")
+
+    # 1b. Optional request to the user's own AI --------------------------------------------
+    def attach_llm(self, llm: LlmContext) -> None:
+        """Turn on the optional "Ask AI" card (it stays off until the user saves it on)."""
+        self.llm_panel.attach(llm)
+
+    def llm_data(self, now: float) -> ExportData | None:
+        context = self.context
+        return self.export_data(context, now) if context is not None else None
+
+    def take_answer(self, text: str) -> str:
+        """An AI answer from the card: into step 2 and checked like a pasted one."""
+        self.answer.setPlainText(text)
+        found = self.check_suggestion()
+        if found is not None and found.valid:
+            return "Step 2 shows its valid suggestion; backtest it next."
+        if found is not None and found.changes:
+            return "Step 2 shows its suggestion, but it has problems."
+        return "It suggests no valid change; read it in step 2."
 
     # 2. Import ----------------------------------------------------------------------------
     def _build_import(self) -> QWidget:

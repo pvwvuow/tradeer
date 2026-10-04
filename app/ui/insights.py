@@ -2,8 +2,9 @@
 report scheduler, the notification center with its watcher, the tray and the Telegram bot.
 
 `build_insights` makes the parts before the window exists; `Insights.attach` adds what needs
-the window (the tray toasts and the report timer). Everything here only reads the engine's
-snapshots or uses the same public calls as the buttons.
+the window (the tray toasts, the report timer and the AI Lab's optional AI connection).
+Everything here only reads the engine's snapshots or uses the same public calls as the
+buttons.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget
 
 from app.analytics.behavior import NewsEvent
+from app.analytics.llm_client import LlmContext, LlmSettingsSource, key_name
 from app.analytics.trades import TradeRecord, load_trades
 from app.calendar.store import CalendarStore
 from app.core.clock import BrokerClock
@@ -44,6 +46,7 @@ from app.risk.risk_manager import RiskManager
 from app.storage.backtest_store import BacktestRepository
 from app.storage.runtime import StorageRuntime
 from app.strategies.registry import strategy_for_magic
+from app.ui.ai_lab_page import AiLabPage
 from app.ui.analytics_page import AnalyticsContext
 from app.ui.dashboard_page import DashboardContext
 from app.ui.journal_page import JournalContext
@@ -56,10 +59,19 @@ TRADES_CACHE_SECONDS = 5.0
 DAY = 86_400.0
 
 _log = get_logger(LogCategory.NOTIFY)
+_llm_log = get_logger(LogCategory.LLM)
 
 
 def write(level: str, message: str) -> None:
     _log.log(level, "{}", message)
+
+
+def write_llm(level: str, message: str) -> None:
+    _llm_log.log(level, "{}", message)
+
+
+def record_llm(action: str, before: Any, after: Any) -> None:
+    audit(action, before=before, after=after, source="ai_lab")
 
 
 class TradeCache:
@@ -98,6 +110,7 @@ class Insights:
     bot_holder: list[TelegramBot] = field(default_factory=list)
     timers: list[QTimer] = field(default_factory=list)
     stop_hooks: list[Callable[[], None]] = field(default_factory=list)
+    llm: LlmContext | None = None
 
     def attach(self, window: QWidget) -> None:
         from app.ui.tray import TrayNotifier
@@ -111,6 +124,15 @@ class Insights:
         timer.start()
         self.timers.append(timer)
         QTimer.singleShot(30_000, self.reports.run_due)
+        self.attach_llm(window)
+
+    def attach_llm(self, window: QWidget) -> bool:
+        """Give the window's AI Lab the optional AI connection (still off until saved on)."""
+        lab = window.findChild(AiLabPage)
+        if self.llm is None or not isinstance(lab, AiLabPage):
+            return False
+        lab.attach_llm(self.llm)
+        return True
 
     def stop(self) -> None:
         for timer in self.timers:
@@ -170,6 +192,10 @@ def build_insights(
             details.parts(trade.signal_id),
             journal.entry(trade.id),
         )
+
+    def login() -> str | None:
+        account = service.status.account
+        return str(account.login) if account is not None else None
 
     settings = NotificationSettingsSource(profile_dir, lambda text: write("WARNING", text))
     center = NotificationCenter(lambda: settings.settings, log=write)
@@ -296,6 +322,14 @@ def build_insights(
         watcher=watcher,
         reports=reports,
         bot_holder=holder,
+        llm=LlmContext(
+            source=LlmSettingsSource(profile_dir),
+            credentials=credentials,
+            key_name=key_name(profile),
+            login=login,
+            log=write_llm,
+            record=record_llm,
+        ),
     )
     apply_bot()
     return insights
