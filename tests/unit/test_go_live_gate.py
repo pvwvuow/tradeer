@@ -20,9 +20,12 @@ from app.engine.go_live_gate import (
     load_gate_state,
     params_hash_of,
 )
+from app.observability.health import HealthCheck, HealthStatus
 from app.risk.settings import RiskConfig
 from app.storage.backtest_store import SavedRun
+from app.storage.health_store import HealthRepository
 from app.strategies.registry import create_strategy
+from tests.unit.storage_helpers import temporary_store
 from tests.unit.test_ai_export import trade
 
 STRATEGY = "trend_pullback"
@@ -217,4 +220,31 @@ def test_error_counts_read_logs_and_health_checks() -> None:
     db = FakeDb(2, 1)
     assert error_counts(db, 1_790_000_000.0, 7) == (2, 1)
     assert "CRITICAL" in db.calls[0][0] and "health_checks" in db.calls[1][0]
-    assert db.calls[1][1][1:] == ("ok", "pass", "passed", "green", "healthy")
+    assert "NOT EXISTS" in db.calls[1][0] and len(db.calls[1][1]) == 1
+
+
+def saved(name: str, status: HealthStatus) -> HealthCheck:
+    return HealthCheck(name, name, status, "")
+
+
+def test_only_unresolved_critical_checks_count() -> None:
+    # The first real debug bundle: warnings and unmeasurable checks (cloud sync off, the
+    # weekend) were counted as failing, so the gate could never pass.
+    now = 1_790_000_000.0
+    with temporary_store() as store:
+        repository = HealthRepository(store)
+        repository.record(
+            [
+                saved("disk_space", HealthStatus.CRITICAL),
+                saved("mt5_connected", HealthStatus.CRITICAL),
+                saved("sync_queue", HealthStatus.WARNING),
+                saved("supabase", HealthStatus.UNKNOWN),
+            ],
+            now - 3600,
+        )
+        repository.record([saved("disk_space", HealthStatus.OK)], now - 1800)
+        assert error_counts(store.db, now, 7) == (0, 1)
+        repository.record([saved("mt5_connected", HealthStatus.OK)], now - 60)
+        assert error_counts(store.db, now, 7) == (0, 0)
+        repository.record([saved("workers", HealthStatus.CRITICAL)], now - 8 * 86_400)
+        assert error_counts(store.db, now, 7) == (0, 0)  # older than the window

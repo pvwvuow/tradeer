@@ -8,7 +8,9 @@ Seven checks, thresholds configurable (saved per profile in `go_live.json`):
 2. Paper trades: at least 30 paper trades of the strategy with a positive expectancy.
 3. Slippage: their mean slippage stays within the assumption (points).
 4. Calibration: the actual win rate is within the band of the mean predicted probability.
-5. Errors and health: no CRITICAL error and no failing health check in the last 7 days.
+5. Errors and health: no CRITICAL log line and no unresolved CRITICAL health check (one not
+   followed by an OK of the same check) in the last 7 days. Warnings and checks that cannot
+   be measured do not count here; item 6 looks at the current state.
 6. Health now: every health check is green at this moment (not checked yet fails).
 7. Risk settings: reviewed and confirmed, and unchanged since.
 
@@ -72,7 +74,7 @@ class GateThresholds(BaseModel):
         default=7,
         ge=1,
         le=365,
-        description="Days without a CRITICAL error or failing health check",
+        description="Days without a CRITICAL error or unresolved critical health check",
     )
 
 
@@ -306,7 +308,10 @@ def _calibration(inputs: GateInputs, limits: GateThresholds) -> GateCheck:
 
 def _health(inputs: GateInputs, limits: GateThresholds) -> GateCheck:
     passed = inputs.critical_errors == 0 and inputs.failing_health == 0
-    found = f"{inputs.critical_errors} CRITICAL errors, {inputs.failing_health} failing checks"
+    found = (
+        f"{inputs.critical_errors} CRITICAL errors, "
+        f"{inputs.failing_health} unresolved critical checks"
+    )
     needed = f"none in {limits.error_days} days"
     return GateCheck("health", "Errors and health", passed, found, needed)
 
@@ -347,17 +352,19 @@ def evaluate_gate(inputs: GateInputs, limits: GateThresholds | None = None) -> G
 
 
 def error_counts(db: Database, now: float, days: int) -> tuple[int, int]:
-    """CRITICAL log lines and failing health checks since `days` days ago."""
+    """CRITICAL log lines and unresolved CRITICAL health checks since `days` days ago."""
     since = iso_time(now - days * DAY)
     critical = db.query(
         "SELECT COUNT(*) AS n FROM app_logs WHERE level = 'CRITICAL' AND time >= ?",
         (since,),
     )
-    marks = ", ".join("?" for _ in HEALTHY)
     failing = db.query(
-        "SELECT COUNT(*) AS n FROM health_checks WHERE time >= ? "
-        f"AND LOWER(COALESCE(status, '')) NOT IN ({marks})",
-        (since, *HEALTHY),
+        "SELECT COUNT(*) AS n FROM health_checks AS h WHERE h.time >= ? "
+        "AND LOWER(COALESCE(h.status, '')) = 'critical' AND NOT EXISTS ("
+        "SELECT 1 FROM health_checks AS later WHERE later.name = h.name "
+        "AND later.time > h.time AND LOWER(COALESCE(later.status, '')) IN "
+        f"({', '.join(repr(mark) for mark in HEALTHY)}))",
+        (since,),
     )
     return int(critical[0]["n"]) if critical else 0, int(failing[0]["n"]) if failing else 0
 

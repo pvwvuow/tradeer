@@ -856,11 +856,15 @@ def _health_context(
 
     They read snapshots only and never call MT5 themselves.
     """
+    import os
     import shutil
+    from pathlib import Path
 
     from app.core.clock import fx_weekend
+    from app.core.profiles import load_account
     from app.engine.health_monitor import HealthMonitor, folder_size
     from app.engine.perf_monitor import PerfMonitor
+    from app.notify.settings import NotificationSettingsSource
     from app.observability.debug_bundle import (
         BUNDLE_FOLDER,
         TRACE_LIMIT,
@@ -941,6 +945,7 @@ def _health_context(
             mt5_queue=gateway.queue_size,
             sync_queue=storage.store.outbox_counts().pending,
             startup_seconds=probes.startup_seconds,
+            sync_enabled=storage.worker.engine.status.state.value != "disabled",
         )
 
     def history(limit: int) -> Sequence[Any]:
@@ -959,6 +964,18 @@ def _health_context(
         heartbeat=partial(watchdog.beat, "health"),
         after=(perf.run_once,),
     )
+
+    def private() -> list[str]:
+        """Personal values the bundle hides wherever they appear (logs, crash reports)."""
+        found = [os.environ.get("USERNAME", ""), Path.home().name]
+        account = service.status.account
+        if account is not None:
+            found += [str(account.login), account.name]
+        saved = load_account(directory).login
+        if saved is not None:
+            found.append(str(saved))
+        chats = NotificationSettingsSource(directory).settings.chat_ids
+        return [*found, *(str(chat) for chat in chats)]
 
     def bundle() -> BundleResult:
         checked = monitor.snapshot
@@ -981,6 +998,7 @@ def _health_context(
                 "metrics": plain(list(measured.metrics)),
             },
             traces=recent_traces(storage.store, TRACE_LIMIT),
+            private=private(),
         )
         result = build_bundle(inputs, directory / BUNDLE_FOLDER, now=time.time())
         write("INFO", result.text)
