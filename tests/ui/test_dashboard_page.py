@@ -9,7 +9,7 @@ from app.engine.execution import ExecutionSnapshot, PositionView
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.risk.limits import RiskUsage
 from app.risk.risk_manager import RiskSnapshot
-from app.ui.dashboard_page import DashboardContext, DashboardPage, limit_rows, today_result
+from app.ui.dashboard_page import UP, DashboardContext, DashboardPage, limit_rows, today_result
 from tests.unit.analytics_helpers import START, sample
 from tests.unit.signal_helpers import make_record
 
@@ -58,10 +58,11 @@ def test_kpis_limits_positions_and_signals(qtbot: QtBot) -> None:
     page.timer.stop()
     page.refresh(now=START + 6 * 3600)
     assert page.kpis["Equity"].value.text() == "10,050.00 USD"
-    assert page.kpis["Today"].value.text() == "+125.00 (5 closed)"
-    assert page.kpis["Last 30 days"].value.text().startswith("+125.00, win rate 40%")
+    assert page.kpis["Today"].value.text() == f"{UP} +125.00 (5 closed)"
+    assert page.kpis["Last 30 days"].value.text().startswith(f"{UP} +125.00, win rate 40%")
     assert page.positions.rowCount() == 1 and page.signals.rowCount() == 1
-    assert page.bar_labels["Daily loss"].text() == "Daily loss: 1.50% of 2.00%"
+    # 75% used: amber, and said in words too (spec F1: never by color only).
+    assert page.bar_labels["Daily loss"].text() == "Daily loss: 1.50% of 2.00% (near the limit)"
     assert page.bars["Daily loss"].value() == 75
 
 

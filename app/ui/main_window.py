@@ -3,6 +3,10 @@
 With Persian chosen (spec A, F1) the window runs right to left in the Vazirmatn font, and
 the Simple view (Home and the top bar) is shown in Persian; the Advanced pages and the
 status bar stay English, left to right.
+
+Keyboard (spec F1): Tab reaches every control and shows a focus ring, Ctrl+, opens Settings,
+Ctrl+K the command palette (Advanced view) and Ctrl+Shift+K the kill switch. Buttons that only
+show an icon or an arrow get a name for screen readers.
 """
 
 from __future__ import annotations
@@ -74,6 +78,7 @@ from app.ui.style import (
     chip,
     glyph_icon,
     icons_available,
+    name_controls,
     set_chip,
     style_plots,
     style_tables,
@@ -84,6 +89,7 @@ from app.ui.updates_page import UpdateBanner, UpdatesContext, UpdatesPage
 
 SIDEBAR_WIDTH = 224
 KILL_SHORTCUT = "Ctrl+Shift+K"
+SETTINGS_SHORTCUT = "Ctrl+,"
 LANGUAGE_TITLE = "Language / \u0632\u0628\u0627\u0646"
 
 
@@ -229,6 +235,7 @@ class MainWindow(QMainWindow):
         if self.translator.right_to_left:
             self._keep_english_left_to_right()
         style_tables(self)
+        name_controls(self)
         self.home.stop = self.ask_kill
         self.home.on_onboarded = self.finish_onboarding
         self.home.on_status_bar = self._show_status_bar
@@ -251,6 +258,8 @@ class MainWindow(QMainWindow):
         self._kill_shortcut = QShortcut(QKeySequence(KILL_SHORTCUT), self)
         self._kill_shortcut.activated.connect(self.ask_kill)
         self._kill_shortcut.setEnabled(trading is not None)
+        self._settings_shortcut = QShortcut(QKeySequence(SETTINGS_SHORTCUT), self)
+        self._settings_shortcut.activated.connect(self.open_settings)
         self.positions_page.bridge.snapshot.connect(self.set_execution_status)
         if trading is not None:
             self.set_execution_status(trading.engine.snapshot)
@@ -311,6 +320,13 @@ class MainWindow(QMainWindow):
             self.show_page(SIMPLE_HOME.page_id)
             self.settings_button.setText("Settings")
         self._retranslate()
+
+    def open_settings(self) -> None:
+        """Ctrl+, opens Settings in either view (spec F1: all of it works from the keyboard)."""
+        if self.prefs.view_mode is ViewMode.ADVANCED:
+            self.show_page("settings")
+        elif self.current_page_id() == SIMPLE_HOME.page_id:
+            self.toggle_simple_settings()
 
     def show_updates(self) -> None:
         """Open Settings > Updates (from the banner or the command palette)."""
@@ -381,6 +397,7 @@ class MainWindow(QMainWindow):
         self._apply_icons(tokens)
         next_theme = "light" if theme is ThemeName.DARK else "dark"
         self.theme_button.setToolTip(f"Switch to the {next_theme} theme")
+        self.theme_button.setAccessibleName(f"Switch to the {next_theme} theme")
         self.theme_button.setText("" if icons_available() else f"{next_theme.title()} theme")
         self._retranslate()
         if persist:
@@ -520,6 +537,7 @@ class MainWindow(QMainWindow):
         self.theme_button = _ghost_button("", "ThemeButton")
         self.theme_button.clicked.connect(self.toggle_theme)
         self.settings_button = _ghost_button("Settings", "SimpleSettingsButton")
+        self.settings_button.setToolTip(f"Settings ({SETTINGS_SHORTCUT})")
         self.settings_button.clicked.connect(self.toggle_simple_settings)
         self.language_button = _ghost_button(LANGUAGE_BUTTON[self.prefs.language], "Language")
         self.language_button.setToolTip(LANGUAGE_TITLE)

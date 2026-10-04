@@ -3,6 +3,9 @@
 much of each risk limit is used; the market bias of every watched symbol; and the Go-Live
 readiness of the strategies that are on (Phase 13b).
 
+A gain or loss is never shown by color alone (spec F1): results carry an up or down arrow and
+a sign, and a limit bar says in words when it is near or at its limit.
+
 The page only reads snapshots (it polls them every two seconds) and the closed trades and the
 readiness (every minute); it never changes anything.
 """
@@ -34,13 +37,16 @@ from app.engine.market_watch import MarketSnapshot
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.risk.risk_manager import RiskSnapshot
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
-from app.ui.style import repolish
+from app.ui.style import chart_pen, chart_tokens, repolish
 from app.ui.tables import fill_table, make_table, number, signed
 
 POLL_MS = 2_000
 TRADES_SECONDS = 60.0
 DAY = 86_400.0
 LATEST_SIGNALS = 8
+UP = "\u25b2"
+DOWN = "\u25bc"
+LIMIT_WORDS = {"warning": " (near the limit)", "loss": " (limit reached)"}
 GO_LIVE_NOTE = (
     "Go-Live readiness: the checklist before Auto trades real money is on the Strategies page. "
     "Until a strategy is approved, use Paper, Semi-auto or a demo account."
@@ -106,11 +112,15 @@ class _Kpi(QFrame):
         layout.addWidget(self.value)
 
     def set_text(self, text: str, tone: float | None = None) -> None:
-        """Show the value; a signed `tone` colors it green (gain) or red (loss)."""
-        self.value.setText(text)
+        """Show the value; a signed `tone` adds an up or down arrow and colors it.
+
+        The arrow keeps the meaning when the color cannot be seen (spec F1).
+        """
         role = "kpi"
         if tone is not None and math.isfinite(tone) and tone != 0:
             role = "kpi_profit" if tone > 0 else "kpi_loss"
+            text = f"{UP if tone > 0 else DOWN} {text}"
+        self.value.setText(text)
         if self.value.property("role") != role:
             self.value.setProperty("role", role)
             repolish(self.value)
@@ -258,7 +268,8 @@ class DashboardPage(QWidget):
                 repolish(bar)
             used_text = f"{used:.2f}{unit}" if unit else f"{used:.0f}"
             limit_text = f"{limit:.2f}{unit}" if unit else f"{limit:.0f}"
-            self.bar_labels[name].setText(f"{name}: {used_text} of {limit_text}")
+            words = LIMIT_WORDS.get(tone, "")
+            self.bar_labels[name].setText(f"{name}: {used_text} of {limit_text}{words}")
         if risk.halted and usage is not None:
             self.status.setText(f"New entries are stopped: {usage.halted_reason or risk.halted}")
         elif usage is None:
@@ -276,7 +287,8 @@ class DashboardPage(QWidget):
         self.equity_plot.clear()
         curve = equity_curve(self.trades, 0.0)
         if len(curve.times):
-            self.equity_plot.plot(curve.times, curve.equity, pen=pg.mkPen("#5b8cff", width=2))
+            pen = chart_pen(chart_tokens().accent, 2.0)
+            self.equity_plot.plot(curve.times, curve.equity, pen=pen)
 
     def _show_positions(self, snapshot: ExecutionSnapshot) -> None:
         rows = [

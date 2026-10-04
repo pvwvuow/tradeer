@@ -3,6 +3,10 @@
 Icons come from the icon font every Windows 10 and 11 PC already has (Segoe Fluent Icons or
 Segoe MDL2 Assets), so the app ships no image files. Where neither font exists (Linux CI)
 the icons are simply left out instead of drawing empty boxes.
+
+Phase 16b (spec F1): icons are drawn at the screen's pixel ratio (sharp at 150-300% scaling),
+charts take their colors from the current theme (`chart_tokens`), and buttons without a
+readable text get a name for screen readers (`name_controls`).
 """
 
 from __future__ import annotations
@@ -12,15 +16,33 @@ from typing import Any
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QAbstractItemView, QGraphicsView, QLabel, QTableView, QWidget
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QAbstractItemView,
+    QGraphicsView,
+    QLabel,
+    QTableView,
+    QWidget,
+)
 
-from app.ui.theme import CHIP_TONES, ThemeTokens
+from app.ui.theme import CHIP_TONES, DARK, ThemeTokens
 
 ICON_FAMILIES: tuple[str, ...] = ("Segoe Fluent Icons", "Segoe MDL2 Assets")
 ICON_SIZE = 18
 UI_FAMILIES: tuple[str, ...] = ("Segoe UI Variable Text", "Segoe UI", "Inter", "Noto Sans")
-PIXEL_RATIO = 2.0
+PIXEL_RATIO = 2.0  # the least icons are drawn at; higher on screens scaled above 200%
+# What a screen reader should say for a button whose text is only an arrow or a symbol.
+GLYPH_NAMES: dict[str, str] = {
+    "\u2190": "Previous",
+    "\u2192": "Next",
+    "\u25b2": "Up",
+    "\u25bc": "Down",
+    "\u2715": "Close",
+}
+# Buttons Qt adds by itself, by object name (the corner of a table selects every row).
+BUILT_IN_NAMES: dict[str, str] = {"qt_tableview_cornerbutton": "Select all"}
+_CHART: dict[str, ThemeTokens] = {"tokens": DARK}
 
 
 class Glyph:
@@ -88,8 +110,16 @@ def ui_font(base: QFont) -> QFont:
     return font
 
 
+def pixel_ratio() -> float:
+    """The pixel ratio icons are drawn at: the sharpest screen's, at least `PIXEL_RATIO`."""
+    application = QGuiApplication.instance()
+    ratio = application.devicePixelRatio() if isinstance(application, QGuiApplication) else 1.0
+    return max(PIXEL_RATIO, float(ratio))
+
+
 def glyph_pixmap(glyph: str, color: str, size: int = ICON_SIZE) -> QPixmap:
-    side = round(size * PIXEL_RATIO)
+    ratio = pixel_ratio()
+    side = round(size * ratio)
     pixmap = QPixmap(side, side)
     pixmap.fill(Qt.GlobalColor.transparent)
     family = icon_family()
@@ -103,7 +133,7 @@ def glyph_pixmap(glyph: str, color: str, size: int = ICON_SIZE) -> QPixmap:
         painter.setPen(QColor(color))
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, glyph)
         painter.end()
-    pixmap.setDevicePixelRatio(PIXEL_RATIO)
+    pixmap.setDevicePixelRatio(ratio)
     return pixmap
 
 
@@ -141,12 +171,30 @@ def set_chip(label: QLabel, text: str, tone: str) -> None:
         repolish(label)
 
 
+def chart_tokens() -> ThemeTokens:
+    """The theme charts draw their lines with; `style_plots` sets it on every theme change."""
+    return _CHART["tokens"]
+
+
+def chart_pen(color: str, width: float = 1.0) -> Any:
+    return pg.mkPen(color, width=width)
+
+
+def soft_color(color: str, alpha: int) -> QColor:
+    """`color` with an alpha, for area fills under a line."""
+    found = QColor(color)
+    found.setAlpha(alpha)
+    return found
+
+
 def style_plots(root: QWidget, tokens: ThemeTokens) -> int:
     """Give every pyqtgraph chart under `root` the theme's card color and axis colors.
 
-    pyqtgraph draws black charts by default, which looked broken in the light theme.
+    pyqtgraph draws black charts by default, which looked broken in the light theme. The
+    tokens are also remembered for the lines the pages draw later (`chart_tokens`).
     Returns how many charts were styled.
     """
+    _CHART["tokens"] = tokens
     plots = [view for view in root.findChildren(QGraphicsView) if isinstance(view, pg.PlotWidget)]
     for plot in plots:
         _style_plot(plot, tokens)
@@ -181,3 +229,42 @@ def style_tables(root: QWidget) -> int:
         if table.selectionMode() == QAbstractItemView.SelectionMode.NoSelection:
             table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     return len(tables)
+
+
+def _readable(text: str) -> str:
+    text = text.replace("&", "").strip()
+    return "" if text in GLYPH_NAMES else text
+
+
+def accessible_name(button: QAbstractButton) -> str:
+    """What a screen reader says for `button`: its name, its text, or its tooltip."""
+    readable = _readable(button.text())
+    return button.accessibleName() or readable or button.toolTip()
+
+
+def name_controls(root: QWidget) -> int:
+    """Name the icon-only and arrow-only buttons under `root` for screen readers (spec F1).
+
+    The name is the tooltip, what the arrow means ("Previous", "Next") or, for the buttons Qt
+    adds itself, what they do ("Select all"). Returns how many buttons were named.
+    """
+    named = 0
+    for button in root.findChildren(QAbstractButton):
+        if button.accessibleName() or _readable(button.text()):
+            continue
+        name = button.toolTip() or GLYPH_NAMES.get(button.text().strip(), "")
+        name = name or BUILT_IN_NAMES.get(button.objectName(), "")
+        if name:
+            button.setAccessibleName(name)
+            named += 1
+    return named
+
+
+def unnamed_controls(root: QWidget) -> list[str]:
+    """The buttons under `root` a screen reader could not name (an empty list is the goal)."""
+    buttons = root.findChildren(QAbstractButton)
+    return [
+        button.objectName() or type(button).__name__
+        for button in buttons
+        if not accessible_name(button)
+    ]

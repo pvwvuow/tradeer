@@ -4,6 +4,9 @@ risk of ruin with a Monte-Carlo projection and comparisons, for the trades the f
 Everything is computed by `app.analytics` from the closed trades on this PC; the page only
 draws it. Export writes CSV files (trades and the shown breakdown) and the shown chart as a
 PNG into `profiles/<profile>/exports`.
+
+Charts take their colors from the current theme, and wins and losses in the excursion chart
+differ by shape too (up and down triangles), not by color alone (spec F1).
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from app.analytics.projection import project
 from app.analytics.stats import compute_stats, equity_curve, stat_rows
 from app.analytics.trades import TradeFilter, TradeRecord, choices
 from app.ui.pages import PAGE_MARGIN, styled_label
+from app.ui.style import chart_pen, chart_tokens, soft_color
 from app.ui.tables import fill_table, heat, make_table, number, signed
 
 ALL = "All"
@@ -42,6 +46,7 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 COMPARISONS = ("Live vs paper", "By strategy", "By config", "Last 30 days vs the 30 before")
 EXPORT_FOLDER = "exports"
 GROUP_COLUMNS = ("Group", "Trades", "Win rate", "Net", "Expectancy R", "Profit factor")
+EXCURSION_KEY = "\u25b2 winning trade     \u25bc losing trade"
 
 
 def _quiet(level: str, message: str) -> None:
@@ -129,7 +134,7 @@ class AnalyticsPage(QWidget):
         for combo in (self.symbol, self.strategy, self.mode, self.account):
             combo.addItem(ALL)
         self.refresh_button = QPushButton("Update")
-        self.refresh_button.setProperty("variant", "accent")
+        self.refresh_button.setProperty("variant", "primary")
         self.refresh_button.clicked.connect(self.refresh)
         self.export_button = QPushButton("Export CSV")
         self.export_button.clicked.connect(self.export_csv)
@@ -189,6 +194,7 @@ class AnalyticsPage(QWidget):
         self.excursion_plot = pg.PlotWidget()
         self.excursion_plot.setLabel("bottom", "Worst move (MAE, R)")
         self.excursion_plot.setLabel("left", "Best move (MFE, R)")
+        self.excursion_plot.setTitle(EXCURSION_KEY)
         spread_layout.addWidget(self.r_plot)
         spread_layout.addWidget(self.excursion_plot)
         box = QWidget()
@@ -308,14 +314,15 @@ class AnalyticsPage(QWidget):
         curve = equity_curve(self.shown, self.start)
         if not len(curve.times):
             return
-        self.equity_plot.plot(curve.times, curve.equity, pen=pg.mkPen("#5b8cff", width=2))
+        tokens = chart_tokens()
+        self.equity_plot.plot(curve.times, curve.equity, pen=chart_pen(tokens.accent, 2.0))
         if self.start > 0:
             self.drawdown_plot.plot(
                 curve.times,
                 curve.drawdown_percent,
-                pen=pg.mkPen("#ef4444", width=1),
+                pen=chart_pen(tokens.loss),
                 fillLevel=0,
-                brush=(239, 68, 68, 60),
+                brush=soft_color(tokens.loss, 60),
             )
 
     def _show_monthly(self) -> None:
@@ -340,25 +347,26 @@ class AnalyticsPage(QWidget):
         self.r_plot.clear()
         self.excursion_plot.clear()
         width = 0.5
+        tokens = chart_tokens()
         bins = charts.r_distribution(self.shown, width)
         if bins:
             xs = [low + width / 2 for low, _count in bins]
             heights = [count for _low, count in bins]
-            colours = ["#22c55e" if low >= 0 else "#ef4444" for low, _count in bins]
+            colours = [tokens.profit if low >= 0 else tokens.loss for low, _count in bins]
             bars = pg.BarGraphItem(x=xs, height=heights, width=width * 0.9, brushes=colours)
             self.r_plot.addItem(bars)
         summary = charts.excursions(self.shown)
         if summary.points:
             wins = [p for p in summary.points if p.win]
             losses = [p for p in summary.points if not p.win]
-            for points, colour in ((wins, "#22c55e"), (losses, "#ef4444")):
+            for points, colour, shape in ((wins, tokens.profit, "t1"), (losses, tokens.loss, "t")):
                 if points:
                     self.excursion_plot.plot(
                         [p.mae_r for p in points],
                         [p.mfe_r for p in points],
                         pen=None,
-                        symbol="o",
-                        symbolSize=6,
+                        symbol=shape,
+                        symbolSize=8,
                         symbolBrush=colour,
                     )
         self.excursion_text.setText("\n".join(summary.lines))
@@ -391,9 +399,10 @@ class AnalyticsPage(QWidget):
             f"{found.high[-1]:,.2f}{unit}.",
         )
         steps = list(found.steps)
-        self.projection_plot.plot(steps, list(found.median), pen=pg.mkPen("#5b8cff", width=2))
+        tokens = chart_tokens()
+        self.projection_plot.plot(steps, list(found.median), pen=chart_pen(tokens.accent, 2.0))
         for values in (found.low, found.high):
-            self.projection_plot.plot(steps, list(values), pen=pg.mkPen("#8a91a5", width=1))
+            self.projection_plot.plot(steps, list(values), pen=chart_pen(tokens.text_secondary))
 
     def _show_compare(self) -> None:
         choice = self.compare_choice.currentText()
