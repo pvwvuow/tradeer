@@ -61,8 +61,7 @@ MODE_NOTES: dict[OperatingMode, str] = {
     OperatingMode.PAPER: "Paper: approved signals are simulated on live prices. No real orders.",
     OperatingMode.SEMI_AUTO: "Semi-auto: approved signals become real orders on your account.",
     OperatingMode.AUTO: (
-        "Auto: every signal that passes the filters and the risk checks is sent without "
-        "asking you."
+        "Auto: signals that pass every filter and risk check are sent without asking."
     ),
     OperatingMode.ANALYSIS_ONLY: "Analysis-only: signals are shown, nothing is ever sent.",
 }
