@@ -1,5 +1,5 @@
 """The Strategies page (spec F3): one card per strategy with on/off, its rules, the
-auto-generated settings form, and the signal filters.
+auto-generated settings form, the Go-Live checklist (Phase 13b) and the signal filters.
 
 Settings are saved per profile in `strategies.json` and used from the next closed bar.
 Every change is in the audit log with the values before and after.
@@ -29,9 +29,11 @@ from PySide6.QtWidgets import (
 from app.core.param_fields import ParamField, param_fields, validate_params
 from app.core.strategy_settings import StrategyEntry, StrategySettingsSource
 from app.engine.filters import FilterSettings
+from app.engine.go_live_desk import GoLiveDesk
 from app.observability.logger import audit
 from app.strategies.base import EXAMPLE_NOTE
 from app.strategies.registry import STRATEGIES
+from app.ui.go_live_panel import GoLivePanel
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
 
 INT_LIMIT = 1_000_000
@@ -185,6 +187,10 @@ class StrategiesPage(QWidget):
             card = StrategyCard(name, entry)
             self.cards[name] = card
             layout.addWidget(card)
+        self.go_live_box = QVBoxLayout()
+        self.go_live_box.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(self.go_live_box)
+        self.go_live_panel: GoLivePanel | None = None
         filters_card, filters_layout = card_frame()
         filters_layout.addWidget(styled_label("Signal filters", "brand"))
         current = settings.filters if settings is not None else FilterSettings()
@@ -201,6 +207,13 @@ class StrategiesPage(QWidget):
         layout.addLayout(row)
         layout.addWidget(self.status)
         layout.addStretch(1)
+
+    def attach_go_live(self, desk: GoLiveDesk) -> GoLivePanel:
+        """Show the Go-Live checklist below the strategy cards (the app wires it at start)."""
+        if self.go_live_panel is None:
+            self.go_live_panel = GoLivePanel(desk)
+            self.go_live_box.addWidget(self.go_live_panel)
+        return self.go_live_panel
 
     def save(self) -> bool:
         """Validate every form; save only when all of them are valid."""
@@ -227,4 +240,6 @@ class StrategiesPage(QWidget):
         audit("strategy settings changed", before=old, after=new)
         on = ", ".join(settings.enabled()) or "none"
         self.status.setText(f"Saved. Strategies on: {on}. Used from the next closed bar.")
+        if self.go_live_panel is not None:
+            self.go_live_panel.refresh()
         return True
