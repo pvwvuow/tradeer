@@ -9,7 +9,8 @@ trading (Simple view) or not (Advanced view).
 The page reads the same snapshots as the Advanced pages (signals, execution, risk) through
 queued Qt signals and acts through the same calls (approve, dismiss, close, kill switch): a
 plain-language view over one engine, never a second logic path. Its texts come from
-`app.ui.home_model`.
+`app.ui.home_model` in English; with Persian chosen, `translator` turns every shown text and
+question into Persian (spec A, F1).
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.analysis.sessions import market_open
+from app.core.ui_prefs import Language
 from app.domain.modes import OperatingMode
 from app.domain.signals import SignalRecord
 from app.engine.execution import ExecutionSnapshot
@@ -56,6 +58,7 @@ from app.ui.home_model import (
     suggestion_view,
     trade_rows,
 )
+from app.ui.i18n import Translator, translate_widgets
 from app.ui.navigation import SIMPLE_HOME
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
 from app.ui.positions_page import TradingContext
@@ -135,6 +138,7 @@ class HomePage(QWidget):
         self.signals_context = signals
         self.risk_context = risk
         self.trading = trading
+        self.translator = Translator(Language.EN)
         self.confirm: Confirm = lambda title, text: ask(self, title, text)
         self.stop: Callable[[], bool] | None = None
         self.on_onboarded: Callable[[bool], None] | None = None
@@ -379,6 +383,10 @@ class HomePage(QWidget):
         self.sparkline.color = QColor(tokens.accent)
         self.sparkline.update()
 
+    def retranslate(self) -> None:
+        """Show every text of the page in the chosen language (English: nothing to do)."""
+        translate_widgets(self.translator, self)
+
     # Showing --------------------------------------------------------------------------------
     def mode(self) -> OperatingMode:
         if self.trading is not None:
@@ -418,6 +426,7 @@ class HomePage(QWidget):
                 market_open=market_open(now),
             ),
         )
+        self.retranslate()
 
     def _show_suggestion(self, now: float, mode: OperatingMode, currency: str) -> int:
         snapshot = self.last_signals
@@ -534,7 +543,7 @@ class HomePage(QWidget):
     def _ask(self, title: str, text: str) -> bool:
         self._asking = True
         try:
-            return self.confirm(title, text)
+            return self.confirm(self.translator.text(title), self.translator.text(text))
         finally:
             self._asking = False
 
@@ -553,6 +562,7 @@ class HomePage(QWidget):
         self._acted.add(record.id)
         self.refresh()
         self.state_line.setText("Approved: it is checked again and placed in a few seconds.")
+        self.retranslate()
         return True
 
     def skip(self) -> bool:
@@ -574,6 +584,7 @@ class HomePage(QWidget):
         self.trading.engine.request_close(mode, ticket)
         audit("position close requested", before=None, after={"ticket": ticket})
         self.state_line.setText("Closing: done in a few seconds.")
+        self.retranslate()
         return True
 
     def stop_trading(self) -> bool:
@@ -609,8 +620,10 @@ class HomePage(QWidget):
     def _toggle_details(self, shown: bool) -> None:
         self.details_button.setText("Hide details" if shown else "Show details")
         self.details_label.setVisible(shown and self.suggestion is not None)
+        self.retranslate()
 
     def _toggle_status_bar(self, shown: bool) -> None:
         self.status_bar_button.setText("Hide status bar" if shown else "Show status bar")
         if self.on_status_bar is not None:
             self.on_status_bar(shown)
+        self.retranslate()
