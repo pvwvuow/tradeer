@@ -3,12 +3,15 @@ managed, closed trades are synced back from the deal history, and the kill switc
 
 Runs in the `market-analysis` thread, called by the signal pipeline: `execute` when the user
 approved a signal, `cycle` on every analysis cycle. It talks to brokers only through the
-`Broker` interface, so Paper and Semi-auto share every line here. It never touches a
+`Broker` interface, so Paper, Semi-auto and Auto share every line here. It never touches a
 position without one of the bot's magic numbers (manual trades are never modified).
 
 - Approval: re-check the signal against the live price (still valid, entry tolerance,
   spread, stops), size it again with the risk manager at the current price, then send it
   with SL and TP in the request. A failed re-check expires the signal.
+- Auto (Phase 13b): on every cycle each new pending signal is sent once without a click,
+  but only after the Go-Live gate (`auto_gate`) allowed its strategy and config; without the
+  gate Auto sends nothing. A refused signal expires with the gate's reason.
 - Management: MFE/MAE in R on every cycle; the strategy's optional rules (break-even, ATR
   trailing, partial close, time exit) through `app.domain.management`.
 - Close: a managed position that is gone from MT5 is read back from the deal history (real
@@ -58,9 +61,11 @@ KEEP_MESSAGES = 30
 DAILY_DAYS = 7  # the Home screen's 7-day result (spec F0)
 DAILY_REFRESH_SECONDS = 60.0
 DAY_SECONDS = 86_400
+AUTO_GATE_NOTE = "Auto mode needs the Go-Live gate, which is not connected"
 
 Log = Callable[[str, str], None]
 Listener = Callable[["ExecutionSnapshot"], None]
+AutoGate = Callable[[Signal], str]  # why Auto may not send this signal, "" when it may
 
 
 class ExecutionRisk(Protocol):
@@ -179,6 +184,7 @@ class ExecutionEngine:
         broker_symbol: Callable[[str], str] | None = None,
         stop_trading: Callable[[str], None] | None = None,
         paper_step: Callable[[], Sequence[str]] | None = None,
+        auto_gate: AutoGate | None = None,
         log: Log = _quiet,
         utc_now: Callable[[], float] = time.time,
     ) -> None:
@@ -200,6 +206,8 @@ class ExecutionEngine:
         self._broker_symbol = broker_symbol or (lambda name: name)
         self._stop_trading = stop_trading
         self._paper_step = paper_step
+        self._auto_gate = auto_gate
+        self._auto_sent: set[str] = set()
         self._log = log
         self._now = utc_now
         self._lock = threading.Lock()
@@ -248,8 +256,8 @@ class ExecutionEngine:
         mode = self.mode()
         if mode is OperatingMode.ANALYSIS_ONLY:
             return "Analysis-only mode places no orders"
-        if mode is OperatingMode.AUTO:
-            return "Auto mode needs the Go-Live gate (Phase 13)"
+        if mode is OperatingMode.AUTO and self._auto_gate is None:
+            return AUTO_GATE_NOTE
         if self._broker_for(mode) is None:
             return f"No broker for {mode.label} mode"
         return ""
@@ -274,6 +282,11 @@ class ExecutionEngine:
         if block:
             return [SignalUpdate(signal.id, SignalState.EXPIRED, f"not sent: {block}")]
         mode = self.mode()
+        if mode is OperatingMode.AUTO and self._auto_gate is not None:
+            refused = self._auto_gate(signal)
+            if refused:
+                self._message(f"Auto: {signal.summary()} not sent: {refused}", "WARNING")
+                return [SignalUpdate(signal.id, SignalState.EXPIRED, f"not sent: {refused}")]
         broker = self._broker_for(mode)
         assert broker is not None
         settings = self._config().settings
@@ -407,6 +420,28 @@ class ExecutionEngine:
         detail = "netting account: a new trade would merge with the open position (blocked)"
         return Check("netting", not same, len(same), 0, detail)
 
+    def _auto_send(
+        self,
+        signals: Mapping[str, SignalRecord],
+        now: float,
+    ) -> list[SignalUpdate]:
+        """Auto mode: send every new pending signal once (`_execute` asks the gate)."""
+        if signals:
+            self._auto_sent &= set(signals)
+        if self._auto_gate is None or self._stopped:
+            return []
+        updates: list[SignalUpdate] = []
+        for record in signals.values():
+            signal = record.signal
+            if signal.state is not SignalState.PENDING_APPROVAL or signal.id in self._auto_sent:
+                continue
+            if signal.expires_at <= now:
+                continue
+            self._auto_sent.add(signal.id)
+            self._message(f"Auto: sending {signal.summary()} [{signal.strategy}]")
+            updates += self.execute(record, now)
+        return updates
+
     # Analysis thread: every cycle ------------------------------------------------------
     def cycle(
         self,
@@ -436,6 +471,8 @@ class ExecutionEngine:
             except Exception as error:
                 text = f"{type(error).__name__}: {error}"
                 self._log("ERROR", f"Execution sync ({name}) failed: {text}")
+        if self.mode() is OperatingMode.AUTO:
+            updates += self._auto_send(known, moment)
         self._save_state()
         self._publish(moment)
         return updates
@@ -947,7 +984,7 @@ class ExecutionEngine:
     def _broker_for(self, mode: OperatingMode) -> Broker | None:
         if mode is OperatingMode.PAPER:
             return self._brokers.get("paper")
-        if mode is OperatingMode.SEMI_AUTO:
+        if mode in (OperatingMode.SEMI_AUTO, OperatingMode.AUTO):
             return self._brokers.get("live")
         return None
 
