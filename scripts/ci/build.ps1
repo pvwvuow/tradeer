@@ -14,7 +14,23 @@ function Invoke-Step([string]$Name, [scriptblock]$Command) {
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
 Set-Location $root
 
+# The Persian font (spec F1: Vazirmatn 33.003, SIL Open Font License), pinned to one
+# google/fonts commit and checked by its SHA-256 before it is bundled.
+$fontCommit = "6f9713a50c628d79f60259319d05fa0a239a9a7f"
+$fontSha256 = "696249a2c74b39ffdef55de4df2809c5b639d3ff80d618d8160a095d2fd49dca"
+$fontDir = Join-Path $root "app/ui/fonts"
+
 Invoke-Step "Install" { python -m pip install -e ".[dev]" }
+Invoke-Step "Persian font" {
+    New-Item -ItemType Directory -Force -Path $fontDir | Out-Null
+    $base = "https://raw.githubusercontent.com/google/fonts/$fontCommit/ofl/vazirmatn"
+    $font = Join-Path $fontDir "Vazirmatn.ttf"
+    Invoke-WebRequest -Uri "$base/Vazirmatn%5Bwght%5D.ttf" -OutFile $font
+    Invoke-WebRequest -Uri "$base/OFL.txt" -OutFile (Join-Path $fontDir "OFL.txt")
+    $hash = (Get-FileHash -LiteralPath $font -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($hash -ne $fontSha256) { throw "Vazirmatn font has SHA-256 $hash, expected $fontSha256" }
+    Write-Host "Vazirmatn.ttf $((Get-Item -LiteralPath $font).Length) bytes, SHA-256 ok"
+}
 Invoke-Step "Source self-check" { python -m app --self-check }
 Invoke-Step "PyInstaller" {
     # numpy is only imported at C level inside MetaTrader5's compiled extension,
@@ -30,10 +46,14 @@ Invoke-Step "PyInstaller" {
         --collect-all lightgbm `
         --collect-submodules scipy.sparse `
         --add-data "$root/app/calendar/mql5/CalendarExporter.mq5;app/calendar/mql5" `
+        --add-data "$fontDir;app/ui/fonts" `
         --distpath "$root/dist" `
         --workpath "$root/build/pyinstaller" `
         "$root/run_app.py"
 }
+
+$bundledFont = Join-Path $root "dist/MT5TradingWorkstation/_internal/app/ui/fonts/Vazirmatn.ttf"
+if (-not (Test-Path -LiteralPath $bundledFont)) { throw "The Persian font is missing from the build" }
 
 $exe = Join-Path $root "dist/MT5TradingWorkstation/MT5TradingWorkstation.exe"
 $report = Join-Path $root "dist/self-check.txt"

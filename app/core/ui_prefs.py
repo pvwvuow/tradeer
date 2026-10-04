@@ -1,4 +1,5 @@
-"""Persisted UI preferences (theme, Simple/Advanced view, first-run screen), per profile."""
+"""Persisted UI preferences (theme, language, Simple/Advanced view, first-run screen), per
+profile."""
 
 from __future__ import annotations
 
@@ -21,12 +22,18 @@ class ViewMode(StrEnum):
     ADVANCED = "advanced"
 
 
+class Language(StrEnum):
+    EN = "en"
+    FA = "fa"  # Persian, right to left (spec A: UI language English + Persian)
+
+
 class UiPrefs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     theme: ThemeName = ThemeName.DARK
     view_mode: ViewMode = ViewMode.SIMPLE
     onboarded: bool = False  # the first-run "practice money" screen was answered (spec F0)
+    language: Language = Language.EN  # used from the next start of the app
 
 
 def load_prefs(directory: Path) -> UiPrefs:
