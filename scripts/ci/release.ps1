@@ -18,10 +18,10 @@ $vpkVersion = "1.2.0"  # keep equal to the velopack pin in pyproject.toml
 & "$PSScriptRoot/check.ps1"
 & "$PSScriptRoot/build.ps1"
 
+# build.ps1 installed vpk already for its clean-install test; Install-Vpk skips it then.
 Write-Host "::group::Install vpk $vpkVersion"
-dotnet tool install --global vpk --version $vpkVersion
-if ($LASTEXITCODE -ne 0) { throw "vpk install failed" }
-$env:PATH = "$env:PATH;$env:USERPROFILE\.dotnet\tools"
+. "$PSScriptRoot/vpk.ps1"
+Install-Vpk $vpkVersion
 Write-Host "::endgroup::"
 
 $releases = Join-Path $root "dist/velopack"
