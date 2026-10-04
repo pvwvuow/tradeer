@@ -1,4 +1,9 @@
-"""Main window: Simple/Advanced views, grouped sidebar, status bar and command palette."""
+"""Main window: Simple/Advanced views, grouped sidebar, status bar and command palette.
+
+With Persian chosen (spec A, F1) the window runs right to left in the Vazirmatn font, and
+the Simple view (Home and the top bar) is shown in Persian; the Advanced pages and the
+status bar stay English, left to right.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from app.__version__ import __version__
 from app.analysis.sessions import duration_text, next_change, session_label
-from app.core.ui_prefs import ThemeName, UiPrefs, ViewMode, save_prefs
+from app.core.ui_prefs import Language, ThemeName, UiPrefs, ViewMode, save_prefs
 from app.domain.config import TradingDefaults
 from app.engine.execution import ExecutionSnapshot
 from app.mt5.connection import ConnectionState, ConnectionStatus
@@ -44,6 +49,7 @@ from app.ui.dashboard_page import DashboardContext, DashboardPage
 from app.ui.data_page import DataPage
 from app.ui.health_page import HealthContext, HealthPage
 from app.ui.home_page import HomePage
+from app.ui.i18n import LANGUAGE_BUTTON, RESTART_TEXT, Translator, persian_font, translate_widgets
 from app.ui.journal_page import JournalContext, JournalPage
 from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
@@ -78,6 +84,7 @@ from app.ui.updates_page import UpdateBanner, UpdatesContext, UpdatesPage
 
 SIDEBAR_WIDTH = 224
 KILL_SHORTCUT = "Ctrl+Shift+K"
+LANGUAGE_TITLE = "Language / \u0632\u0628\u0627\u0646"
 
 
 class MainWindow(QMainWindow):
@@ -120,13 +127,19 @@ class MainWindow(QMainWindow):
         }
         self.setWindowTitle(f"MT5 Trading Workstation {__version__}")
         self.setFont(ui_font(self.font()))
+        self.translator = Translator(prefs.language)
+        self.notify_language: Callable[[str], None] = self._show_language_note
+        if self.translator.right_to_left:
+            self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+            self.setFont(persian_font(self.font()))
         self.resize(1360, 860)
         self.setMinimumSize(1024, 640)
         root = QWidget()
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-        root_layout.addWidget(self._build_top_bar())
+        self.top_bar = self._build_top_bar()
+        root_layout.addWidget(self.top_bar)
         self.updates = updates
         if updates is not None:
             updates.restart = self.restart_to_update
@@ -143,6 +156,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(body, 1)
         self.setCentralWidget(root)
         self.home = HomePage(signals, risk, trading)
+        self.home.translator = self.translator
         self._add_page(SIMPLE_HOME.page_id, self.home)
         self.logs_page = LogsPage(log_controls) if log_controls is not None else None
         self.connection_page = ConnectionPage(connection) if connection is not None else None
@@ -212,6 +226,8 @@ class MainWindow(QMainWindow):
             else:
                 self._add_page(spec.page_id, PlaceholderPage(spec))
         self._build_status_bar()
+        if self.translator.right_to_left:
+            self._keep_english_left_to_right()
         style_tables(self)
         self.home.stop = self.ask_kill
         self.home.on_onboarded = self.finish_onboarding
@@ -277,6 +293,7 @@ class MainWindow(QMainWindow):
         # Simple view: the plain status line and Stop button on Home, the full bar on request.
         self.statusBar().setVisible(advanced or self.home.status_bar_button.isChecked())
         self.show_page("dashboard" if advanced else SIMPLE_HOME.page_id)
+        self._retranslate()
         if persist:
             self._persist()
 
@@ -293,6 +310,7 @@ class MainWindow(QMainWindow):
         else:
             self.show_page(SIMPLE_HOME.page_id)
             self.settings_button.setText("Settings")
+        self._retranslate()
 
     def show_updates(self) -> None:
         """Open Settings > Updates (from the banner or the command palette)."""
@@ -301,6 +319,19 @@ class MainWindow(QMainWindow):
             self.settings_button.setText("Back to Home")
         if self.settings_tabs is not None and self.updates_page is not None:
             self.settings_tabs.setCurrentWidget(self.updates_page)
+        self._retranslate()
+
+    def toggle_language(self) -> Language:
+        """Save the other language; the app uses it from its next start."""
+        chosen = Language.EN if self.prefs.language is Language.FA else Language.FA
+        self.prefs = self.prefs.model_copy(update={"language": chosen})
+        self._persist()
+        self.language_button.setText(LANGUAGE_BUTTON[chosen])
+        self.notify_language(RESTART_TEXT)
+        return chosen
+
+    def _show_language_note(self, text: str) -> None:
+        QMessageBox.information(self, LANGUAGE_TITLE, text)
 
     def restart_to_update(self) -> bool:
         """Confirm, hand the downloaded version to the installer and close the app (J2.4)."""
@@ -351,6 +382,7 @@ class MainWindow(QMainWindow):
         next_theme = "light" if theme is ThemeName.DARK else "dark"
         self.theme_button.setToolTip(f"Switch to the {next_theme} theme")
         self.theme_button.setText("" if icons_available() else f"{next_theme.title()} theme")
+        self._retranslate()
         if persist:
             self._persist()
 
@@ -365,6 +397,7 @@ class MainWindow(QMainWindow):
             items.append(Command(f"go:{spec.page_id}", f"Go to {spec.title}", spec.group, slot))
         items.append(Command("theme", "Toggle theme", "Appearance", self.toggle_theme))
         items.append(Command("view", "Switch to Simple view", "Appearance", self._to_simple))
+        items.append(Command("language", "Change the language", "Appearance", self._language))
         if self.logs_page is not None:
             page = self.logs_page
             items.append(Command("debug", "Toggle debug mode", "Logs", page.toggle_debug))
@@ -397,6 +430,7 @@ class MainWindow(QMainWindow):
         if self.trading is not None:
             self.set_execution_status(self.trading.engine.snapshot)
         self.home.set_connection(status.connected, plain_status(status))
+        self._retranslate()
 
     def operating_mode_label(self) -> str:
         if self.trading is not None:
@@ -411,6 +445,7 @@ class MainWindow(QMainWindow):
         if not self.mode_badge.text().startswith("ANALYSIS-ONLY"):
             self._set_mode(snapshot.mode.label.upper())
         self.bot_state_label.setText(bot_state_text(snapshot, self._connected))
+        self._retranslate()
 
     def ask_kill(self) -> bool:
         """The kill switch from the status bar or Ctrl+Shift+K, always with a confirmation."""
@@ -424,6 +459,7 @@ class MainWindow(QMainWindow):
         self.session_clock_label.setText(f"{session_label(moment)}{upcoming}")
         self.news_label.setText(self.market_page.next_news_text(moment))
         self.home.tick()
+        self._retranslate()
 
     def set_sync_status(self, status: object) -> None:
         """Slot: show the cloud sync state in the status bar."""
@@ -485,10 +521,14 @@ class MainWindow(QMainWindow):
         self.theme_button.clicked.connect(self.toggle_theme)
         self.settings_button = _ghost_button("Settings", "SimpleSettingsButton")
         self.settings_button.clicked.connect(self.toggle_simple_settings)
+        self.language_button = _ghost_button(LANGUAGE_BUTTON[self.prefs.language], "Language")
+        self.language_button.setToolTip(LANGUAGE_TITLE)
+        self.language_button.clicked.connect(self.toggle_language)
         layout.addWidget(self.search_button)
         layout.addWidget(self.settings_button)
         layout.addWidget(self.view_button)
         layout.addWidget(self.theme_button)
+        layout.addWidget(self.language_button)
         return bar
 
     def _build_sidebar(self) -> QFrame:
@@ -567,6 +607,16 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self.kill_switch)
         self.setStatusBar(bar)
 
+    def _keep_english_left_to_right(self) -> None:
+        """The Advanced pages, Settings and the status bar stay English: left to right."""
+        for page_id, index in self._page_index.items():
+            if page_id != SIMPLE_HOME.page_id:
+                self.pages.widget(index).setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.statusBar().setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+    def _retranslate(self) -> None:
+        translate_widgets(self.translator, self.top_bar)
+
     def _nav_slot(self, page_id: str) -> Callable[[], None]:
         def slot() -> None:
             self.show_page(page_id)
@@ -583,6 +633,9 @@ class MainWindow(QMainWindow):
 
     def _to_simple(self) -> None:
         self.set_view_mode(ViewMode.SIMPLE)
+
+    def _language(self) -> None:
+        self.toggle_language()
 
     def _show_connection_tab(self) -> None:
         self.show_page("settings")
