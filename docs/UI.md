@@ -39,11 +39,16 @@ red, connecting amber), the mode chip (Paper blue, Analysis-only amber, Semi-aut
 Search (Ctrl+K, Advanced view only), Settings (Simple view), the view switch and the theme
 switch.
 
+## Pages added later
+
+- AI Lab (0.14, Analyze group): see `docs/AI_LOOP.md`.
+
 ## Rules
 
 - No hard-coded colors in pages; use tokens or roles. Charts get their colors from
   `style_plots`.
 - A dynamic property change (role, chip, tone) needs `repolish(widget)`.
-- Never name a widget attribute after a QWidget method (`actions`, `title` is fine,
-  `scroll` is not).
+- Never name a widget attribute after a QWidget method: `actions` and `scroll` shadow
+  `QWidget.actions()` and `QWidget.scroll()` and fail mypy (use names such as `action_row`
+  or `scroll_area`).
 - The stylesheet must parse without a Qt warning (tests/ui/test_design_system.py).
