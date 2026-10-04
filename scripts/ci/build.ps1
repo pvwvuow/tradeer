@@ -1,5 +1,6 @@
 #Requires -Version 7
-# Build the one-folder Windows app with PyInstaller, verify it with --self-check, zip it.
+# Build the one-folder Windows app with PyInstaller, verify it with --self-check, zip it, then
+# install it with the real Setup.exe on this clean machine and check it again (install-test.ps1).
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -76,3 +77,6 @@ $zip = Join-Path $root "dist/MT5TradingWorkstation-portable.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path (Join-Path $root "dist/MT5TradingWorkstation") -DestinationPath $zip
 Write-Host "Built $zip"
+
+# Phase 16c: the installer a user downloads must install and start on a clean Windows PC.
+& "$PSScriptRoot/install-test.ps1"
