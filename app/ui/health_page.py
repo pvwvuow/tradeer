@@ -1,9 +1,10 @@
-"""The Health page (spec F3 page 13, E3): checks, performance, workers, the debug bundle.
+"""The Health page (spec F3 page 13, E3): checks, performance, workers, the debug bundle
+and the soak test report.
 
 It only reads: the monitors' last snapshots, the watchdog's worker list and the saved
 problems. "Check now" asks the monitor's own thread to run (no MT5 call on the UI thread).
-"Create debug bundle" writes the zip in a short-lived background thread so a big log folder
-never freezes the window.
+"Create debug bundle" and "Create soak report" run in short-lived background threads so a
+big log folder or database never freezes the window.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from app.engine.perf_monitor import PerfMonitor
 from app.observability.debug_bundle import BundleResult
 from app.observability.health import LABELS, HealthCheck, HealthStatus
 from app.observability.metrics import Metric
+from app.observability.soak import SoakResult
 from app.observability.watchdog import WorkerStatus
 from app.storage.health_store import SavedCheck
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
@@ -37,6 +39,11 @@ BUNDLE_TEXT = (
     "A zip of the recent logs, crash reports, masked settings, health, performance, versions "
     "and the last decision traces, with README_DEBUG.md and a prompt for an AI. Attach it to "
     "a bug report."
+)
+SOAK_TEXT = (
+    "Leave the app running on a demo account for 24 hours on market days, then create the "
+    "report: it checks the run against the budgets (memory, leaks, CPU, MT5 calls, bar "
+    "processing, crashes) and saves it as Markdown in the reports folder."
 )
 TONES: dict[HealthStatus, str] = {
     HealthStatus.OK: "profit",
@@ -67,6 +74,7 @@ class HealthContext:
     history: Callable[[int], Sequence[SavedCheck]] = field(default=_no_history)
     perf: PerfMonitor | None = None
     bundle: Callable[[], BundleResult] | None = None
+    soak: Callable[[], SoakResult] | None = None
 
 
 def _clock(seconds: float) -> str:
@@ -114,6 +122,15 @@ def history_rows(saved: Sequence[SavedCheck]) -> list[list[str]]:
     return [[_clock(item.time), item.name, item.status, item.text] for item in saved]
 
 
+def _failed(result: SoakResult) -> list[str]:
+    """The checks that did not pass, one line each."""
+    return [
+        f"{check.name}: {check.value} (needs {check.needed})"
+        for check in result.report.checks
+        if not check.passed
+    ]
+
+
 class HealthPage(QWidget):
     def __init__(self, context: HealthContext | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -123,6 +140,8 @@ class HealthPage(QWidget):
         self.open_folder: Callable[[Path], None] = _open_folder
         self.last_bundle: Path | None = None
         self._bundle_done: tuple[BundleResult | None, str] | None = None
+        self.last_soak: Path | None = None
+        self._soak_done: tuple[SoakResult | None, str] | None = None
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll_area = QScrollArea()
@@ -140,6 +159,7 @@ class HealthPage(QWidget):
         layout.addWidget(self._build_workers())
         layout.addWidget(self._build_history())
         layout.addWidget(self._build_bundle())
+        layout.addWidget(self._build_soak())
         layout.addStretch(1)
         self._timer = QTimer(self)
         self._timer.setInterval(REFRESH_MS)
@@ -147,6 +167,9 @@ class HealthPage(QWidget):
         self._bundle_timer = QTimer(self)
         self._bundle_timer.setInterval(BUNDLE_POLL_MS)
         self._bundle_timer.timeout.connect(self.poll_bundle)
+        self._soak_timer = QTimer(self)
+        self._soak_timer.setInterval(BUNDLE_POLL_MS)
+        self._soak_timer.timeout.connect(self.poll_soak)
         if context is None:
             self.check_button.setEnabled(False)
             self.summary.setText(NO_CONTEXT)
@@ -154,6 +177,8 @@ class HealthPage(QWidget):
             self._timer.start()
         if context is None or context.bundle is None:
             self.bundle_button.setEnabled(False)
+        if context is None or context.soak is None:
+            self.soak_button.setEnabled(False)
         self.refresh()
 
     def _build_checks(self) -> QWidget:
@@ -237,6 +262,27 @@ class HealthPage(QWidget):
         layout.addWidget(self.bundle_status)
         return card
 
+    def _build_soak(self) -> QWidget:
+        card, layout = card_frame()
+        layout.addWidget(styled_label("Soak test (24 hours)", "heading"))
+        layout.addWidget(styled_label(SOAK_TEXT, "muted", wrap=True))
+        row = QHBoxLayout()
+        self.soak_button = QPushButton("Create soak report")
+        self.soak_button.setObjectName("HealthSoak")
+        self.soak_button.clicked.connect(self.create_soak)
+        row.addWidget(self.soak_button)
+        self.soak_folder_button = QPushButton("Open folder")
+        self.soak_folder_button.setObjectName("HealthSoakFolder")
+        self.soak_folder_button.setEnabled(False)
+        self.soak_folder_button.clicked.connect(self.open_soak_folder)
+        row.addWidget(self.soak_folder_button)
+        row.addStretch(1)
+        layout.addLayout(row)
+        self.soak_status = styled_label("", "muted", wrap=True)
+        self.soak_status.setObjectName("HealthSoakStatus")
+        layout.addWidget(self.soak_status)
+        return card
+
     def check_now(self) -> None:
         if self.context is None:
             return
@@ -281,6 +327,46 @@ class HealthPage(QWidget):
     def open_bundle_folder(self) -> None:
         if self.last_bundle is not None:
             self.open_folder(self.last_bundle.parent)
+
+    def create_soak(self) -> bool:
+        """Start the soak report in the background; `poll_soak` shows the result."""
+        context = self.context
+        if context is None or context.soak is None or self._soak_timer.isActive():
+            return False
+        build = context.soak
+        self._soak_done = None
+        self.soak_button.setEnabled(False)
+        self.soak_status.setText("Reading the saved run...")
+
+        def work() -> None:
+            try:
+                self._soak_done = (build(), "")
+            except Exception as error:
+                self._soak_done = (None, f"{type(error).__name__}: {error}")
+
+        threading.Thread(target=work, name="soak-report", daemon=True).start()
+        self._soak_timer.start()
+        return True
+
+    def poll_soak(self) -> None:
+        done = self._soak_done
+        if done is None:
+            return
+        self._soak_timer.stop()
+        self._soak_done = None
+        self.soak_button.setEnabled(True)
+        result, error = done
+        if result is None:
+            self.soak_status.setText(f"The soak report could not be created: {error}")
+            return
+        self.last_soak = result.path
+        self.soak_folder_button.setEnabled(True)
+        lines = [result.text, *_failed(result)]
+        self.soak_status.setText("\n".join(lines))
+
+    def open_soak_folder(self) -> None:
+        if self.last_soak is not None:
+            self.open_folder(self.last_soak.parent)
 
     def refresh(self) -> None:
         context = self.context
