@@ -1,7 +1,8 @@
 # Health (Phase 14)
 
-Spec E3, D4 and F3 page 13. Advanced > System > Health. Checks since version 0.17.0;
-performance metrics, the debug bundle and the Go-Live health item since 0.18.0.
+Spec E3, D4 and F3 pages 12 and 13. Advanced > System > Health and Logs. Checks since
+version 0.17.0; performance metrics, the debug bundle and the Go-Live health item since
+0.18.0; the soak test report and the full Logs page since 0.19.0.
 
 ## Performance metrics (with every check)
 
@@ -17,6 +18,40 @@ performance metrics, the debug bundle and the Go-Live health item since 0.18.0.
 
 Over a budget is a WARNING in the `perf` log (INFO when back within), never a problem.
 Saved to `performance_metrics`: changes at once, all every 15 minutes.
+
+## Soak test (24 hours)
+
+Leave the app running on a demo account for at least 24 hours on market days (bars must
+close, so not over a weekend), then press Health > Create soak report. The report finds the
+latest continuous run in the saved metrics (a gap of more than 35 minutes ends a run; a
+restart for an update is no gap) and checks it:
+
+| Check | Needed |
+|---|---|
+| Duration | >= 24 hours |
+| Memory | < 500 MB at every sample |
+| No memory leak | < 50 MB per day growth after the first hour (least squares) |
+| CPU | < 3 % on average |
+| MT5 calls | p95 < 1,000 ms at every sample |
+| Bar processing | never over its budget |
+| Stability | no CRITICAL log line, no crash report, no frozen worker |
+
+ERROR lines and lost MT5 connections are listed as notes. The report is saved as
+`<profile>/reports/soak-<UTC time>.md`; Open folder shows it.
+
+## Logs page
+
+Category tabs (All and the 16 categories), the live tail, filters for level, text (or
+regex), symbol, strategy and time range, the JSON detail of a line, the level of each
+category, debug mode for 30 minutes, Export and Open log folder.
+
+- **This session** shows the live lines kept in memory. **Last 15 minutes** to **Last 30
+  days** also read the saved files, zipped ones too, in a background thread, and merge them
+  with the live lines (at most 2,000 lines, the newest).
+- **Show only this trace** isolates one trace id across the session and every saved file
+  and shows its timeline (each line with the time since the first) in the detail pane.
+- **Export** saves the lines shown as `<profile>/exports/logs-<UTC time>.jsonl` and `.csv`.
+  The lines were masked when they were written.
 
 ## Debug bundle
 
@@ -41,19 +76,9 @@ See the table in the 0.17.0 notes: MT5 connected, Algo Trading, quotes fresh, br
 Supabase, sync queue, disk space, log size, latency, PC clock, background workers. While
 cloud sync is off the sync queue shows n/a: the rows wait on this PC (0.18.1).
 
-## Fixed in 0.18.1 (from the first real debug bundle)
+## Check it on the PC (0.19.0)
 
-- Personal values in the bundle (see above).
-- No sync-queue warning while cloud sync is off (check and metric).
-- Pressing Connect while connected no longer sends a "MT5 disconnected" alert.
-- The Go-Live 7-day item no longer counts warnings and n/a checks.
-
-## Check it on the PC (0.18.1)
-
-1. Health: Sync queue and Rows waiting to sync show n/a with cloud sync off.
-2. Create debug bundle: search the zip for your login and name; both are `***`.
-3. Connection: press Connect while connected; no "MT5 disconnected" toast or Telegram.
-
-## Next (14c)
-
-The 24-hour soak test on demo with a report, and the full Logs page check.
+1. Logs: click a few category tabs; type a symbol; choose Last 24 hours and see older lines.
+2. Logs: select a line with a trace id, Show only this trace: the timeline appears below.
+3. Logs: Export, then Open log folder > `..\exports`: the `.csv` opens in Excel.
+4. Monday to Friday: leave the app on demo for 24 hours, then Health > Create soak report.

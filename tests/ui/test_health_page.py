@@ -1,5 +1,5 @@
-"""The Health page (spec F3 page 13): checks, performance, workers, recent issues and the
-debug bundle."""
+"""The Health page (spec F3 page 13): checks, performance, workers, recent issues, the
+debug bundle and the soak report."""
 
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from app.engine.perf_monitor import PerfMonitor
 from app.observability.debug_bundle import BundleResult
 from app.observability.health import HealthInputs
 from app.observability.metrics import MB, PerfInputs
+from app.observability.soak import SoakInputs, SoakResult, evaluate_soak
 from app.observability.watchdog import WorkerStatus
 from app.storage.health_store import SavedCheck
 from app.ui.health_page import HealthContext, HealthPage
@@ -157,3 +158,39 @@ def test_the_main_window_shows_the_health_page(qtbot: QtBot, tmp_path: Path) -> 
     window.show_page("health")
     assert isinstance(window.pages.currentWidget(), HealthPage)
     assert window.health_page.context is None
+
+
+def test_the_soak_report_is_created_in_the_background(qtbot: QtBot, tmp_path: Path) -> None:
+    target = tmp_path / "reports" / "soak-20260921-141320.md"
+    result = SoakResult(target, evaluate_soak(SoakInputs(start=0.0, end=0.0)))
+    found = context()
+    bare = HealthPage(found)
+    qtbot.addWidget(bare)
+    assert not bare.soak_button.isEnabled()  # no report builder in this context
+    found.soak = lambda: result
+    page = HealthPage(found)
+    qtbot.addWidget(page)
+    opened: list[Path] = []
+    page.open_folder = opened.append
+    assert page.soak_button.isEnabled() and not page.soak_folder_button.isEnabled()
+    assert page.create_soak()
+    qtbot.waitUntil(lambda: page.last_soak is not None, timeout=5000)
+    text = page.soak_status.text()
+    assert text.startswith("Soak test FAIL: 1 of 7 checks passed")
+    assert "Duration: 0.0 hours" in text and str(target) in text
+    page.soak_folder_button.click()
+    assert opened == [target.parent]
+
+
+def test_a_failing_soak_report_says_why(qtbot: QtBot) -> None:
+    def build() -> SoakResult:
+        raise OSError("database locked")
+
+    found = context()
+    found.soak = build
+    page = HealthPage(found)
+    qtbot.addWidget(page)
+    assert page.create_soak()
+    qtbot.waitUntil(lambda: page.soak_button.isEnabled(), timeout=5000)
+    assert "could not be created: OSError: database locked" in page.soak_status.text()
+    assert page.last_soak is None

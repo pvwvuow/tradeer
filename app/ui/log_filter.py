@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from app.observability.levels import LogLevel, level_number
+from app.observability.log_reader import entry_time
 
 Matcher = Callable[[Mapping[str, Any]], bool]
 
@@ -36,10 +37,29 @@ class LogFilter:
     text: str = ""
     regex: bool = False
     trace_id: str | None = None
+    symbol: str = ""  # part of the symbol, any case ("eur" finds EURUSD.m)
+    strategy: str = ""
+    since: float | None = None  # UTC seconds
+    until: float | None = None
 
 
 def searchable_text(entry: Mapping[str, Any]) -> str:
     return " ".join(str(entry[key]) for key in SEARCH_FIELDS if entry.get(key) is not None)
+
+
+def _part_of(needle: str, value: object) -> bool:
+    return not needle or (value is not None and needle in str(value).casefold())
+
+
+def _in_time(log_filter: LogFilter, entry: Mapping[str, Any]) -> bool:
+    if log_filter.since is None and log_filter.until is None:
+        return True
+    moment = entry_time(entry)
+    if moment is None:
+        return False
+    if log_filter.since is not None and moment < log_filter.since:
+        return False
+    return log_filter.until is None or moment <= log_filter.until
 
 
 def make_matcher(log_filter: LogFilter) -> tuple[Matcher, str | None]:
@@ -56,6 +76,8 @@ def make_matcher(log_filter: LogFilter) -> tuple[Matcher, str | None]:
         except re.error as problem:
             error = f"Invalid pattern ({problem}); searching for the plain text instead."
     folded = needle.casefold()
+    symbol = log_filter.symbol.strip().casefold()
+    strategy = log_filter.strategy.strip().casefold()
 
     def matches(entry: Mapping[str, Any]) -> bool:
         if log_filter.category is not None and entry.get("category") != log_filter.category:
@@ -63,6 +85,12 @@ def make_matcher(log_filter: LogFilter) -> tuple[Matcher, str | None]:
         if level_number(entry.get("level")) < log_filter.min_level:
             return False
         if log_filter.trace_id is not None and entry.get("trace_id") != log_filter.trace_id:
+            return False
+        if not _part_of(symbol, entry.get("symbol")):
+            return False
+        if not _part_of(strategy, entry.get("strategy")):
+            return False
+        if not _in_time(log_filter, entry):
             return False
         if not needle:
             return True

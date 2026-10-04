@@ -878,8 +878,10 @@ def _health_context(
     from app.observability.logger import get_logger
     from app.observability.metrics import PerfInputs
     from app.observability.process_stats import CpuMeter, memory_bytes
+    from app.observability.soak import REPORT_FOLDER, SoakResult
     from app.storage.health_store import HealthRepository
     from app.storage.perf_store import PerfRepository, recent_traces
+    from app.storage.soak_store import create_soak_report
     from app.ui.health_page import HealthContext
 
     health_log = get_logger(LogCategory.APP)
@@ -1004,7 +1006,21 @@ def _health_context(
         write("INFO", result.text)
         return result
 
-    return HealthContext(monitor, watchdog.statuses, history, perf, bundle)
+    def soak() -> SoakResult:
+        """The soak test report of the latest continuous run (spec G3 phase 14)."""
+        try:
+            result = create_soak_report(
+                storage.store,
+                observability.crash_dir,
+                directory / REPORT_FOLDER,
+                now=time.time(),
+            )
+        finally:
+            storage.store.db.release()  # this short-lived thread's connection
+        write("INFO", result.text)
+        return result
+
+    return HealthContext(monitor, watchdog.statuses, history, perf, bundle, soak)
 
 
 def _show_window(
