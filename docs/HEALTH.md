@@ -1,6 +1,6 @@
 # Health (Phase 14a)
 
-Spec E3 and F3 page 13. Advanced > System > Health.
+Spec E3 and F3 page 13. Advanced > System > Health. Available since version 0.17.0.
 
 ## The checks (every minute)
 
