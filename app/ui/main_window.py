@@ -33,6 +33,7 @@ from app.observability.controls import LogControls
 from app.observability.crash_handler import CrashTestError
 from app.storage.runtime import StorageRuntime
 from app.storage.sync import SyncStatus
+from app.ui.ai_lab_page import AiLabPage, ai_lab_context
 from app.ui.analytics_page import AnalyticsContext, AnalyticsPage
 from app.ui.backtest_page import BacktestContext, BacktestPage
 from app.ui.command_palette import CommandPalette
@@ -154,6 +155,7 @@ class MainWindow(QMainWindow):
         self.dashboard_page = DashboardPage(dashboard)
         self.analytics_page = AnalyticsPage(analytics)
         self.journal_page = JournalPage(journal)
+        self.ai_lab_page = AiLabPage(ai_lab_context(analytics, backtest))
         self.notifications_page = (
             NotificationsPage(notifications) if notifications is not None else None
         )
@@ -185,6 +187,8 @@ class MainWindow(QMainWindow):
                 self._add_page(spec.page_id, self.backtest_page)
             elif spec.page_id == "model":
                 self._add_page(spec.page_id, self.model_page)
+            elif spec.page_id == "ai_lab":
+                self._add_page(spec.page_id, self.ai_lab_page)
             elif spec.page_id == "logs" and self.logs_page is not None:
                 self._add_page(spec.page_id, self.logs_page)
             elif spec.page_id == "settings" and self.data_page is not None:
