@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/pvwvuow/tradeer/compare/v0.18.1...v0.19.0) (2026-10-04)
+
+
+### Features
+
+* **health:** Phase 14c soak test report and full Logs page ([#38](https://github.com/pvwvuow/tradeer/issues/38)) ([220d0dd](https://github.com/pvwvuow/tradeer/commit/220d0dddd2cae18145b3c7b5b18d78a545bd92f2))
+
 ## [0.18.1](https://github.com/pvwvuow/tradeer/compare/v0.18.0...v0.18.1) (2026-10-04)
 
 
