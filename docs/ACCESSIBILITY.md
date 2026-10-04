@@ -54,4 +54,4 @@ colors, which read on both themes).
    Settings.
 3. Windows display scale at 150%: text and icons are sharp, nothing is cut off.
 
-Released in 0.21.0.
+Released in 0.21.0 (Phase 16b).
