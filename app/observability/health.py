@@ -205,8 +205,7 @@ def quotes_check(inputs: HealthInputs) -> HealthCheck:
         age = max(0.0, inputs.now - opened - OPENING_GRACE_SECONDS)
         since = (inputs.now - opened) / MINUTE
         text = (
-            f"No price yet since the market opened {since:,.0f} min ago "
-            f"({len(times)} symbol(s))."
+            f"No price yet since the market opened {since:,.0f} min ago ({len(times)} symbol(s))."
         )
     else:
         text = f"The newest price is {age:,.0f} s old ({len(times)} symbol(s))."
