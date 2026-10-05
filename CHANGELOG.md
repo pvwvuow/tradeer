@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.2](https://github.com/pvwvuow/tradeer/compare/v0.22.1...v0.22.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* breakout OCO orders after a fill, quiet backtests and the idle CPU budget ([#48](https://github.com/pvwvuow/tradeer/issues/48)) ([96447b3](https://github.com/pvwvuow/tradeer/commit/96447b32ced11cc474576102b26026515ad60f91))
+
 ## [0.22.1](https://github.com/pvwvuow/tradeer/compare/v0.22.0...v0.22.1) (2026-10-05)
 
 
