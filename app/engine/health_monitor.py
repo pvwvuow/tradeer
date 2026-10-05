@@ -5,6 +5,8 @@ snapshots, never calls MT5), `evaluate` applies the rules. Status changes are lo
 (WARNING for a warning, ERROR for a problem, INFO when it is OK again) and saved with
 `HealthRecorder`'s policy. The Health page reads `snapshot` and can ask for a check now.
 `after` runs once after every check in the same thread (the performance monitor).
+The monitor adds when the FX week opened, so Friday's prices are not "stale" in the first
+minutes after the Sunday open (PC log of 5 October 2026).
 """
 
 from __future__ import annotations
@@ -14,9 +16,10 @@ import os
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from app.analysis.sessions import week_opened_at
 from app.observability.health import (
     HealthCheck,
     HealthInputs,
@@ -31,6 +34,7 @@ CHECK_SECONDS = 60.0
 FIRST_DELAY_SECONDS = 30.0  # let the auto-connect finish before the first check
 Save = Callable[[Sequence[HealthCheck], float], object]
 Listener = Callable[["HealthSnapshot"], None]
+WeekOpen = Callable[[float], float | None]
 
 
 def _quiet(level: str, message: str) -> None:
@@ -89,8 +93,10 @@ class HealthMonitor:
         clock: Callable[[], float] = time.time,
         first_delay_seconds: float = FIRST_DELAY_SECONDS,
         after: Sequence[Callable[[], object]] = (),
+        week_open: WeekOpen = week_opened_at,
     ) -> None:
         self._collect = collect
+        self._week_open = week_open
         self._first_delay = first_delay_seconds
         self._save = save
         self._log = log
@@ -120,7 +126,7 @@ class HealthMonitor:
         with self._run_lock:
             now = self._clock()
             try:
-                inputs = self._collect()
+                inputs = self._with_week_open(self._collect())
             except Exception as error:
                 inputs = HealthInputs(now=now)
                 self._log("WARNING", f"Health inputs incomplete: {type(error).__name__}: {error}")
@@ -174,6 +180,15 @@ class HealthMonitor:
                     self._heartbeat()
             self._wake.wait(self._interval)
             self._wake.clear()
+
+    def _with_week_open(self, inputs: HealthInputs) -> HealthInputs:
+        if inputs.market_opened_at is not None or inputs.market_closed:
+            return inputs
+        try:
+            opened = self._week_open(inputs.now)
+        except (OverflowError, OSError, ValueError):  # a time Windows cannot convert
+            return inputs
+        return replace(inputs, market_opened_at=opened)
 
     def _report(self, before: Sequence[HealthCheck], after: Sequence[HealthCheck]) -> None:
         for old, new in self._recorder.changes(before, after):

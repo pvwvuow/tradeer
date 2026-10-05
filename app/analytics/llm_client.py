@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.__version__ import __version__
 from app.analytics import charts
 from app.analytics.ai_export import ExportData, calibration
 from app.analytics.breakdowns import KEYS, breakdown, label
@@ -46,6 +47,19 @@ SUMMARY_LIMIT = 12_000
 BREAKDOWN_ROWS = 8
 ERROR_TEXT_LIMIT = 300
 MILLION = 1_000_000.0
+# Python's own "Python-urllib/3.11" is refused by many endpoints behind Cloudflare
+# (error 1010, "browser signature"; PC log of 4 October 2026), so the app names itself.
+USER_AGENT = f"MT5TradingWorkstation/{__version__}"
+HTTP_HINTS = {
+    401: "The API key was refused: check it and save it again.",
+    402: "No credit left: check your plan with the provider.",
+    404: "Not found: check the endpoint (it usually ends in /v1) and the model name.",
+    429: "Too many requests or no credit left: wait a little or check your plan.",
+}
+CLOUDFLARE_HINT = (
+    "The provider's firewall (Cloudflare) refused this app. Ask the provider to allow API "
+    "clients, or use another endpoint."
+)
 DEFAULT_QUESTION = "Review this trading system and suggest careful parameter changes."
 SYSTEM_PROMPT = """You review an automated MetaTrader 5 trading system from a compact
 summary (there is no trade list). Be skeptical: few trades, one good month or big outliers
@@ -131,6 +145,15 @@ def _no_login() -> str | None:
     return None
 
 
+def http_error_text(code: int, detail: str) -> str:
+    """The endpoint's HTTP error, with a plain hint for the usual causes first."""
+    if code in (403, 503) and "cloudflare" in detail.lower():
+        hint = CLOUDFLARE_HINT
+    else:
+        hint = HTTP_HINTS.get(code, "")
+    return f"HTTP {code}: {hint} {detail}" if hint else f"HTTP {code}: {detail}"
+
+
 def urllib_post(url: str, headers: Mapping[str, str], body: bytes, timeout: float) -> bytes:
     """POST with the standard library (the URL is checked by `url_problem` first)."""
     request = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
@@ -140,7 +163,7 @@ def urllib_post(url: str, headers: Mapping[str, str], body: bytes, timeout: floa
             return data
     except urllib.error.HTTPError as error:
         detail = error.read()[:ERROR_TEXT_LIMIT].decode("utf-8", "replace")
-        raise LlmError(f"HTTP {error.code}: {detail}") from None
+        raise LlmError(http_error_text(error.code, detail)) from None
     except OSError as error:  # URLError, timeouts, TLS and socket errors
         raise LlmError(f"Could not reach the endpoint: {error}") from None
 
@@ -436,7 +459,11 @@ def ask(
             "temperature": 0.2,
         },
     ).encode("utf-8")
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": USER_AGENT,
+    }
     if secret:
         headers["Authorization"] = f"Bearer {secret}"
     started = clock()

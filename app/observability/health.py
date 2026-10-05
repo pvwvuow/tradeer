@@ -25,6 +25,7 @@ SNAPSHOT_SECONDS = 15 * MINUTE
 GIB = 1024.0**3
 QUOTE_WARNING_SECONDS = 5 * MINUTE
 QUOTE_CRITICAL_SECONDS = 15 * MINUTE
+OPENING_GRACE_SECONDS = 10 * MINUTE  # brokers send the week's first prices a little late
 PING_WARNING_MS = 250.0
 PING_CRITICAL_MS = 1000.0
 CLOCK_WARNING_SECONDS = 30.0
@@ -91,6 +92,7 @@ class HealthInputs:
     ping_ms: float | None = None
     quote_times: Sequence[float] = ()  # the newest tick of each symbol, as UTC
     market_closed: bool = False
+    market_opened_at: float | None = None  # when the FX week opened (UTC); None = unknown
     clock_measured: bool = False
     clock_text: str = ""
     clock_changes: Sequence[float] = ()  # UTC times the broker offset jumped
@@ -185,7 +187,8 @@ def quotes_check(inputs: HealthInputs) -> HealthCheck:
     times = [value for value in inputs.quote_times if value > 0]
     if inputs.mt5_state != "connected" or not times:
         return HealthCheck("quotes_fresh", title, HealthStatus.UNKNOWN, "No prices yet.")
-    age = max(0.0, inputs.now - max(times))
+    newest = max(times)
+    age = max(0.0, inputs.now - newest)
     if inputs.market_closed:
         return HealthCheck(
             "quotes_fresh",
@@ -195,13 +198,23 @@ def quotes_check(inputs: HealthInputs) -> HealthCheck:
             age,
             "s",
         )
+    opened = inputs.market_opened_at
+    if opened is not None and newest < opened <= inputs.now:
+        # No price of the new week yet. Brokers send the first prices a few minutes after
+        # the weekly open, so the wait counts from the open plus a grace, not from Friday.
+        age = max(0.0, inputs.now - opened - OPENING_GRACE_SECONDS)
+        since = (inputs.now - opened) / MINUTE
+        text = (
+            f"No price yet since the market opened {since:,.0f} min ago ({len(times)} symbol(s))."
+        )
+    else:
+        text = f"The newest price is {age:,.0f} s old ({len(times)} symbol(s))."
     if age > QUOTE_CRITICAL_SECONDS:
         status = HealthStatus.CRITICAL
     elif age > QUOTE_WARNING_SECONDS:
         status = HealthStatus.WARNING
     else:
         status = HealthStatus.OK
-    text = f"The newest price is {age:,.0f} s old ({len(times)} symbol(s))."
     fix = "" if status is HealthStatus.OK else "Check the terminal's connection to the broker."
     return HealthCheck("quotes_fresh", title, status, text, age, "s", fix)
 
