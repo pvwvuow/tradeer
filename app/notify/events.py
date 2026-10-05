@@ -2,7 +2,9 @@
 
 Pure: each function takes the previous and the new snapshot of one part (execution, signals,
 risk, connection, cloud sync) and returns the notices for what changed. The first snapshot
-of a run never notifies (nothing "changed" when the app starts).
+of a run never notifies (nothing "changed" when the app starts). Every order that could not
+be sent is told as an error (in every mode), and in Auto mode no signal asks for an
+approval, because nothing waits for a click there (PC log of 5 October 2026).
 """
 
 from __future__ import annotations
@@ -11,11 +13,17 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from app.domain.signals import SignalState
 from app.engine.execution import ExecutionSnapshot
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.mt5.connection import ConnectionState, ConnectionStatus
 from app.risk.risk_manager import RiskSnapshot
 from app.storage.sync import SyncState, SyncStatus
+
+FAILURE_TEXT = 500  # characters of a failed order's notice
+# A FAILED signal whose reason starts like this was sent and then ended (the other side of a
+# breakout filled, the order expired, the kill switch); any other one could not be sent.
+ENDED_REASONS = ("cancelled", "pending order")
 
 
 class EventKind(StrEnum):
@@ -90,11 +98,20 @@ def execution_notices(old: ExecutionSnapshot | None, new: ExecutionSnapshot) -> 
     return found
 
 
-def signal_notices(old: SignalsSnapshot | None, new: SignalsSnapshot) -> list[Notice]:
+def signal_notices(
+    old: SignalsSnapshot | None,
+    new: SignalsSnapshot,
+    *,
+    auto: bool = False,
+) -> list[Notice]:
+    """Each order that could not be sent, and each new signal that waits for approval
+    (none in Auto mode: the engine sends or refuses every signal by itself)."""
     if old is None:
         return []
+    found = failed_orders(old, new)
+    if auto:
+        return found
     known = {record.id for record in old.pending()}
-    found: list[Notice] = []
     for record in new.pending():
         if record.id in known:
             continue
@@ -107,6 +124,23 @@ def signal_notices(old: SignalsSnapshot | None, new: SignalsSnapshot) -> list[No
         ask = f"Approve or skip it before it expires. Id {signal.id[:8]}"
         text = f"{signal.summary()}{chance}. {ask}"
         found.append(Notice(EventKind.APPROVAL_NEEDED, text, f"approve:{signal.id}"))
+    return found
+
+
+def failed_orders(old: SignalsSnapshot, new: SignalsSnapshot) -> list[Notice]:
+    """An error notice for each signal that just failed to go out as an order."""
+    before = {record.id: record.signal.state for record in old.signals}
+    found: list[Notice] = []
+    for record in new.signals:
+        signal = record.signal
+        was = before.get(record.id)
+        if signal.state is not SignalState.FAILED or was in (None, SignalState.FAILED):
+            continue
+        why = signal.history[-1].reason if signal.history else ""
+        if why.startswith(ENDED_REASONS):
+            continue
+        text = f"Order failed: {signal.summary()}: {why}"[:FAILURE_TEXT]
+        found.append(Notice(EventKind.ERROR, text, f"failed:{signal.id}"))
     return found
 
 
