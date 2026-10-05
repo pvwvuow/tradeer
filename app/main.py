@@ -852,7 +852,7 @@ def _health_context(
     market: MarketParts,
     probes: PerfProbes,
 ) -> HealthContext:
-    """The health and performance monitors and the debug bundle (spec E3).
+    """The health and performance monitors, the debug bundle and the demo test (spec E3).
 
     They read snapshots only and never call MT5 themselves.
     """
@@ -860,8 +860,10 @@ def _health_context(
     import shutil
     from pathlib import Path
 
+    from app.brokers.demo_test import DemoTest
     from app.core.clock import fx_weekend
     from app.core.profiles import load_account
+    from app.core.watchlist import WatchlistSource
     from app.engine.health_monitor import HealthMonitor, folder_size
     from app.engine.perf_monitor import PerfMonitor
     from app.notify.settings import NotificationSettingsSource
@@ -882,6 +884,7 @@ def _health_context(
     from app.storage.health_store import HealthRepository
     from app.storage.perf_store import PerfRepository, recent_traces
     from app.storage.soak_store import create_soak_report
+    from app.ui.demo_test_panel import DemoTestContext
     from app.ui.health_page import HealthContext
 
     health_log = get_logger(LogCategory.APP)
@@ -1020,7 +1023,16 @@ def _health_context(
         write("INFO", result.text)
         return result
 
-    return HealthContext(monitor, watchdog.statuses, history, perf, bundle, soak)
+    execution_log = get_logger(LogCategory.EXECUTION)
+
+    def write_demo(level: str, message: str) -> None:
+        execution_log.log(level, "Demo test: {}", message)
+
+    def demo_test() -> DemoTest:
+        return DemoTest(gateway, log=write_demo)
+
+    demo = DemoTestContext(demo_test, WatchlistSource(directory), directory / REPORT_FOLDER)
+    return HealthContext(monitor, watchdog.statuses, history, perf, bundle, soak, demo)
 
 
 def _show_window(
