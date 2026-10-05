@@ -35,6 +35,7 @@ The detailed notes of phases 1 to 12 (what was built, the checklists and the fix
 | 16a | Persian and right to left (Simple view) | 0.20.0 | [I18N.md](I18N.md) |
 | 16b | Accessibility and light theme polish | 0.21.0 | [ACCESSIBILITY.md](ACCESSIBILITY.md) |
 | 16c | Clean-install test, README and user guide | 0.22.0 | this page |
+| fix | Your PC log of 5 October: weekly open, reconnect notice, Ask AI | 0.22.1 | this page |
 
 ## Phase 16c: clean install, README and user guide
 
@@ -53,11 +54,24 @@ The detailed notes of phases 1 to 12 (what was built, the checklists and the fix
 - ✗ The installer is not code-signed, so SmartScreen warns on the first install
 - ✗ The uninstall is not tested in CI (Windows Settings > Apps does it; your data in `%APPDATA%` stays)
 
+## Your PC, 4 to 5 October 2026 (0.22.1)
+
+From your log of Sunday 20:32 to Monday 04:39 UTC (0.21.0, then 0.22.0):
+
+- ✓ **In-app update**: 0.22.0 was found, 629 KB downloaded (changes only), verified and installed after **Restart to update**; the app started again in 2.8 s (spec J).
+- ✓ **Monday clock**: `Broker time: UTC+2/+3 (US summer time)` at 21:25 UTC, 10 minutes after MT5's last reconnect, then the history was imported again; no "Broker time jumped" line.
+- ✓ Eight hours across the weekly open with no frozen worker; MT5 reconnected twice by itself (after 8 s and 2 s).
+- Fixed: at the Sunday open the newest price was still Friday's, so "Quotes fresh" said critical ("173,123 s old") and sent an error notification. The wait now counts from the weekly open plus 10 minutes.
+- Fixed: the broker's restart at the open dropped MT5 for 11 s and sent an urgent "MT5 disconnected" notification. Without open positions that notice now waits a minute and is dropped when MT5 is back; with open positions it still goes out at once.
+- Fixed: the weekly report listed "unknown" health checks as issues.
+- Fixed: Ask AI to an endpoint behind Cloudflare failed with HTTP 403 (error 1010, Python's default client signature). The app now names itself in its requests, and HTTP errors carry a plain hint.
+- Still open on your PC: Algo Trading was off in MT5 while the mode was Auto (nothing can be sent until it is on), and Telegram is still not reachable (timeouts, then "Bad Gateway").
+
 ## Test on your PC
 
 1. **Clean install**: on a PC (or a new Windows user, or Windows Sandbox) where the app was never installed, download `MT5TradingWorkstation-win-Setup.exe` from the latest release and run it ("More info", "Run anyway" if SmartScreen warns). The app starts by itself with the "This is practice money" card. In `%LocalAppData%\MT5TradingWorkstation\current` run `.\MT5TradingWorkstation.exe --self-check --report-file self-check.txt`: every line OK. Then install MT5, log in to a demo account and connect.
 2. **Weekday, market open**: `--mt5-trade-test --symbol EURUSD` and `--symbol XAUUSD` on demo (Phase 8); a Paper approval and a Semi-auto approval, the restart with an open trade and the kill switch; the Simple view's suggestion, Approve, Skip, Close now and Stop (Phase 9); the London morning signals (Phase 6) and the Risk page (Phase 7).
-3. **Monday after the open**: `all.log` says `Broker time: UTC+2/+3 (US summer time)` within about 10 minutes, with no "Broker time jumped" line.
+3. ✓ Done on 5 October: **Monday after the open**, `all.log` says `Broker time: UTC+2/+3 (US summer time)` with no "Broker time jumped" line.
 4. **24 hours on demo** on market days, then Health > **Create soak report** (Phase 14c), and look at the Logs page filters and the trace timeline.
 5. **Persian**: click **فارسی**, restart: Home and the top bar are right to left in Vazirmatn (Phase 16a).
 6. **Light theme and keyboard**: the light theme's charts, Tab through Home, Ctrl+, opens Settings, 150% display scaling stays sharp (Phase 16b).
