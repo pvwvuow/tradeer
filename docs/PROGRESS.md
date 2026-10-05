@@ -70,7 +70,7 @@ From your log of Sunday 20:32 to Monday 04:39 UTC (0.21.0, then 0.22.0); the fix
 
 ## Your PC, 5 October 2026 morning (0.22.2)
 
-From your log of Monday 04:40 to 06:05 UTC (0.22.0, then 0.22.1), before the London open:
+From your log of Monday 04:40 to 06:05 UTC (0.22.0, then 0.22.1), before the London open; the fixes below shipped in 0.22.2 on 5 October:
 
 - ✓ **In-app update** 0.22.0 to 0.22.1: 685 KB (changes only), verified, restarted in 3.2 s.
 - ✓ **Algo Trading** is on in MT5 (04:44 UTC), so Auto can send orders on the demo account.
