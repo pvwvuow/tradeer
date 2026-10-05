@@ -56,7 +56,7 @@ The detailed notes of phases 1 to 12 (what was built, the checklists and the fix
 
 ## Your PC, 4 to 5 October 2026 (0.22.1)
 
-From your log of Sunday 20:32 to Monday 04:39 UTC (0.21.0, then 0.22.0):
+From your log of Sunday 20:32 to Monday 04:39 UTC (0.21.0, then 0.22.0); the fixes below shipped in 0.22.1 on 5 October:
 
 - ✓ **In-app update**: 0.22.0 was found, 629 KB downloaded (changes only), verified and installed after **Restart to update**; the app started again in 2.8 s (spec J).
 - ✓ **Monday clock**: `Broker time: UTC+2/+3 (US summer time)` at 21:25 UTC, 10 minutes after MT5's last reconnect, then the history was imported again; no "Broker time jumped" line.

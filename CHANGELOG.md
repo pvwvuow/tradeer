@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.1](https://github.com/pvwvuow/tradeer/compare/v0.22.0...v0.22.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* quiet weekly open, short reconnects and Cloudflare-safe Ask AI ([#46](https://github.com/pvwvuow/tradeer/issues/46)) ([620e226](https://github.com/pvwvuow/tradeer/commit/620e226a0465e21b0745b13f84f2cca9be5520a0))
+
 ## [0.22.0](https://github.com/pvwvuow/tradeer/compare/v0.21.0...v0.22.0) (2026-10-04)
 
 
