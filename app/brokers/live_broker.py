@@ -1,10 +1,15 @@
 """The live broker (spec C7): real orders through the MT5 gateway thread.
 
-Every order is checked with `order_check` before it is sent. A send is retried only on the
-safe return codes of `app.mt5.retcodes`, with a fresh price each time; after an uncertain
-answer (timeout, lost connection) the broker first looks for the order by its comment, so a
-retry can never open the same trade twice. Every request and answer is returned as an
-`Attempt` for the `mt5_requests` table and the `execution` log.
+Every order is checked with `order_check` before it is sent. A check that MT5 refuses stops
+the order. A check that gets no answer at all (None) does not: the trade server checks every
+order itself, so the order is sent and the server's answer decides (PC log of 5 October
+2026: both London breakout orders stopped at a check that returned nothing). When a call
+returns nothing, MT5's last error and the terminal, account and symbol switches go into the
+text, so a failure always says what to change. A send is retried only on the safe return
+codes of `app.mt5.retcodes`, with a fresh price each time; after an uncertain answer
+(timeout, lost connection) the broker first looks for the order by its comment, so a retry
+can never open the same trade twice. Every request and answer is returned as an `Attempt`
+for the `mt5_requests` table and the `execution` log.
 """
 
 from __future__ import annotations
@@ -30,11 +35,29 @@ from app.domain.signals import Direction, OrderType
 from app.mt5.api import MT5Api
 from app.mt5.gateway import MT5Gateway
 from app.mt5.history_sync import deal_from_mt5
-from app.mt5.retcodes import Policy, describe, retcode_text
+from app.mt5.retcodes import (
+    ALGO_TRADING_FIX,
+    PYTHON_API_FIX,
+    Policy,
+    describe,
+    no_result_text,
+    retcode_text,
+)
 
 SEND_TIMEOUT_SECONDS = 60.0
 RETRY_PAUSE_SECONDS = 0.3
 UNCERTAIN = frozenset({10012, 10031})  # TIMEOUT, CONNECTION: the order may have arrived
+# Bits of symbol_info().order_mode, expiration_mode and filling_mode (MQL5 SYMBOL_* flags).
+ORDER_FLAGS: tuple[tuple[int, str], ...] = ((1, "market"), (2, "limit"), (4, "stop"))
+EXPIRATION_FLAGS: tuple[tuple[int, str], ...] = (
+    (1, "GTC"),
+    (2, "day"),
+    (4, "specified"),
+    (8, "specified day"),
+)
+FILLING_FLAGS: tuple[tuple[int, str], ...] = ((1, "FOK"), (2, "IOC"), (4, "BOC"))
+SYMBOL_ORDER_STOP = 4
+SYMBOL_EXPIRATION_SPECIFIED = 4
 
 Pause = Callable[[float], None]
 Timer = Callable[[], float]
@@ -79,6 +102,86 @@ def _number(source: Any, name: str, default: float = 0.0) -> float:
     return value if math.isfinite(value) else default
 
 
+def _whole(value: Any) -> int | None:
+    """An integer field as MT5 reported it, None when it is missing."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _flags(value: int | None, names: Sequence[tuple[int, str]]) -> str | None:
+    """The named bits of a flags field, or None when MT5 did not report it."""
+    if value is None:
+        return None
+    return "+".join(name for bit, name in names if value & bit) or "none"
+
+
+def diagnose(mt5: MT5Api, plan: OrderPlan) -> str:
+    """Why MT5 may not take the order: the terminal, account and symbol switches (reads only).
+
+    Added to the text when a trade call returned nothing, so the log says what to change.
+    """
+    try:
+        terminal = mt5.terminal_info()
+        account = mt5.account_info()
+        info = mt5.symbol_info(plan.symbol)
+    except Exception as error:
+        return f"MT5 could not be asked why: {type(error).__name__}"
+    parts: list[str] = []
+    fixes: list[str] = []
+    if terminal is not None:
+        algo = bool(getattr(terminal, "trade_allowed", False))
+        python = not bool(getattr(terminal, "tradeapi_disabled", False))
+        online = bool(getattr(terminal, "connected", False))
+        algo_text = "on" if algo else "off"
+        python_text = "allowed" if python else "blocked"
+        online_text = "connected" if online else "not connected"
+        parts.append(
+            f"Algo Trading {algo_text}, trading from Python {python_text}, broker {online_text}",
+        )
+        if not algo:
+            fixes.append(ALGO_TRADING_FIX)
+        if not python:
+            fixes.append(PYTHON_API_FIX)
+    if account is not None:
+        trade = bool(getattr(account, "trade_allowed", False))
+        expert = bool(getattr(account, "trade_expert", False))
+        trade_text = "can trade" if trade else "is read-only (investor password)"
+        expert_text = "allows" if expert else "does not allow"
+        parts.append(f"account {trade_text}, the broker {expert_text} robots")
+        if not trade:
+            fixes.append("Log in with the master password, not the investor password.")
+        if not expert:
+            fixes.append("Ask the broker to allow automated trading on this account.")
+    if info is not None:
+        orders = _whole(getattr(info, "order_mode", None))
+        expiry = _whole(getattr(info, "expiration_mode", None))
+        filling = _whole(getattr(info, "filling_mode", None))
+        mode = getattr(info, "trade_mode", "?")
+        details = [f"trade mode {mode}"]
+        for label, value, names in (
+            ("orders", orders, ORDER_FLAGS),
+            ("expiry", expiry, EXPIRATION_FLAGS),
+            ("filling", filling, FILLING_FLAGS),
+        ):
+            shown = _flags(value, names)
+            if shown is not None:
+                details.append(f"{label} {shown}")
+        parts.append(plan.symbol + ": " + ", ".join(details))
+        no_stops = orders is not None and orders > 0 and not orders & SYMBOL_ORDER_STOP
+        if plan.order_type is OrderType.STOP and no_stops:
+            fixes.append(f"The broker takes no stop orders on {plan.symbol}.")
+        no_expiry = expiry is not None and expiry > 0 and not expiry & SYMBOL_EXPIRATION_SPECIFIED
+        if plan.expiration is not None and no_expiry:
+            fixes.append(f"{plan.symbol} takes no expiry time on pending orders.")
+    if not parts:
+        return "MT5 gave no terminal information"
+    text = "MT5: " + "; ".join(parts)
+    if fixes:
+        text += ". Fix: " + " ".join(fixes)
+    return text
+
+
 def _attempt(
     mt5: MT5Api,
     action: str,
@@ -88,7 +191,10 @@ def _attempt(
     attempt: int,
 ) -> Attempt:
     code = getattr(result, "retcode", None) if result is not None else None
-    if action == "order_check":
+    last_error = "" if result is not None else _last_error(mt5)
+    if result is None:
+        text = no_result_text(last_error)
+    elif action == "order_check":
         text = "0 OK: the check passed" if code == 0 else retcode_text(code)
     else:
         text = retcode_text(code)
@@ -101,7 +207,7 @@ def _attempt(
         latency_ms=round(latency_ms, 1),
         attempt=attempt,
         result=as_mapping(result),
-        last_error="" if result is not None else _last_error(mt5),
+        last_error=last_error,
     )
 
 
@@ -149,7 +255,10 @@ def send_open(
     pause: Pause = time.sleep,
     timer: Timer = time.perf_counter,
 ) -> OrderResult:
-    """Check, then send a market or pending order; retry only on safe codes."""
+    """Check, then send a market or pending order; retry only on safe codes.
+
+    A check that MT5 refuses stops the order; a check without any answer does not.
+    """
     attempts: list[Attempt] = []
     market = plan.order_type is OrderType.MARKET
     if market:
@@ -161,7 +270,8 @@ def send_open(
     started = timer()
     checked = mt5.order_check(request)
     attempts.append(_attempt(mt5, "order_check", request, checked, (timer() - started) * 1e3, 1))
-    if checked is None or getattr(checked, "retcode", None) != 0:
+    unanswered = checked is None
+    if not unanswered and getattr(checked, "retcode", None) != 0:
         text = attempts[-1].retcode_text
         why = f"order_check refused the order: {text}"
         return OrderResult(False, attempts[-1].retcode, why, attempts=tuple(attempts))
@@ -212,10 +322,13 @@ def send_open(
             if fresh is not None:
                 request = {**request, "price": round(fresh, plan.digits)}
     last = attempts[-1]
+    text = last.retcode_text
+    if unanswered or last.retcode is None:
+        text = f"{text}; {diagnose(mt5, plan)}"
     return OrderResult(
         False,
         last.retcode,
-        last.retcode_text,
+        text,
         requested_price=float(request["price"]),
         attempts=tuple(attempts),
     )

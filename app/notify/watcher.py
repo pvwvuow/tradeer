@@ -4,7 +4,8 @@ snapshot it saw, so only changes notify.
 
 A lost MT5 connection without open positions is told only when it is still lost after a
 minute: the broker's weekly restart at the Sunday open drops it for a few seconds, and that
-is no news (PC log of 5 October 2026). With open positions it is told at once."""
+is no news (PC log of 5 October 2026). With open positions it is told at once. In Auto mode
+no signal asks for an approval: the engine sends or refuses each one by itself."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from app.domain.modes import OperatingMode
 from app.engine.execution import ExecutionSnapshot
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.mt5.connection import ConnectionState, ConnectionStatus
@@ -74,7 +76,9 @@ class NoticeWatcher:
         if isinstance(snapshot, SignalsSnapshot):
             with self._lock:
                 old, self._signals = self._signals, snapshot
-            self.center.publish_all(signal_notices(old, snapshot))
+                execution = self._execution
+            auto = execution is not None and execution.mode is OperatingMode.AUTO
+            self.center.publish_all(signal_notices(old, snapshot, auto=auto))
 
     def on_risk(self, snapshot: object) -> None:
         if isinstance(snapshot, RiskSnapshot):
