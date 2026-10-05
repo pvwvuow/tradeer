@@ -4,7 +4,8 @@ It has no thread of its own: the health monitor runs it after every health check
 Health page's "Check now" refreshes both. `collect` reads the probes and this process's CPU
 and memory; a metric going over its budget is logged as a WARNING in the `perf` category
 (INFO when it is back within), and the values are saved to `performance_metrics` with
-`PerfRecorder`'s policy (changes at once, everything every 15 minutes).
+`PerfRecorder`'s policy (changes at once, everything every 15 minutes). A backtest that ran
+within the CPU's window (`app.observability.busy`) makes the CPU "busy", never over budget.
 """
 
 from __future__ import annotations
@@ -13,10 +14,12 @@ import contextlib
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+from app.observability import busy as heavy_work
 from app.observability.health import HealthStatus
 from app.observability.metrics import (
+    CPU_WINDOW_SECONDS,
     Metric,
     PerfInputs,
     PerfRecorder,
@@ -54,12 +57,14 @@ class PerfMonitor:
         log: Callable[[str, str], None] = _quiet,
         recorder: PerfRecorder | None = None,
         clock: Callable[[], float] = time.time,
+        busy: Callable[[float], str] = heavy_work.recent,
     ) -> None:
         self._collect = collect
         self._save = save
         self._log = log
         self._recorder = recorder or PerfRecorder()
         self._clock = clock
+        self._busy = busy
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()
         self._snapshot = PerfSnapshot()
@@ -78,6 +83,9 @@ class PerfMonitor:
                 inputs = PerfInputs(now=now)
                 found = f"{type(error).__name__}: {error}"
                 self._log("WARNING", f"Performance inputs incomplete: {found}")
+            if not inputs.busy:
+                with contextlib.suppress(Exception):
+                    inputs = replace(inputs, busy=self._busy(CPU_WINDOW_SECONDS))
             metrics = evaluate_metrics(inputs)
             self._report(self.snapshot.metrics, metrics)
             self._store(metrics, now)

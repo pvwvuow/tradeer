@@ -13,6 +13,7 @@ monitor turns them, with this process's CPU and memory, into a `PerfInputs` snap
 D4 has no budget for MT5 calls; a p95 over 1 s (the "slow request" line of the MT5 log) or
 more than 20 requests waiting for the gateway is a warning, like over 1,000 rows waiting to
 sync. Over a budget is a WARNING, never CRITICAL: performance alone never stops trading.
+The idle CPU budget does not apply while a backtest ran in its window (`PerfInputs.busy`).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ MB = 1024.0**2
 MINUTE = 60.0
 SNAPSHOT_SECONDS = 15 * MINUTE
 CPU_BUDGET_PERCENT = 3.0
+CPU_WINDOW_SECONDS = 6 * MINUTE  # five one-minute CPU readings, plus one check of margin
 MEMORY_BUDGET_MB = 500.0
 BAR_BUDGET_MS = 1000.0
 BAR_BUDGET_SYMBOLS = 10
@@ -103,6 +105,7 @@ class PerfInputs:
     sync_queue: int | None = None
     startup_seconds: float | None = None
     sync_enabled: bool = True  # with cloud sync off the waiting rows are no problem
+    busy: str = ""  # heavy work in the CPU window (for example "backtest"), "" when idle
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,9 @@ def cpu_metric(inputs: PerfInputs) -> Metric:
     text = "This app's share of the whole PC (like Task Manager), last 5 minutes."
     if value is None:
         text = "Measured from the second minute on."
+    elif inputs.busy:
+        status = HealthStatus.OK
+        text += f" A {inputs.busy} ran in that time, so the idle budget does not apply."
     elif status is HealthStatus.WARNING:
         text += " A backtest or a model training uses more; an idle app should not."
     budget = f"< {CPU_BUDGET_PERCENT:g} % when idle"
