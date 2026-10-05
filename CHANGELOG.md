@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/pvwvuow/tradeer/compare/v0.22.3...v0.23.0) (2026-10-05)
+
+
+### Features
+
+* Health &gt; Demo test, every order action of the bot for real on the demo account ([#53](https://github.com/pvwvuow/tradeer/issues/53)) ([30c1d62](https://github.com/pvwvuow/tradeer/commit/30c1d6236315daa8fbcae83f716ea2fcc23d435d))
+
 ## [0.22.3](https://github.com/pvwvuow/tradeer/compare/v0.22.2...v0.22.3) (2026-10-05)
 
 
