@@ -37,6 +37,7 @@ The detailed notes of phases 1 to 12 (what was built, the checklists and the fix
 | 16c | Clean-install test, README and user guide | 0.22.0 | this page |
 | fix | Your PC log of 5 October: weekly open, reconnect notice, Ask AI | 0.22.1 | this page |
 | fix | Your PC log of 5 October, morning: breakout orders, quiet backtests, CPU budget | 0.22.2 | this page |
+| fix | Your PC log of 5 October, London open: unanswered order checks, failed-order alerts, Auto asks no approvals | 0.22.3 | this page |
 
 ## Phase 16c: clean install, README and user guide
 
@@ -82,6 +83,18 @@ From your log of Monday 04:40 to 06:05 UTC (0.22.0, then 0.22.1), before the Lon
 - Fixed: a backtest wrote every replayed signal, approval and fill to the app log as INFO (over 1,000 lines for six months of EURUSD, "approved by the user" among them). The replay now logs at DEBUG; the Backtest page shows it all.
 - Fixed: the idle CPU budget warned while that backtest ran ("3.3 % is over the budget"). A backtest in the CPU's 5-minute window now makes the CPU "busy", not over budget.
 
+## Your PC, 5 October 2026 London open (0.22.3)
+
+From your log of Monday 06:05 to 07:41 UTC (0.22.1, then 0.22.2); the fixes below shipped in 0.22.3 on 5 October:
+
+- ✓ **In-app update** 0.22.1 to 0.22.2: 703 KB (changes only), verified, restarted in 2.5 s. The first download was slow and stopped when the app was closed; the second took 44 s.
+- ✓ Three short broker disconnects (06:20, 06:26 and 06:42 UTC, the longest 37 s) were reconnected without a notice, as intended.
+- At the London open (07:00 UTC) Auto sent the `london_breakout` buy stop and sell stop on XAUUSD (0.01 lot, 43.70 USD risk each). Both failed: MT5's `order_check` returned nothing at all, so the app never sent them. MT5's own reason was saved with the request but not written to the log.
+- Fixed: a check without any answer no longer stops an order. The order is sent and the trade server decides; a check that MT5 refuses still stops it. When MT5 answers nothing, the log now shows MT5's last error in plain words and the switches that block trading (Algo Trading, trading from Python, the account, the symbol's order, expiry and filling modes), with what to change.
+- Fixed: a failed order was only a WARNING line in the log. Each one is now an urgent notice (toast and Telegram): "Order failed: ...".
+- Fixed: Auto mode showed "Approve or skip it before it expires" for signals it sends by itself. Auto now asks for no approvals.
+- The soak report said FAIL because the run lasted 17.5 hours; it needs 24.
+
 ## Test on your PC
 
 1. **Clean install**: on a PC (or a new Windows user, or Windows Sandbox) where the app was never installed, download `MT5TradingWorkstation-win-Setup.exe` from the latest release and run it ("More info", "Run anyway" if SmartScreen warns). The app starts by itself with the "This is practice money" card. In `%LocalAppData%\MT5TradingWorkstation\current` run `.\MT5TradingWorkstation.exe --self-check --report-file self-check.txt`: every line OK. Then install MT5, log in to a demo account and connect.
@@ -90,7 +103,7 @@ From your log of Monday 04:40 to 06:05 UTC (0.22.0, then 0.22.1), before the Lon
 4. **24 hours on demo** on market days, then Health > **Create soak report** (Phase 14c), and look at the Logs page filters and the trace timeline.
 5. **Persian**: click **فارسی**, restart: Home and the top bar are right to left in Vazirmatn (Phase 16a).
 6. **Light theme and keyboard**: the light theme's charts, Tab through Home, Ctrl+, opens Settings, 150% display scaling stays sharp (Phase 16b).
-7. Your PC to-dos from the earlier logs: free disk space (the Health page warns under 5 GB), for Telegram a VPN or a Windows proxy, and in MT5 Tools > Options > Charts set "Max bars in chart" to Unlimited (then restart MT5) so backtests and training get two years of M5 bars.
+7. Your PC to-dos from the earlier logs: free disk space (the Health page warns under 5 GB), for Telegram a VPN or a Windows proxy, and in MT5 Tools > Options > Charts set "Max bars in chart" to Unlimited (then restart MT5) so backtests and training get two years of M5 bars. If an order fails with "trading from Python blocked", untick "Disable automatic trading through the external Python API" in MT5 Tools > Options > Expert Advisors.
 8. Send a debug bundle (Health > **Create debug bundle**) when something looks wrong.
 
 ## Known limitations
