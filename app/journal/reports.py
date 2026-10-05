@@ -197,7 +197,7 @@ class ReportRepository:
         )
         health = db.query(
             "SELECT name, status FROM health_checks WHERE time >= ? AND time < ? "
-            "AND status NOT IN ('ok', 'OK') GROUP BY name, status",
+            "AND status NOT IN ('ok', 'OK', 'unknown') GROUP BY name, status",
             (start, end),
         )
         codes = ", ".join(str(code) for code in REQUOTE_CODES)
