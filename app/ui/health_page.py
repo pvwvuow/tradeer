@@ -1,5 +1,5 @@
-"""The Health page (spec F3 page 13, E3): checks, performance, workers, the debug bundle
-and the soak test report.
+"""The Health page (spec F3 page 13, E3): checks, performance, workers, the debug bundle,
+the soak test report and the demo test (real orders on the demo account, 0.23.0).
 
 It only reads: the monitors' last snapshots, the watchdog's worker list and the saved
 problems. "Check now" asks the monitor's own thread to run (no MT5 call on the UI thread).
@@ -28,6 +28,7 @@ from app.observability.metrics import Metric
 from app.observability.soak import SoakResult
 from app.observability.watchdog import WorkerStatus
 from app.storage.health_store import SavedCheck
+from app.ui.demo_test_panel import DemoTestContext, DemoTestPanel
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
 from app.ui.style import chip, set_chip
 from app.ui.tables import fill_table, make_table
@@ -75,6 +76,7 @@ class HealthContext:
     perf: PerfMonitor | None = None
     bundle: Callable[[], BundleResult] | None = None
     soak: Callable[[], SoakResult] | None = None
+    demo_test: DemoTestContext | None = None
 
 
 def _clock(seconds: float) -> str:
@@ -155,6 +157,8 @@ class HealthPage(QWidget):
         layout.setSpacing(16)
         layout.addWidget(styled_label("Health", "title"))
         layout.addWidget(self._build_checks())
+        self.demo_panel = DemoTestPanel(context.demo_test if context is not None else None)
+        layout.addWidget(self.demo_panel)
         layout.addWidget(self._build_perf())
         layout.addWidget(self._build_workers())
         layout.addWidget(self._build_history())

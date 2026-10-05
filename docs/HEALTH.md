@@ -2,7 +2,7 @@
 
 Spec E3, D4 and F3 pages 12 and 13. Advanced > System > Health and Logs. Checks since
 version 0.17.0; performance metrics, the debug bundle and the Go-Live health item since
-0.18.0; the soak test report and the full Logs page since 0.19.0.
+0.18.0; the soak test report and the full Logs page since 0.19.0; the demo test since 0.23.0.
 
 ## Performance metrics (with every check)
 
@@ -83,3 +83,36 @@ cloud sync is off the sync queue shows n/a: the rows wait on this PC (0.18.1).
 3. Logs: Export, then Open log folder > `..\exports`: the `.csv` opens in Excel.
 4. Monday to Friday: leave the app on demo for 24 hours, then Health > Create soak report.
 5. Start the run by Thursday morning so all 24 hours fall before the market closes on Friday.
+
+## Demo test (0.23.0)
+
+Health > Demo test places real orders on the DEMO account through the bot's own order code
+(`LiveBroker` on the MT5 gateway thread), so each step proves one thing the bot needs. It
+refuses a real or read-only account and stops at once when Algo Trading is off or MT5 blocks
+the Python API. Pick a symbol or All watched symbols and press Run demo test; Stop ends it
+after the running step. About 2 to 4 minutes per symbol.
+
+| Step | What it proves |
+|---|---|
+| MT5 and the demo account | DEMO, Algo Trading on, trading from Python allowed |
+| Symbol and price | broker name, stops and freeze level, lots, filling and expiry modes |
+| Lot size and margin | MT5 works out the loss at the stop and the margin |
+| Market buy with SL and TP | an order opens with its SL and TP in place |
+| Move the stop loss | breakeven and the trailing stop can move the SL |
+| Close part of the position | partial take-profit |
+| Close the position | a full close |
+| Closed trade in the history | the journal finds the deals |
+| Market sell, then close | the short side |
+| Pending order with an expiry | the London breakout's orders with an expiry time |
+| Pending orders: buy and sell, limit and stop | all four pending types with SL and TP |
+| Cancel pending orders | cancelling a breakout's other side or an expired signal |
+| Breakout pair | one side fills, the other is cancelled (skipped if the price stays still 90 s) |
+| Pending order expires by itself | MT5 removes an expired order without the app |
+| Refused order is not sent again | a bad order is refused once, never retried |
+| Close everything, like the kill switch | everything closes at once |
+
+Minimum lot, magic number 26070098 (no strategy uses it, so the engine never manages these
+trades; the journal lists them as external), comment `tw-demo-test`. At the end, also after a
+failure or Stop, everything of that magic number is closed. A closed market (10018) skips the
+order steps. The report is saved as `<profile>/reports/demo-test-<UTC time>.md` (no login,
+no name) and every step goes to the `execution` log.
