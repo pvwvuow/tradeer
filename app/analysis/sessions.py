@@ -77,6 +77,18 @@ def market_open(utc_seconds: float) -> bool:
     return True
 
 
+def week_opened_at(utc_seconds: float) -> float | None:
+    """When the current FX week opened (Sunday 17:00 New York, as UTC); None at the weekend."""
+    if not market_open(utc_seconds):
+        return None
+    offset = -4 if us_dst_active(utc_seconds) else -5
+    local = datetime.fromtimestamp(utc_seconds + offset * HOUR, UTC)
+    sunday = local.date() - timedelta(days=(local.weekday() + 1) % 7)
+    opening = _midnight(sunday) + 17 * HOUR  # 17:00 on that Sunday, on the New York clock
+    offset = -4 if us_dst_active(opening - offset * HOUR) else -5
+    return float(opening - offset * HOUR)
+
+
 def active_sessions(utc_seconds: float) -> tuple[Session, ...]:
     if not market_open(utc_seconds):
         return ()
