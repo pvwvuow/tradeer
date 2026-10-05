@@ -2,7 +2,9 @@
 
 Pure: each function takes the previous and the new snapshot of one part (execution, signals,
 risk, connection, cloud sync) and returns the notices for what changed. The first snapshot
-of a run never notifies (nothing "changed" when the app starts).
+of a run never notifies (nothing "changed" when the app starts). Every order that could not
+be sent is told as an error, and in Auto mode no signal asks for an approval, because
+nothing waits for a click there (PC log of 5 October 2026).
 """
 
 from __future__ import annotations
@@ -11,11 +13,15 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from app.domain.signals import SignalState
 from app.engine.execution import ExecutionSnapshot
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.mt5.connection import ConnectionState, ConnectionStatus
 from app.risk.risk_manager import RiskSnapshot
 from app.storage.sync import SyncState, SyncStatus
+
+FAILURE_TEXT = 500  # characters of a failed order's notice
+NOT_A_FAILURE = ("cancelled", "pending order")  # OCO cancels and expiries end FAILED too
 
 
 class EventKind(StrEnum):
@@ -90,9 +96,20 @@ def execution_notices(old: ExecutionSnapshot | None, new: ExecutionSnapshot) -> 
     return found
 
 
-def signal_notices(old: SignalsSnapshot | None, new: SignalsSnapshot) -> list[Notice]:
+def signal_notices(
+    old: SignalsSnapshot | None,
+    new: SignalsSnapshot,
+    *,
+    auto: bool = False,
+) -> list[Notice]:
+    """New signals that wait for approval (none in Auto mode) and orders that failed."""
     if old is None:
         return []
+    found: list[Notice] = [] if auto else _approvals(old, new)
+    return found + _failures(old, new)
+
+
+def _approvals(old: SignalsSnapshot, new: SignalsSnapshot) -> list[Notice]:
     known = {record.id for record in old.pending()}
     found: list[Notice] = []
     for record in new.pending():
@@ -107,6 +124,22 @@ def signal_notices(old: SignalsSnapshot | None, new: SignalsSnapshot) -> list[No
         ask = f"Approve or skip it before it expires. Id {signal.id[:8]}"
         text = f"{signal.summary()}{chance}. {ask}"
         found.append(Notice(EventKind.APPROVAL_NEEDED, text, f"approve:{signal.id}"))
+    return found
+
+
+def _failures(old: SignalsSnapshot, new: SignalsSnapshot) -> list[Notice]:
+    """An urgent notice for each order the engine could not send."""
+    told = {record.id for record in old.signals if record.signal.state is SignalState.FAILED}
+    found: list[Notice] = []
+    for record in new.signals:
+        signal = record.signal
+        if signal.state is not SignalState.FAILED or record.id in told:
+            continue
+        reason = signal.history[-1].reason if signal.history else ""
+        if reason.startswith(NOT_A_FAILURE):
+            continue
+        text = f"Order failed: {signal.summary()}: {reason}"[:FAILURE_TEXT]
+        found.append(Notice(EventKind.ERROR, text, f"failed:{signal.id}"))
     return found
 
 

@@ -4,6 +4,9 @@
 Retry only where a new attempt with fresh prices is safe: requote, price changed, off quotes,
 timeout, too many requests, connection. Never retry invalid stops, no money, trading disabled
 or a closed market: those need a person, and retrying them only spams the trade server.
+
+A call that returns nothing has no return code, only MT5's `last_error()`: `no_result_text`
+says what that error means and what to change (PC log of 5 October 2026).
 """
 
 from __future__ import annotations
@@ -78,6 +81,25 @@ _TABLE: tuple[tuple[int, str, str, Policy], ...] = (
 RETCODES: dict[int, Retcode] = {row[0]: Retcode(*row) for row in _TABLE}
 RETRY_CODES = frozenset(code for code, item in RETCODES.items() if item.policy is Policy.RETRY)
 
+ALGO_TRADING_FIX = "Press Algo Trading in the MT5 toolbar so it turns green."
+PYTHON_API_FIX = (
+    'In MT5 open Tools > Options > Expert Advisors and untick "Disable automatic trading '
+    'through the external Python API".'
+)
+LINK_FAILED = "the link to the MT5 terminal failed (the app reconnects by itself)"
+
+# `last_error()` codes (RES_E_*): what they mean when a trade call returned nothing.
+_LAST_ERRORS: dict[int, str] = {
+    -1: "the terminal could not run the request",
+    -2: "MT5 refused a field of the request (an app bug: please send the log)",
+    -3: "the terminal ran out of memory",
+    -4: "MT5 did not find it",
+    -5: "the MetaTrader5 package does not fit this terminal: update MT5",
+    -6: "the login was refused",
+    -7: "this terminal does not support the call",
+    -8: f"MT5 does not allow trading from the app. {ALGO_TRADING_FIX} {PYTHON_API_FIX}",
+}
+
 
 def describe(code: int | None) -> Retcode:
     """The table entry, or an unknown code that must not be retried."""
@@ -92,3 +114,25 @@ def describe(code: int | None) -> Retcode:
 def retcode_text(code: int | None) -> str:
     item = describe(code)
     return f"{item.code} {item.name}: {item.text}"
+
+
+def explain_last_error(last_error: str) -> str:
+    """`last_error()` as text ("-8 Terminal: Autotrading disabled") in plain words, or ""."""
+    head = last_error.strip().split(" ", 1)[0]
+    try:
+        code = int(head)
+    except ValueError:
+        return ""
+    if code <= -10000:
+        return LINK_FAILED
+    return _LAST_ERRORS.get(code, "")
+
+
+def no_result_text(last_error: str) -> str:
+    """The text of a call that returned nothing, with MT5's last error and what it means."""
+    base = retcode_text(None)
+    if not last_error:
+        return base
+    hint = explain_last_error(last_error)
+    extra = f": {hint}" if hint else ""
+    return f"{base} (last error {last_error}{extra})"
