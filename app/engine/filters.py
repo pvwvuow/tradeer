@@ -212,10 +212,11 @@ def run_filters(data: FilterInput, settings: FilterSettings) -> list[TraceStep]:
         detail=f"already pending: {data.duplicate_of}" if data.duplicate else "",
     )
     add(
-        "no open position of this strategy on the symbol",
+        "one position per strategy and symbol",
         data.open_positions == 0,
         data.open_positions,
         0,
+        f"{data.open_positions} already open" if data.open_positions else "none open",
     )
     waited = data.bars_since_loss
     add(

@@ -14,6 +14,11 @@ the `BacktestBroker` filling orders from history. Per M5 bar of the test period:
 
 Open positions are closed at the last close. The result holds the trades (the `trades` rows
 the engine wrote, as live), every signal with its decision trace, and the equity per bar.
+
+The replay logs one level down (INFO becomes DEBUG): months of signals, approvals, orders and
+fills would otherwise flood the app log, mixed in with the live lines and looking like them.
+The Backtest page shows them with their traces, debug mode still logs them, and warnings and
+errors keep their level. While a run lasts the app counts as busy (the idle CPU budget waits).
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ from app.engine.filters import FilterSettings
 from app.engine.signal_pipeline import SignalPipeline
 from app.mt5.market_data import BAR_COUNTS
 from app.mt5.models import SymbolSpec
+from app.observability.busy import busy
 from app.risk.risk_manager import RiskManager
 from app.risk.settings import RiskConfig
 from app.storage.migrate import migrate
@@ -71,6 +77,15 @@ FloatArray = npt.NDArray[np.float64]
 
 def _quiet(level: str, message: str) -> None:
     return None
+
+
+def replay_log(log: Log) -> Log:
+    """`log` with INFO lowered to DEBUG: the replay's own lines are detail, not app events."""
+
+    def write(level: str, message: str) -> None:
+        log("DEBUG" if level == "INFO" else level, message)
+
+    return write
 
 
 @dataclass(frozen=True)
@@ -230,6 +245,7 @@ class Replay:
     """One backtest run on one symbol. Owns its temporary database while it runs."""
 
     def __init__(self, history: History, setup: BacktestSetup, store: Store, log: Log) -> None:
+        log = replay_log(log)
         self.history = history
         self.setup = setup
         self.store = store
@@ -423,6 +439,18 @@ def run_backtest(
     log: Log = _quiet,
 ) -> BacktestResult:
     """Replay `setup` on `history`. Never touches MT5 or the app's own database."""
+    with busy("backtest"):
+        result = _replay(history, setup, progress, cancelled, log)
+    return result
+
+
+def _replay(
+    history: History,
+    setup: BacktestSetup,
+    progress: Progress | None,
+    cancelled: Callable[[], bool] | None,
+    log: Log,
+) -> BacktestResult:
     started = time.perf_counter()
     step = history.bars.get(STEP)
     if step is None or not len(step):
