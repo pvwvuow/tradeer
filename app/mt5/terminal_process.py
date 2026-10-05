@@ -10,6 +10,9 @@ connection monitor then logs in again.
 Results come back as plain values. Named records (AccountInfo, SymbolInfo, Tick, TradeDeal and
 so on) are rebuilt as named tuples with the same fields, so they read exactly like the
 package's own; numpy rate arrays travel unchanged.
+
+A trade request that MT5 refuses for its form ("-2 Unnamed arguments not allowed", demo test
+on the PC, 5 October 2026) is asked again with its fields named (`call_package`).
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ START_TIMEOUT_SECONDS = 60.0
 STOP_TIMEOUT_SECONDS = 5.0
 WAIT_SLICE_SECONDS = 1.0
 PROCESS_NAME = "mt5-helper"
+INVALID_PARAMS = -2  # RES_E_INVALID_PARAMS of `last_error()`
 
 RESTART_FIX = (
     "The app restarts its MT5 helper by itself and logs in again. If this keeps happening, "
@@ -118,6 +122,71 @@ def _version(package: Any) -> str:
     return str(getattr(package, "__version__", "unknown"))
 
 
+def _invalid_params(package: Any) -> bool:
+    """True when the package's last error is RES_E_INVALID_PARAMS (-2)."""
+    try:
+        code = package.last_error()[0]
+    except Exception:
+        return False
+    return isinstance(code, int) and code == INVALID_PARAMS
+
+
+def _plain(value: Any) -> Any:
+    """A request value as the exact built-in type (numpy scalars and enums are not)."""
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value)
+    if isinstance(value, str):
+        return str(value)
+    item = getattr(value, "item", None)
+    if callable(item):
+        with contextlib.suppress(Exception):
+            return item()
+    return value
+
+
+def call_package(
+    package: Any,
+    function: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    """Call one package function; a trade request refused for its form is asked again.
+
+    Only the trade check and the trade send take one request dict. On the PC (5 October 2026,
+    MetaTrader5 5.0.6090) both answered None with the last error "-2 Unnamed arguments not
+    allowed". MT5 refuses such a call before anything reaches the trade server, so asking again
+    with the fields named, then with plain Python values, can never send an order twice. The
+    next form is tried only while the last error is still -2; any other answer or error is
+    returned as it is.
+    """
+    result = function(*args, **kwargs)
+    if result is not None or kwargs or len(args) != 1:
+        return result
+    request = args[0]
+    if not isinstance(request, dict):
+        return result
+    plain = {str(key): _plain(item) for key, item in request.items()}
+    forms: tuple[Callable[[], Any], ...] = (
+        lambda: function(**request),
+        lambda: function(plain),
+        lambda: function(**plain),
+    )
+    for form in forms:
+        if not _invalid_params(package):
+            return result
+        try:
+            result = form()
+        except TypeError:
+            continue
+        if result is not None:
+            return result
+    return result
+
+
 def _reply(package: Any, message: tuple[str, str, tuple[Any, ...], dict[str, Any]]) -> Reply:
     kind, name, args, kwargs = message
     if kind == "ping":
@@ -126,7 +195,7 @@ def _reply(package: Any, message: tuple[str, str, tuple[Any, ...], dict[str, Any
     if not callable(function):
         return "missing", f"MetaTrader5 has no function {name!r}"
     try:
-        return "ok", encode(function(*args, **kwargs))
+        return "ok", encode(call_package(package, function, args, kwargs))
     except Exception as error:
         return "error", f"{type(error).__name__}: {error}"
 
