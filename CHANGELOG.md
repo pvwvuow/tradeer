@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.3](https://github.com/pvwvuow/tradeer/compare/v0.22.2...v0.22.3) (2026-10-05)
+
+
+### Bug Fixes
+
+* orders MT5 did not check are sent, failed orders alert you, Auto asks for no approvals (PC log of 5 October, London open) ([#51](https://github.com/pvwvuow/tradeer/issues/51)) ([0400c39](https://github.com/pvwvuow/tradeer/commit/0400c3975777d216b0ab2d156e382f844faeaa60))
+
 ## [0.22.2](https://github.com/pvwvuow/tradeer/compare/v0.22.1...v0.22.2) (2026-10-05)
 
 
