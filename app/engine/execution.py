@@ -19,6 +19,10 @@ position without one of the bot's magic numbers (manual trades are never modifie
 - Recovery: the managed trades are saved after every change; on a restart or reconnect bot
   positions found in MT5 are matched by ticket or by the signal id in the comment, and an
   unknown bot position is adopted and logged.
+- OCO: when one side of a breakout fills, the other side is cancelled in the same cycle and
+  never adopted back from that cycle's (older) order list. A pending order missing from the
+  orders is looked for once more among the positions before it counts as expired: it may
+  have filled between the two reads.
 - Kill switch: close every bot position, cancel every bot pending order, stop new entries.
 """
 
@@ -164,6 +168,14 @@ def _tracked_from(raw: Mapping[str, Any]) -> Tracked | None:
         return Tracked(**dict(raw))
     except TypeError:
         return None
+
+
+def _fill_of(tracked: Tracked, positions: Mapping[int, BrokerPosition]) -> BrokerPosition | None:
+    """The position a pending order became: the same ticket, or its signal's comment."""
+    return positions.get(tracked.ticket) or next(
+        (p for p in positions.values() if p.comment == tracked.comment),
+        None,
+    )
 
 
 class ExecutionEngine:
@@ -489,6 +501,7 @@ class ExecutionEngine:
         if positions is None or orders is None:
             return []  # a failed read never means "closed"
         updates: list[SignalUpdate] = []
+        known = {key for key in self._tracked if key[0] == mode}
         by_ticket = {p.ticket: p for p in positions}
         order_tickets = {o.ticket for o in orders}
         for position in positions:
@@ -506,7 +519,10 @@ class ExecutionEngine:
             else:
                 updates += self._manage(tracked, current, broker, now)
         for order in orders:
-            if (mode, order.ticket) not in self._tracked:
+            key = (mode, order.ticket)
+            # Tracked when this sync began and gone now: cancelled in it (the other side of
+            # a filled breakout). `orders` was read before that, so it still lists it.
+            if key not in self._tracked and key not in known:
                 self._adopt_order(mode, order, signals)
         return updates
 
@@ -615,11 +631,15 @@ class ExecutionEngine:
         broker: Broker,
         now: float,
     ) -> list[SignalUpdate]:
+        filled = _fill_of(tracked, positions)
+        if filled is None:
+            # It may have filled between this cycle's two reads (the positions come first):
+            # look once more, or a fill looks like an expiry and its OCO twin stays open.
+            fresh = broker.positions(self._magics.values())
+            if fresh is None:
+                return []  # a failed read proves nothing: the next cycle looks again
+            filled = _fill_of(tracked, {p.ticket: p for p in fresh})
         del self._tracked[tracked.key]
-        filled = positions.get(tracked.ticket) or next(
-            (p for p in positions.values() if p.comment == tracked.comment),
-            None,
-        )
         if filled is None:
             why = "cancelled by the kill switch" if tracked.killed else "expired or cancelled"
             self._message(f"Pending order {tracked.ticket} {tracked.symbol}: {why}")
