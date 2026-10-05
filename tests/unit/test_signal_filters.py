@@ -58,7 +58,7 @@ def test_spread_duplicates_losses_and_trade_mode() -> None:
     twin = results(data(duplicate=True))
     assert twin["one pending signal per symbol, strategy and side"] is False
     position = results(data(open_positions=1))
-    assert position["no open position of this strategy on the symbol"] is False
+    assert position["one position per strategy and symbol"] is False
     assert results(data(bars_since_loss=1))["cooldown after a loss"] is False
     assert results(data(losses_in_row=3))["pause after consecutive losses"] is False
     paused = results(data(losses_in_row=3, hours_since_losses=23.5))
