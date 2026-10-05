@@ -36,6 +36,7 @@ The detailed notes of phases 1 to 12 (what was built, the checklists and the fix
 | 16b | Accessibility and light theme polish | 0.21.0 | [ACCESSIBILITY.md](ACCESSIBILITY.md) |
 | 16c | Clean-install test, README and user guide | 0.22.0 | this page |
 | fix | Your PC log of 5 October: weekly open, reconnect notice, Ask AI | 0.22.1 | this page |
+| fix | Your PC log of 5 October, morning: breakout orders, quiet backtests, CPU budget | 0.22.2 | this page |
 
 ## Phase 16c: clean install, README and user guide
 
@@ -65,7 +66,21 @@ From your log of Sunday 20:32 to Monday 04:39 UTC (0.21.0, then 0.22.0); the fix
 - Fixed: the broker's restart at the open dropped MT5 for 11 s and sent an urgent "MT5 disconnected" notification. Without open positions that notice now waits a minute and is dropped when MT5 is back; with open positions it still goes out at once.
 - Fixed: the weekly report listed "unknown" health checks as issues.
 - Fixed: Ask AI to an endpoint behind Cloudflare failed with HTTP 403 (error 1010, Python's default client signature). The app now names itself in its requests, and HTTP errors carry a plain hint.
-- Still open on your PC: Algo Trading was off in MT5 while the mode was Auto (nothing can be sent until it is on), and Telegram is still not reachable (timeouts, then "Bad Gateway").
+- Still open on your PC: Algo Trading was off in MT5 while the mode was Auto (nothing can be sent until it is on; turned on the next morning, see below), and Telegram is still not reachable (timeouts, then "Bad Gateway").
+
+## Your PC, 5 October 2026 morning (0.22.2)
+
+From your log of Monday 04:40 to 06:05 UTC (0.22.0, then 0.22.1), before the London open:
+
+- ✓ **In-app update** 0.22.0 to 0.22.1: 685 KB (changes only), verified, restarted in 3.2 s.
+- ✓ **Algo Trading** is on in MT5 (04:44 UTC), so Auto can send orders on the demo account.
+- The Go-Live checklist of `london_breakout` was overridden on demo with 6 of 7 checks failing (no walk-forward, no paper trades, risk settings not reviewed). Your six-month EURUSD backtest of it lost: 34 trades, 29% won, profit factor 0.65, -4.1%. Fine for testing Auto on demo, not for real money.
+- Model v1 was trained on two years, but MT5 had M5 bars only from 29 May 2025 (MT5's "Max bars in chart"), and it is not better than the baseline out of sample, so the baseline stays in use.
+- Fixed: when one side of a breakout filled, the other side was cancelled and then adopted again from that cycle's older order list ("Adopted bot pending order", then "expired or cancelled" one cycle later). Seen 30 times in the backtest; live orders had the same path.
+- Fixed: a breakout order that filled between the engine's two MT5 reads looked like an expiry, and its other side stayed open. Before calling an order expired the engine now looks for it once more among the positions.
+- Fixed: "filtered out because: no open position of this strategy on the symbol" read as the opposite of what happened. The check is now "one position per strategy and symbol" and shows how many are open.
+- Fixed: a backtest wrote every replayed signal, approval and fill to the app log as INFO (over 1,000 lines for six months of EURUSD, "approved by the user" among them). The replay now logs at DEBUG; the Backtest page shows it all.
+- Fixed: the idle CPU budget warned while that backtest ran ("3.3 % is over the budget"). A backtest in the CPU's 5-minute window now makes the CPU "busy", not over budget.
 
 ## Test on your PC
 
@@ -75,7 +90,7 @@ From your log of Sunday 20:32 to Monday 04:39 UTC (0.21.0, then 0.22.0); the fix
 4. **24 hours on demo** on market days, then Health > **Create soak report** (Phase 14c), and look at the Logs page filters and the trace timeline.
 5. **Persian**: click **فارسی**, restart: Home and the top bar are right to left in Vazirmatn (Phase 16a).
 6. **Light theme and keyboard**: the light theme's charts, Tab through Home, Ctrl+, opens Settings, 150% display scaling stays sharp (Phase 16b).
-7. Your PC to-dos from the earlier logs: free disk space (the Health page warns under 5 GB) and, for Telegram, a VPN or a Windows proxy.
+7. Your PC to-dos from the earlier logs: free disk space (the Health page warns under 5 GB), for Telegram a VPN or a Windows proxy, and in MT5 Tools > Options > Charts set "Max bars in chart" to Unlimited (then restart MT5) so backtests and training get two years of M5 bars.
 8. Send a debug bundle (Health > **Create debug bundle**) when something looks wrong.
 
 ## Known limitations
