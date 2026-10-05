@@ -38,6 +38,7 @@ The detailed notes of phases 1 to 12 (what was built, the checklists and the fix
 | fix | Your PC log of 5 October: weekly open, reconnect notice, Ask AI | 0.22.1 | this page |
 | fix | Your PC log of 5 October, morning: breakout orders, quiet backtests, CPU budget | 0.22.2 | this page |
 | fix | Your PC log of 5 October, London open: unanswered order checks, failed-order alerts, Auto asks no approvals | 0.22.3 | this page |
+| 17a | Demo test: real orders on the demo account from the Health page | 0.23.0 | this page |
 
 ## Phase 16c: clean install, README and user guide
 
@@ -95,16 +96,27 @@ From your log of Monday 06:05 to 07:41 UTC (0.22.1, then 0.22.2); the fixes belo
 - Fixed: Auto mode showed "Approve or skip it before it expires" for signals it sends by itself. Auto now asks for no approvals.
 - The soak report said FAIL because the run lasted 17.5 hours; it needs 24.
 
+## Demo test on the demo account (0.23.0)
+
+Asked for on 5 October: a test that trades like the bot on the demo account, so a problem shows before it costs a real signal. Advanced > System > Health > **Demo test**; the full step list is in [HEALTH.md](HEALTH.md).
+
+- 16 steps per symbol through the bot's own order code: market buy and sell with SL and TP, moving the SL, partial and full close, the closed trade in the history, all four pending order types, a pending order with an expiry, a breakout pair (one side fills, the other is cancelled), an order that expires by itself, a refused order that is not sent again, and closing everything like the kill switch.
+- Safe by design: it refuses a real or read-only account, and stops before any order when Algo Trading is off or MT5 blocks the Python API. Minimum lot (twice the minimum for the partial close), magic number **26070098** that no strategy uses, comment `tw-demo-test`. At the end, also after a failure or Stop, everything of that magic number is closed; anything left is named in the result.
+- The test trades appear in the Journal as **external** trades (magic 26070098); they are not the bot's.
+- A closed market (10018) skips the order steps; a breakout pair that nothing reaches in 90 s is skipped, not failed.
+- The report is saved as `<profile>/reports/demo-test-<UTC time>.md` (no login, no name); every step also goes to the `execution` log.
+
 ## Test on your PC
 
 1. **Clean install**: on a PC (or a new Windows user, or Windows Sandbox) where the app was never installed, download `MT5TradingWorkstation-win-Setup.exe` from the latest release and run it ("More info", "Run anyway" if SmartScreen warns). The app starts by itself with the "This is practice money" card. In `%LocalAppData%\MT5TradingWorkstation\current` run `.\MT5TradingWorkstation.exe --self-check --report-file self-check.txt`: every line OK. Then install MT5, log in to a demo account and connect.
-2. **Weekday, market open**: `--mt5-trade-test --symbol EURUSD` and `--symbol XAUUSD` on demo (Phase 8); a Paper approval and a Semi-auto approval, the restart with an open trade and the kill switch; the Simple view's suggestion, Approve, Skip, Close now and Stop (Phase 9); the London morning signals (Phase 6) and the Risk page (Phase 7).
-3. ✓ Done on 5 October: **Monday after the open**, `all.log` says `Broker time: UTC+2/+3 (US summer time)` with no "Broker time jumped" line.
-4. **24 hours on demo** on market days, then Health > **Create soak report** (Phase 14c), and look at the Logs page filters and the trace timeline.
-5. **Persian**: click **فارسی**, restart: Home and the top bar are right to left in Vazirmatn (Phase 16a).
-6. **Light theme and keyboard**: the light theme's charts, Tab through Home, Ctrl+, opens Settings, 150% display scaling stays sharp (Phase 16b).
-7. Your PC to-dos from the earlier logs: free disk space (the Health page warns under 5 GB), for Telegram a VPN or a Windows proxy, and in MT5 Tools > Options > Charts set "Max bars in chart" to Unlimited (then restart MT5) so backtests and training get two years of M5 bars. If an order fails with "trading from Python blocked", untick "Disable automatic trading through the external Python API" in MT5 Tools > Options > Expert Advisors.
-8. Send a debug bundle (Health > **Create debug bundle**) when something looks wrong.
+2. **Demo test** (0.23.0), on a weekday while the market is open: Health > **Demo test**, first XAUUSD, then **All watched symbols**. Each symbol takes 2 to 4 minutes. Send the report from **Open folder** (or `all.log`) when a step is not ✓.
+3. **Weekday, market open**: `--mt5-trade-test --symbol EURUSD` and `--symbol XAUUSD` on demo (Phase 8); a Paper approval and a Semi-auto approval, the restart with an open trade and the kill switch; the Simple view's suggestion, Approve, Skip, Close now and Stop (Phase 9); the London morning signals (Phase 6) and the Risk page (Phase 7).
+4. ✓ Done on 5 October: **Monday after the open**, `all.log` says `Broker time: UTC+2/+3 (US summer time)` with no "Broker time jumped" line.
+5. **24 hours on demo** on market days, then Health > **Create soak report** (Phase 14c), and look at the Logs page filters and the trace timeline.
+6. **Persian**: click **فارسی**, restart: Home and the top bar are right to left in Vazirmatn (Phase 16a).
+7. **Light theme and keyboard**: the light theme's charts, Tab through Home, Ctrl+, opens Settings, 150% display scaling stays sharp (Phase 16b).
+8. Your PC to-dos from the earlier logs: free disk space (the Health page warns under 5 GB), for Telegram a VPN or a Windows proxy, and in MT5 Tools > Options > Charts set "Max bars in chart" to Unlimited (then restart MT5) so backtests and training get two years of M5 bars. If an order fails with "trading from Python blocked", untick "Disable automatic trading through the external Python API" in MT5 Tools > Options > Expert Advisors.
+9. Send a debug bundle (Health > **Create debug bundle**) when something looks wrong.
 
 ## Known limitations
 
