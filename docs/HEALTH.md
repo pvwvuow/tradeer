@@ -116,3 +116,8 @@ trades; the journal lists them as external), comment `tw-demo-test`. At the end,
 failure or Stop, everything of that magic number is closed. A closed market (10018) skips the
 order steps. The report is saved as `<profile>/reports/demo-test-<UTC time>.md` (no login,
 no name) and every step goes to the `execution` log.
+
+The first run on the PC (5 October 2026, 0.23.0) failed every order step: MT5 answered
+nothing with the last error "-2 Unnamed arguments not allowed". Since 0.23.1 the MT5 helper
+asks again with the request's fields named (MT5 refuses such a call before it reaches the
+trade server, so nothing is sent twice). Run the demo test again after updating.
