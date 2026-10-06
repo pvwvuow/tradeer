@@ -12,6 +12,8 @@ strategy uses, so the engine never manages its trades. It refuses any account th
 DEMO, and at the end it closes every position and cancels every order of that magic number,
 also after a failure or a Stop. A step that cannot run (the market is closed, the price did
 not move) is skipped with the reason.
+
+Every expiry is a whole minute: MT5 drops the seconds of a pending order's expiry (0.23.4).
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from typing import Any, TypeVar
 from app.brokers.base import BrokerOrder, BrokerPosition, OrderResult
 from app.brokers.live_broker import EXPIRATION_FLAGS, FILLING_FLAGS, ORDER_FLAGS, LiveBroker
 from app.brokers.market import Quote, read_quote
-from app.brokers.requests import OrderPlan
+from app.brokers.requests import OrderPlan, whole_minute
 from app.domain.history import summarize_position
 from app.domain.orders import round_price
 from app.domain.signals import Direction, OrderType
@@ -58,7 +60,7 @@ DEVIATION_POINTS = 20
 RETRIES = 2
 READ_TIMEOUT_SECONDS = 15.0
 FILL_WAIT_SECONDS = 90.0
-EXPIRY_SECONDS = 90  # the expiring order's life, broker server time
+EXPIRY_SECONDS = 120  # the expiring order's shortest life (MT5 refuses one under a minute)
 EXPIRY_GRACE_SECONDS = 90.0  # how long MT5 may take to remove it after its expiry
 PENDING_LIFE_SECONDS = 3600  # the other pending orders expire too, should the clean-up fail
 BREAKOUT_LIFE_SECONDS = 600
@@ -289,7 +291,8 @@ def stops_problem(market: Market, position: BrokerPosition, plan: OrderPlan) -> 
 
 
 def order_problem(market: Market, order: BrokerOrder | None, plan: OrderPlan) -> str:
-    """What differs between a pending order in MT5 and the plan that placed it."""
+    """What differs between a pending order in MT5 and the plan that placed it (the expiry
+    as it was sent: moved up to a whole minute)."""
     if order is None:
         return "not in the MT5 order list"
     pairs = (
@@ -302,8 +305,11 @@ def order_problem(market: Market, order: BrokerOrder | None, plan: OrderPlan) ->
         for name, found, wanted in pairs
         if not market.same(found, wanted)
     ]
-    if plan.expiration is not None and order.expiration != plan.expiration:
-        wrong.append(f"expiry {order.expiration}, not {plan.expiration}")
+    if plan.expiration is not None:
+        sent = whole_minute(plan.expiration)
+        if order.expiration != sent:
+            kept = server_clock(order.expiration) if order.expiration else "none"
+            wrong.append(f"expiry {kept}, not {server_clock(sent)} server time")
     if order.magic != DEMO_MAGIC:
         wrong.append(f"magic number {order.magic}, not {DEMO_MAGIC}")
     return "; ".join(wrong)
@@ -697,7 +703,7 @@ class DemoTest:
         quote = self._quote(market)
         room = market.room
         entry = quote.bid + 3 * room
-        expires = quote.time + EXPIRY_SECONDS
+        expires = whole_minute(quote.time + EXPIRY_SECONDS)
         plan = self._plan(
             market,
             Direction.SHORT,
@@ -712,9 +718,10 @@ class DemoTest:
         if not (result.ok and result.placed):
             return self._refusal(run, result)
         run.expiring, run.expires_at = result.order, expires
+        life = expires - quote.time
         text = (
             f"sell limit {result.order} at {market.text(plan.price)}, expires at "
-            f"{server_clock(expires)} server time ({EXPIRY_SECONDS} s); checked after the "
+            f"{server_clock(expires)} server time ({life:.0f} s); checked after the "
             f"breakout step [{attempts_text(result)}]"
         )
         return Outcome.PASS, text
@@ -724,7 +731,9 @@ class DemoTest:
         quote = self._quote(market)
         room = market.room
         away = 2 * room
-        expires = quote.time + PENDING_LIFE_SECONDS if market.expiry_allowed else None
+        expires = None
+        if market.expiry_allowed:
+            expires = whole_minute(quote.time + PENDING_LIFE_SECONDS)
         kinds = (
             ("buy limit", Direction.LONG, OrderType.LIMIT, quote.ask - away),
             ("sell limit", Direction.SHORT, OrderType.LIMIT, quote.bid + away),
@@ -789,7 +798,9 @@ class DemoTest:
         quote = self._quote(market)
         room = market.room
         gap = (market.spec.stops_level + BREAKOUT_GAP_POINTS) * market.point
-        expires = quote.time + BREAKOUT_LIFE_SECONDS if market.expiry_allowed else None
+        expires = None
+        if market.expiry_allowed:
+            expires = whole_minute(quote.time + BREAKOUT_LIFE_SECONDS)
         volume = market.spec.volume_min
         high, low = quote.ask + gap, quote.bid - gap
         sides = {
@@ -931,7 +942,9 @@ class DemoTest:
         quote = self._quote(market)
         room = market.room
         volume = market.spec.volume_min
-        expires = quote.time + PENDING_LIFE_SECONDS if market.expiry_allowed else None
+        expires = None
+        if market.expiry_allowed:
+            expires = whole_minute(quote.time + PENDING_LIFE_SECONDS)
         entry = quote.ask - 2 * room
         buy = self._plan(
             market,

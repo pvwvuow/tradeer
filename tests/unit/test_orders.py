@@ -64,7 +64,7 @@ def test_every_order_request_carries_sl_tp_magic_and_the_signal_comment() -> Non
     assert pending["action"] == api.TRADE_ACTION_PENDING
     assert pending["type"] == api.ORDER_TYPE_SELL_STOP
     assert pending["type_time"] == api.ORDER_TIME_SPECIFIED
-    assert pending["expiration"] == 1_790_000_000
+    assert pending["expiration"] == 1_790_000_040  # moved up to a whole minute (0.23.4)
     closing = close_request(
         7,
         "XAUUSD",

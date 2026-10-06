@@ -127,3 +127,10 @@ closes, the history, the refused order and the kill switch. FIBO answered every 
 order with 10009 DONE instead of 10008 PLACED, and the live broker took them for filled
 positions, so the three pending steps failed although the orders were in MT5. Since 0.23.3
 an accepted pending order is placed whatever its return code.
+
+The third and fourth runs (6 October 2026, 0.23.3, GBPUSD) placed every pending order,
+passed the breakout pair and saw the expiring order end by itself. MT5 keeps an expiry in
+whole minutes: 16:19:59 came back as 16:19:00, so the pending orders step failed, and in the
+fourth run the 90 s order, cut to a minute 55 s away, was refused with 10022
+INVALID_EXPIRATION. Since 0.23.4 every expiry, the bot's own orders too, is sent as a whole
+minute (moved up, so no order ends early) and the expiring order lives 2 to 3 minutes.

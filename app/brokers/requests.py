@@ -16,6 +16,7 @@ from app.mt5 import api
 FILLING_FLAG_FOK = 1
 FILLING_FLAG_IOC = 2
 COMMENT_LENGTH = 31  # MT5 cuts longer comments
+EXPIRY_STEP_SECONDS = 60  # MT5 keeps the expiry of a pending order in whole minutes
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,18 @@ def order_type_code(direction: Direction, order_type: OrderType) -> int:
     if order_type is OrderType.STOP:
         return api.ORDER_TYPE_BUY_STOP if long else api.ORDER_TYPE_SELL_STOP
     return api.ORDER_TYPE_BUY if long else api.ORDER_TYPE_SELL
+
+
+def whole_minute(expiration: int) -> int:
+    """The expiry moved up to the next whole minute (unchanged when it is one already).
+
+    MT5 drops the seconds of a pending order's expiry: FIBO kept 16:19:59 as 16:19:00, and
+    refused an order that this left under a minute away (10022 INVALID_EXPIRATION, PC demo
+    test of 6 October 2026). Moved up, an order never ends before it is due and MT5 keeps
+    the time as it was sent.
+    """
+    step = EXPIRY_STEP_SECONDS
+    return -(-int(expiration) // step) * step
 
 
 def choose_filling(flags: int) -> int:
@@ -87,7 +100,7 @@ def open_request(plan: OrderPlan) -> dict[str, Any]:
     }
     if pending and plan.expiration is not None:
         request["type_time"] = api.ORDER_TIME_SPECIFIED
-        request["expiration"] = int(plan.expiration)
+        request["expiration"] = whole_minute(plan.expiration)
     return request
 
 
