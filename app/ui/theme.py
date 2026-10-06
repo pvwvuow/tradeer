@@ -23,7 +23,7 @@ SPACE_XL = 16
 RADIUS = 14
 RADIUS_CONTROL = 10
 RADIUS_SMALL = 6
-CONTROL_HEIGHT = 22  # inner height of buttons and inputs (px), about 36 px with the padding
+CONTROL_HEIGHT = 16  # the least inner height of buttons and inputs (px); table cells stay 30
 # Font sizes in points (12, 14, 18 and 24 px at 96 dpi). A size in px makes every widget font
 # report point size -1, and Qt then warned "QFont::setPointSize: Point size <= 0" hundreds of
 # times a minute on a real PC.
