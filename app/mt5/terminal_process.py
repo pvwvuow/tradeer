@@ -13,6 +13,9 @@ package's own; numpy rate arrays travel unchanged.
 
 A trade request that MT5 refuses for its form ("-2 Unnamed arguments not allowed", demo test
 on the PC, 5 October 2026) is asked again with its fields named (`call_package`).
+
+The helper works from the user's home folder (`leave_app_folder`): a terminal the package
+starts inherits that folder, never the app's, so it cannot block an update (6 October 2026).
 """
 
 from __future__ import annotations
@@ -122,6 +125,19 @@ def _version(package: Any) -> str:
     return str(getattr(package, "__version__", "unknown"))
 
 
+def leave_app_folder() -> None:
+    """Work from the user's home folder, never from the app's folder.
+
+    When MT5 is not running, the MetaTrader5 package starts terminal64.exe from this process,
+    and the terminal inherits its working directory. Velopack renames the app's `current`
+    folder to install an update, and a terminal still working in it stopped every update since
+    0.23.0: "The process cannot access the file because it is being used by another process"
+    (Velopack log of the PC, 5 and 6 October 2026).
+    """
+    with contextlib.suppress(OSError):
+        os.chdir(os.path.expanduser("~"))
+
+
 def _invalid_params(package: Any) -> bool:
     """True when the package's last error is RES_E_INVALID_PARAMS (-2)."""
     try:
@@ -208,6 +224,8 @@ def helper_main(conn: Any, loader: str | None = None) -> None:
         with contextlib.suppress(Exception):
             conn.send(("failed", f"{type(error).__name__}: {error}"))
         return
+    if loader is None:  # the real package, before any call can start the terminal
+        leave_app_folder()
     conn.send(("ready", _version(package)))
     while True:
         try:
