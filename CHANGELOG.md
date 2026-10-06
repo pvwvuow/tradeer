@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/pvwvuow/tradeer/compare/v0.23.0...v0.23.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* ask MT5 again with named fields when it refuses a trade request for its form ([#55](https://github.com/pvwvuow/tradeer/issues/55)) ([97ff011](https://github.com/pvwvuow/tradeer/commit/97ff01102e8fc7d18c4e7fd90d7a4a66be1f2725))
+
 ## [0.23.0](https://github.com/pvwvuow/tradeer/compare/v0.22.3...v0.23.0) (2026-10-05)
 
 
