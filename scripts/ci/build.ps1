@@ -1,6 +1,10 @@
 #Requires -Version 7
 # Build the one-folder Windows app with PyInstaller, verify it with --self-check, zip it, then
 # install it with the real Setup.exe on this clean machine and check it again (install-test.ps1).
+# -SkipInstallTest leaves the clean install out (the release: its PR's build job ran it).
+param(
+    [switch]$SkipInstallTest
+)
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -79,4 +83,5 @@ Compress-Archive -Path (Join-Path $root "dist/MT5TradingWorkstation") -Destinati
 Write-Host "Built $zip"
 
 # Phase 16c: the installer a user downloads must install and start on a clean Windows PC.
-& "$PSScriptRoot/install-test.ps1"
+if ($SkipInstallTest) { Write-Host "Clean-install test skipped (it ran on the PR's build)" }
+else { & "$PSScriptRoot/install-test.ps1" }
