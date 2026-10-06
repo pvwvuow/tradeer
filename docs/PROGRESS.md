@@ -39,6 +39,7 @@ The detailed notes of phases 1 to 12 (what was built, the checklists and the fix
 | fix | Your PC log of 5 October, morning: breakout orders, quiet backtests, CPU budget | 0.22.2 | this page |
 | fix | Your PC log of 5 October, London open: unanswered order checks, failed-order alerts, Auto asks no approvals | 0.22.3 | this page |
 | 17a | Demo test: real orders on the demo account from the Health page | 0.23.0 | this page |
+| fix | Your demo test of 5 October, evening: MT5 refused every trade request ("Unnamed arguments not allowed") | 0.23.1 | this page |
 
 ## Phase 16c: clean install, README and user guide
 
@@ -106,10 +107,20 @@ Asked for on 5 October: a test that trades like the bot on the demo account, so 
 - A closed market (10018) skips the order steps; a breakout pair that nothing reaches in 90 s is skipped, not failed.
 - The report is saved as `<profile>/reports/demo-test-<UTC time>.md` (no login, no name); every step also goes to the `execution` log.
 
+## Your demo test, 5 October 2026 evening (0.23.1)
+
+From your two demo test reports of 19:23 and 19:24 UTC (0.23.0, EURUSD) and `all.log`; the fix below ships in 0.23.1:
+
+- ✓ The safety steps passed: DEMO account, Algo Trading on, trading from Python allowed; EURUSD's stops level, lots, filling (FOK+IOC), order and expiry modes; lot size and margin (0.01 lot loses 1.00 USD at a 100-point stop, margin 5.61 USD).
+- Every order step failed the same way: `order_check` and `order_send` both answered nothing, in 0 ms, with MT5's last error `-2 Unnamed arguments not allowed`. That is the MetaTrader5 package refusing the form of the call before anything reaches the broker, not the broker refusing an order. The London open orders of 07:00 UTC stopped at the same unanswered check (0.22.3 above). Nothing was opened, so the final "close everything" found nothing.
+- Fixed: the MT5 helper process now asks again when a trade request is refused this way: with the request's fields named, then with plain Python values (no numpy or enum types). The next form is tried only while MT5's last error is still -2, and MT5 refuses such a call before it reaches the trade server, so this can never open a trade twice (`tests/unit/test_pc_log_0510_demo.py`).
+- Update 0.22.3 to 0.23.0: three times **Restart to update** started 0.22.3 again within 14 s, and "Update installed" never followed; the download itself was verified. 0.23.0 was running by 19:23 UTC. The reason is in Velopack's own log, `%LocalAppData%\MT5TradingWorkstation\Velopack.log`, which is still needed.
+- The 17.5-hour soak report also measured 55.7 MB per day of memory growth (budget 50); the 24-hour run will tell.
+
 ## Test on your PC
 
 1. **Clean install**: on a PC (or a new Windows user, or Windows Sandbox) where the app was never installed, download `MT5TradingWorkstation-win-Setup.exe` from the latest release and run it ("More info", "Run anyway" if SmartScreen warns). The app starts by itself with the "This is practice money" card. In `%LocalAppData%\MT5TradingWorkstation\current` run `.\MT5TradingWorkstation.exe --self-check --report-file self-check.txt`: every line OK. Then install MT5, log in to a demo account and connect.
-2. **Demo test** (0.23.0), on a weekday while the market is open: Health > **Demo test**, first XAUUSD, then **All watched symbols**. Each symbol takes 2 to 4 minutes. Send the report from **Open folder** (or `all.log`) when a step is not ✓.
+2. **Demo test** (0.23.1), on a weekday while the market is open: Health > **Demo test**, first XAUUSD, then **All watched symbols**. Each symbol takes 2 to 4 minutes. Send the report from **Open folder** (or `all.log`) when a step is not ✓.
 3. **Weekday, market open**: `--mt5-trade-test --symbol EURUSD` and `--symbol XAUUSD` on demo (Phase 8); a Paper approval and a Semi-auto approval, the restart with an open trade and the kill switch; the Simple view's suggestion, Approve, Skip, Close now and Stop (Phase 9); the London morning signals (Phase 6) and the Risk page (Phase 7).
 4. ✓ Done on 5 October: **Monday after the open**, `all.log` says `Broker time: UTC+2/+3 (US summer time)` with no "Broker time jumped" line.
 5. **24 hours on demo** on market days, then Health > **Create soak report** (Phase 14c), and look at the Logs page filters and the trace timeline.
