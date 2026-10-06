@@ -33,6 +33,7 @@ dev = [
   "pytest==9.1.1",
   "pytest-cov==7.1.0",
   "pytest-qt==4.5.0",
+  "pytest-timeout==2.4.0",
   "ruff==0.16.9",
 ]
 
@@ -82,6 +83,9 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
 qt_api = "pyside6"
+# A test that hangs (it happened on the Windows runner twice on 6 October 2026) fails after
+# 5 minutes with the stacks of every thread, instead of blocking the job until its timeout.
+timeout = 300
 
 [tool.coverage.run]
 source = ["app"]
