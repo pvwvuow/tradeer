@@ -319,8 +319,7 @@ def _row(name: str, series: Sequence[Sample]) -> tuple[str, ...]:
 def _runs_line(report: SoakReport) -> str:
     if len(report.runs) <= 1:
         return (
-            f"Run: {utc_text(report.start)} to {utc_text(report.end)} "
-            f"({report.hours:,.1f} hours)."
+            f"Run: {utc_text(report.start)} to {utc_text(report.end)} ({report.hours:,.1f} hours)."
         )
     parts = [
         f"{utc_text(start)} to {utc_text(end)} ({(end - start) / HOUR:,.1f} h)"
