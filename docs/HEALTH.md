@@ -141,4 +141,4 @@ minute (moved up, so no order ends early) and the expiring order lives 2 to 3 mi
 2. Health > Demo test, GBPUSD, Run demo test: all 16 steps should pass in about 4 minutes;
    the expiring order's step shows an expiry on a whole minute, 120 to 179 s away.
 3. Run it again with XAUUSD (IOC filling only at FIBO), then with All watched symbols.
-4. Send the report when a step fails.
+4. When a step fails, send the report: `<profile>/reports/demo-test-<UTC time>.md`.
