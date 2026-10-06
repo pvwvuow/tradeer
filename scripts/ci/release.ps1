@@ -1,6 +1,11 @@
 #Requires -Version 7
-# Test, build, package with Velopack (installer, full package and a delta from the previous
+# Build, package with Velopack (installer, full package and a delta from the previous
 # release), then upload everything to the GitHub release of the tag (ADR 113).
+#
+# The lint, type check, tests and the clean-install test are not run here again: branch
+# protection merged this code only after ci, build and the Linux tests passed on its PR, and
+# the release commit adds nothing but the version and the CHANGELOG. The build is still
+# self-checked (build.ps1). Set RELEASE_RUN_CHECKS=1 to run every check anyway.
 param(
     [Parameter(Mandatory = $true)][string]$Tag
 )
@@ -15,10 +20,15 @@ $repoUrl = "https://github.com/$repo"
 $packId = "MT5TradingWorkstation"
 $vpkVersion = "1.2.0"  # keep equal to the velopack pin in pyproject.toml
 
-& "$PSScriptRoot/check.ps1"
-& "$PSScriptRoot/build.ps1"
+if ($env:RELEASE_RUN_CHECKS -eq "1") {
+    & "$PSScriptRoot/check.ps1"
+    & "$PSScriptRoot/build.ps1"
+}
+else {
+    & "$PSScriptRoot/build.ps1" -SkipInstallTest
+}
 
-# build.ps1 installed vpk already for its clean-install test; Install-Vpk skips it then.
+# Install-Vpk skips the install when build.ps1's clean-install test installed vpk already.
 Write-Host "::group::Install vpk $vpkVersion"
 . "$PSScriptRoot/vpk.ps1"
 Install-Vpk $vpkVersion
