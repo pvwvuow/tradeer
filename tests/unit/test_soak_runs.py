@@ -31,13 +31,10 @@ def run(start: float, hours: float, growth: float = 0.0) -> list[Sample]:
     return found
 
 
-def evenings(growth: float = 0.0) -> list[Sample]:
-    """Three evenings of 9 hours, one day apart, and a short morning run."""
-    found: list[Sample] = []
-    for day in range(3):
-        found += run(START + day * DAY, 9.0, growth)
-    found += run(START + 2 * DAY + 12 * HOUR, 1.0)  # 1 h: left out
-    return found
+def evenings(last_growth: float = 0.0) -> list[Sample]:
+    """Three evenings of 9 hours, one day apart, and a short morning run after them."""
+    found = run(START, 9.0) + run(START + DAY, 9.0) + run(START + 2 * DAY, 9.0, last_growth)
+    return found + run(START + 2 * DAY + 12 * HOUR, 1.0)  # 1 h: left out
 
 
 def inputs(samples: list[Sample]) -> SoakInputs:
@@ -52,8 +49,9 @@ def inputs(samples: list[Sample]) -> SoakInputs:
 
 
 def test_runs_are_split_at_gaps() -> None:
-    found = find_runs([START, START + STEP, START + 3 * HOUR, START + 3 * HOUR + STEP])
-    assert found == [(START, START + STEP, STEP), (START + 3 * HOUR, START + 3 * HOUR + STEP, STEP)]
+    later = START + 3 * HOUR
+    found = find_runs([START, START + STEP, later, later + STEP])
+    assert found == [(START, START + STEP, STEP), (later, later + STEP, STEP)]
     assert find_runs([]) == []
 
 
@@ -68,10 +66,7 @@ def test_three_evenings_add_up_to_a_pass() -> None:
 
 
 def test_a_leak_in_one_run_fails() -> None:
-    leaky = evenings()[:-4 * 5] + run(START + 2 * DAY + 12 * HOUR, 1.0)
-    leaky = [s for s in leaky if not (START + 2 * DAY <= s.time <= START + 2 * DAY + 9 * HOUR)]
-    leaky += run(START + 2 * DAY, 9.0, growth=120.0)
-    report = evaluate_soak(inputs(leaky))
+    report = evaluate_soak(inputs(evenings(last_growth=120.0)))
     assert [check.name for check in report.checks if not check.passed] == ["No memory leak"]
     assert "(worst run)" in report.checks[2].value
 
