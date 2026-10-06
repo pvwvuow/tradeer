@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.5](https://github.com/pvwvuow/tradeer/compare/v0.23.4...v0.23.5) (2026-10-06)
+
+
+### Bug Fixes
+
+* **ci:** a hung test fails after 5 minutes instead of blocking CI and the release for an hour ([#64](https://github.com/pvwvuow/tradeer/issues/64)) ([4070069](https://github.com/pvwvuow/tradeer/commit/4070069bfaacfd55d5e2d95ea1173e6e608e65be))
+
 ## [0.23.4](https://github.com/pvwvuow/tradeer/compare/v0.23.3...v0.23.4) (2026-10-06)
 
 
