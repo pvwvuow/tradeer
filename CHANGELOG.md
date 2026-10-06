@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.3](https://github.com/pvwvuow/tradeer/compare/v0.23.2...v0.23.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* a pending order MT5 answers with 10009 DONE is placed, not a filled position ([#59](https://github.com/pvwvuow/tradeer/issues/59)) ([ee5ff18](https://github.com/pvwvuow/tradeer/commit/ee5ff18d93d960af34f2ab28312474fa1508539d))
+
 ## [0.23.2](https://github.com/pvwvuow/tradeer/compare/v0.23.1...v0.23.2) (2026-10-06)
 
 
