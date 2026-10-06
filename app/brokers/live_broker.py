@@ -10,6 +10,9 @@ codes of `app.mt5.retcodes`, with a fresh price each time; after an uncertain an
 (timeout, lost connection) the broker first looks for the order by its comment, so a retry
 can never open the same trade twice. Every request and answer is returned as an `Attempt`
 for the `mt5_requests` table and the `execution` log.
+
+A pending order that MT5 took is placed, whatever its return code: FIBO answers 10009 DONE,
+not 10008 PLACED (demo test on the PC, 6 October 2026).
 """
 
 from __future__ import annotations
@@ -283,7 +286,9 @@ def send_open(
         code = attempts[-1].retcode
         info = describe(code)
         if info.ok:
-            placed = info.policy is Policy.PLACED
+            # A pending order never opens a position by itself: whatever code MT5 took it
+            # with (FIBO answers 10009 DONE, not 10008 PLACED), it is placed.
+            placed = info.policy is Policy.PLACED or not market
             position = 0 if placed else _position_of(mt5, result)
             return OrderResult(
                 True,
