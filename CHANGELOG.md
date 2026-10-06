@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.4](https://github.com/pvwvuow/tradeer/compare/v0.23.3...v0.23.4) (2026-10-06)
+
+
+### Bug Fixes
+
+* send pending order expiries as whole minutes (MT5 drops the seconds) ([#61](https://github.com/pvwvuow/tradeer/issues/61)) ([ea90bb1](https://github.com/pvwvuow/tradeer/commit/ea90bb11680143763fb303b20fbb0c3141dc22fa))
+
 ## [0.23.3](https://github.com/pvwvuow/tradeer/compare/v0.23.2...v0.23.3) (2026-10-06)
 
 

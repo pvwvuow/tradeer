@@ -134,3 +134,11 @@ whole minutes: 16:19:59 came back as 16:19:00, so the pending orders step failed
 fourth run the 90 s order, cut to a minute 55 s away, was refused with 10022
 INVALID_EXPIRATION. Since 0.23.4 every expiry, the bot's own orders too, is sent as a whole
 minute (moved up, so no order ends early) and the expiring order lives 2 to 3 minutes.
+
+## Check it on the PC (0.23.4)
+
+1. Update to 0.23.4 (Restart to update) and connect MT5 on the demo account.
+2. Health > Demo test, GBPUSD, Run demo test: all 16 steps should pass in about 4 minutes;
+   the expiring order's step shows an expiry on a whole minute, 120 to 179 s away.
+3. Run it again with XAUUSD (IOC filling only at FIBO), then with All watched symbols.
+4. When a step fails, send the report: `<profile>/reports/demo-test-<UTC time>.md`.
