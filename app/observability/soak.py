@@ -1,14 +1,16 @@
 """The soak test report (spec G3 phase 14): did a long run on demo stay within the budgets?
 
-Run the app on a demo account for 24 hours or more, then press Health > Create soak report.
-The report finds the latest continuous run in what the app saved (performance metrics every
-15 minutes and on changes, health checks, WARNING+ log lines, crash reports) and checks it
-against the budgets of spec D4:
+Run the app on a demo account, then press Health > Create soak report. The report reads what
+the app saved (performance metrics every 15 minutes and on changes, health checks, WARNING+
+log lines, crash reports). A gap of more than 35 minutes between samples ends a run (a
+restart for an update is no gap). Since 0.24.0 the 24 hours need not be one run: the newest
+runs of at least 4 hours each are added up, back until they reach 24 hours (asked for on
+6 October 2026: the PC cannot stay on overnight). The checks against the budgets of spec D4:
 
-1. Duration: the run lasted at least 24 hours (no gap over 35 minutes between samples; a
-   restart for an update is no gap).
+1. Duration: the runs add up to at least 24 hours.
 2. Memory: the working set stayed under 500 MB.
-3. No leak: after the first hour, memory grew less than 50 MB per day (least squares).
+3. No leak: after the first hour of each run, memory grew less than 50 MB per day (least
+   squares per run; the worst run counts).
 4. CPU: the average stayed under 3 % of the PC.
 5. MT5 calls: the p95 stayed under 1 s.
 6. Bar processing: no sample over its budget.
@@ -29,6 +31,7 @@ from pathlib import Path
 HOUR = 3600.0
 DAY = 86_400.0
 MIN_HOURS = 24.0
+MIN_RUN_HOURS = 4.0  # shorter runs are left out (too short to see a leak)
 MAX_GAP_SECONDS = 35 * 60.0
 WARMUP_SECONDS = HOUR
 MEMORY_BUDGET_MB = 500.0
@@ -44,6 +47,9 @@ TABLE_NAMES = {
     "mt5_ms_p95": ("MT5 call p95", "ms"),
     "bar_ms_p95": ("Closed-bar processing p95", "ms"),
 }
+
+Run = tuple[float, float, float]  # start, end, longest gap inside (UTC seconds)
+Span = tuple[float, float]
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,7 @@ class SoakInputs:
     frozen_workers: int = 0
     crash_reports: int = 0
     longest_gap: float = 0.0
+    runs: tuple[Span, ...] = ()  # the runs added up; () = one run from start to end
 
 
 @dataclass(frozen=True)
@@ -83,9 +90,12 @@ class SoakReport:
     checks: tuple[SoakCheck, ...]
     notes: tuple[str, ...] = ()
     rows: tuple[tuple[str, ...], ...] = ()
+    runs: tuple[Span, ...] = ()
 
     @property
     def hours(self) -> float:
+        if self.runs:
+            return sum(max(0.0, end - start) for start, end in self.runs) / HOUR
         return max(0.0, self.end - self.start) / HOUR
 
     @property
@@ -123,18 +133,50 @@ def find_run(
     max_gap: float = MAX_GAP_SECONDS,
 ) -> tuple[float, float, float]:
     """The latest continuous run: (start, end, longest gap inside it); zeros without samples."""
+    runs = find_runs(times, max_gap)
+    return runs[-1] if runs else (0.0, 0.0, 0.0)
+
+
+def find_runs(times: Sequence[float], max_gap: float = MAX_GAP_SECONDS) -> list[Run]:
+    """Every continuous run, oldest first: (start, end, longest gap inside it)."""
     ordered = sorted(set(times))
     if not ordered:
-        return 0.0, 0.0, 0.0
-    start = ordered[-1]
+        return []
+    runs: list[Run] = []
+    start = previous = ordered[0]
     longest = 0.0
-    for earlier, later in zip(reversed(ordered[:-1]), reversed(ordered[1:]), strict=True):
-        gap = later - earlier
+    for moment in ordered[1:]:
+        gap = moment - previous
         if gap > max_gap:
+            runs.append((start, previous, longest))
+            start, longest = moment, 0.0
+        else:
+            longest = max(longest, gap)
+        previous = moment
+    runs.append((start, previous, longest))
+    return runs
+
+
+def pick_runs(
+    runs: Sequence[Run],
+    needed_hours: float = MIN_HOURS,
+    min_hours: float = MIN_RUN_HOURS,
+) -> list[Run]:
+    """The newest runs of at least `min_hours` each, back until they add up to
+    `needed_hours`, oldest first. Without such a run: the latest run alone."""
+    picked: list[Run] = []
+    total = 0.0
+    for run in reversed(runs):
+        length = max(0.0, run[1] - run[0]) / HOUR
+        if length < min_hours:
+            continue
+        picked.append(run)
+        total += length
+        if total >= needed_hours:
             break
-        start = earlier
-        longest = max(longest, gap)
-    return start, ordered[-1], longest
+    if not picked and runs:
+        return [runs[-1]]
+    return list(reversed(picked))
 
 
 def slope_per_day(points: Sequence[tuple[float, float]]) -> float | None:
@@ -151,12 +193,17 @@ def slope_per_day(points: Sequence[tuple[float, float]]) -> float | None:
     return covariance / spread * DAY
 
 
+def _spans(inputs: SoakInputs) -> tuple[Span, ...]:
+    return tuple(inputs.runs) or ((inputs.start, inputs.end),)
+
+
 def _series(inputs: SoakInputs, name: str) -> list[Sample]:
+    spans = _spans(inputs)
     found = [
         sample
         for sample in inputs.samples
         if sample.name == name
-        and inputs.start <= sample.time <= inputs.end
+        and any(start <= sample.time <= end for start, end in spans)
         and math.isfinite(sample.value)
     ]
     return sorted(found, key=lambda sample: sample.time)
@@ -168,27 +215,43 @@ def _number(value: float | None, unit: str, digits: int = 0) -> str:
     return f"{value:,.{digits}f} {unit}".strip()
 
 
+def _growth(memory: Sequence[Sample], spans: Sequence[Span]) -> float | None:
+    """The worst memory growth per day of the runs, each after its first hour."""
+    slopes = [
+        slope_per_day(
+            [(s.time, s.value) for s in memory if start + WARMUP_SECONDS <= s.time <= end],
+        )
+        for start, end in spans
+    ]
+    known = [slope for slope in slopes if slope is not None]
+    return max(known) if known else None
+
+
 def evaluate_soak(inputs: SoakInputs) -> SoakReport:
-    hours = max(0.0, inputs.end - inputs.start) / HOUR
+    spans = _spans(inputs)
+    hours = sum(max(0.0, end - start) for start, end in spans) / HOUR
     gap_minutes = inputs.longest_gap / 60.0
     memory = _series(inputs, "memory_mb")
     cpu = _series(inputs, "cpu_percent")
     mt5 = _series(inputs, "mt5_ms_p95")
     bars = _series(inputs, "bar_ms_p95")
     memory_max = max((s.value for s in memory), default=None)
-    settled = [(s.time, s.value) for s in memory if s.time >= inputs.start + WARMUP_SECONDS]
-    growth = slope_per_day(settled)
+    growth = _growth(memory, spans)
     cpu_mean = sum(s.value for s in cpu) / len(cpu) if cpu else None
     mt5_max = max((s.value for s in mt5), default=None)
     bars_max = max((s.value for s in bars), default=None)
     bars_over = sum(1 for s in bars if s.status == "warning")
     trouble = inputs.critical_logs + inputs.crash_reports + inputs.frozen_workers
+    count = len(spans)
     checks = (
         SoakCheck(
             "Duration",
             hours >= MIN_HOURS,
-            f"{hours:,.1f} hours, longest gap {gap_minutes:,.0f} min",
-            f">= {MIN_HOURS:g} hours without a gap over {MAX_GAP_SECONDS / 60:.0f} min",
+            f"{hours:,.1f} hours in {count} run(s), longest gap {gap_minutes:,.0f} min",
+            (
+                f">= {MIN_HOURS:g} hours in runs of {MIN_RUN_HOURS:g} hours or more (a gap "
+                f"over {MAX_GAP_SECONDS / 60:.0f} min ends a run)"
+            ),
         ),
         SoakCheck(
             "Memory",
@@ -199,7 +262,7 @@ def evaluate_soak(inputs: SoakInputs) -> SoakReport:
         SoakCheck(
             "No memory leak",
             growth is not None and growth < LEAK_MB_PER_DAY,
-            _number(growth, "MB per day", 1),
+            _number(growth, "MB per day" + (" (worst run)" if count > 1 else ""), 1),
             f"< {LEAK_MB_PER_DAY:g} MB per day after the first hour",
         ),
         SoakCheck(
@@ -235,7 +298,7 @@ def evaluate_soak(inputs: SoakInputs) -> SoakReport:
         f"MT5 connection lost {inputs.disconnects} time(s) (the app reconnects on its own).",
     )
     rows = tuple(_row(name, _series(inputs, name)) for name in SAMPLE_NAMES)
-    return SoakReport(inputs.start, inputs.end, inputs.longest_gap, checks, notes, rows)
+    return SoakReport(inputs.start, inputs.end, inputs.longest_gap, checks, notes, rows, spans)
 
 
 def _row(name: str, series: Sequence[Sample]) -> tuple[str, ...]:
@@ -253,6 +316,19 @@ def _row(name: str, series: Sequence[Sample]) -> tuple[str, ...]:
     )
 
 
+def _runs_line(report: SoakReport) -> str:
+    if len(report.runs) <= 1:
+        return (
+            f"Run: {utc_text(report.start)} to {utc_text(report.end)} "
+            f"({report.hours:,.1f} hours)."
+        )
+    parts = [
+        f"{utc_text(start)} to {utc_text(end)} ({(end - start) / HOUR:,.1f} h)"
+        for start, end in report.runs
+    ]
+    return f"Runs: {'; '.join(parts)} ({report.hours:,.1f} hours in all)."
+
+
 def soak_markdown(report: SoakReport, now: float, version: str = "") -> str:
     by = f" by MT5 Trading Workstation {version}" if version else ""
     lines = [
@@ -260,7 +336,7 @@ def soak_markdown(report: SoakReport, now: float, version: str = "") -> str:
         "",
         f"Created {utc_text(now)}{by}.",
         "",
-        f"Run: {utc_text(report.start)} to {utc_text(report.end)} ({report.hours:,.1f} hours).",
+        _runs_line(report),
         "",
         f"**{report.summary}.**",
         "",
@@ -277,7 +353,8 @@ def soak_markdown(report: SoakReport, now: float, version: str = "") -> str:
     lines += [
         "",
         "Budgets from spec D4. A run starts at the first sample after a gap of more than "
-        f"{MAX_GAP_SECONDS / 60:.0f} minutes (the app was not running).",
+        f"{MAX_GAP_SECONDS / 60:.0f} minutes (the app was not running); the newest runs of "
+        f"{MIN_RUN_HOURS:g} hours or more are added up to {MIN_HOURS:g} hours.",
         "",
     ]
     return "\n".join(lines)
