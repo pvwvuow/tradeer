@@ -2,7 +2,7 @@
 `order_check` and `order_send` answered None with the last error "-2 Unnamed arguments not
 allowed", so no order could open, on the demo test and at the London open alike. The helper
 now asks MT5 again with the request's fields named; MT5 refuses such a call before anything
-reaches the trade server, so the second ask can never open a trade twice.
+reaches the trade server, so the second ask can never open a trade twice. Fixed in 0.23.1.
 """
 
 from __future__ import annotations
