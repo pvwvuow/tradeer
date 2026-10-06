@@ -121,3 +121,9 @@ The first run on the PC (5 October 2026, 0.23.0) failed every order step: MT5 an
 nothing with the last error "-2 Unnamed arguments not allowed". Since 0.23.1 the MT5 helper
 asks again with the request's fields named (MT5 refuses such a call before it reaches the
 trade server, so nothing is sent twice). Run the demo test again after updating.
+
+The second run (6 October 2026, 0.23.2, GBPUSD) passed every market step, the SL move, both
+closes, the history, the refused order and the kill switch. FIBO answered every pending
+order with 10009 DONE instead of 10008 PLACED, and the live broker took them for filled
+positions, so the three pending steps failed although the orders were in MT5. Since 0.23.3
+an accepted pending order is placed whatever its return code.
