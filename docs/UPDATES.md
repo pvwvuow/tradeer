@@ -17,6 +17,7 @@ the rules for new code and the status; `ARCHITECTURE.md` and `PROGRESS.md` point
 - `run_velopack_hooks()` stays right after `multiprocessing.freeze_support()` in the entry points.
 - Never restart or apply an update without the user's click; never download a major version by itself.
 - Keep the `vpk` version in `scripts/ci/release.ps1` equal to the `velopack` pin.
+- No process the app starts may keep the app folder as its working directory (see below).
 
 ## Status: in-app updates and the first release (version 0.12.0, branch `phase/15-updates`)
 
@@ -47,3 +48,10 @@ Status: built and tested with unit tests (versions, settings, launch history and
 3. When 0.13.0 is published (the UI rework), keep the app open: within a minute of starting (or after Check now) the bar says "Version 0.13.0 is ready". Click **Restart to update**: the app closes, updates and starts again as 0.13.0. Settings > Updates then says "Updated from 0.12.0 to 0.13.0".
 4. Send `logs/update/` and `all.log` if anything fails.
 
+## Updates that did not install (5 and 6 October 2026, fixed in 0.23.2)
+
+On the PC every update from 0.12.0 to 0.22.3 installed with one click. From 0.22.3 to 0.23.0, and from 0.23.0 to 0.23.1, **Restart to update** started the old version again every time (eight tries). Velopack's own log, `%LocalAppData%\velopack\velopack_MT5TradingWorkstation.log`, said why: "Backing up current dir" failed ten times with OS error 32 ("The process cannot access the file because it is being used by another process"), then "Unable to start the update, because one or more running processes prevented it", although no app process was left.
+
+The process was MetaTrader 5. When MT5 is not running, the MetaTrader5 package starts `terminal64.exe` from the app's MT5 helper process, and the terminal inherits the helper's working directory: the app's `current` folder, the folder Velopack must rename. Before the evening of 5 October MT5 had always been opened by hand. Since 0.23.2 the helper works from the user's home folder (`leave_app_folder` in `app/mt5/terminal_process.py`), so a terminal it starts never holds the app folder.
+
+A terminal that is still running from the old folder blocks the next update too: close MT5 once, then press **Restart to update** (or run the Setup of the newest release). The Velopack log is the place to look whenever an update does not install.

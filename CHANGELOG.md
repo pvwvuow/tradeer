@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.2](https://github.com/pvwvuow/tradeer/compare/v0.23.1...v0.23.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* the MT5 helper leaves the app folder, so a terminal it starts never blocks an update ([#57](https://github.com/pvwvuow/tradeer/issues/57)) ([a8aab79](https://github.com/pvwvuow/tradeer/commit/a8aab79b963ed307a2bedaecbee048ccbdd27918))
+
 ## [0.23.1](https://github.com/pvwvuow/tradeer/compare/v0.23.0...v0.23.1) (2026-10-06)
 
 
