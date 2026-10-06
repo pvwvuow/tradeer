@@ -23,3 +23,6 @@ because the bot's GitHub token may not change workflows:
 
 Without the token everything still works as before: the release PR then waits for a commit
 that starts its CI and for a merge by hand.
+
+The 0.23.4 publish hung in its second test run and uploaded nothing, so 0.23.5 carries its
+fix (and pytest-timeout: a hung test now fails after 5 minutes).
