@@ -224,7 +224,8 @@ def helper_main(conn: Any, loader: str | None = None) -> None:
         with contextlib.suppress(Exception):
             conn.send(("failed", f"{type(error).__name__}: {error}"))
         return
-    leave_app_folder()  # before any call can start the terminal
+    if loader is None:  # the real package, before any call can start the terminal
+        leave_app_folder()
     conn.send(("ready", _version(package)))
     while True:
         try:
