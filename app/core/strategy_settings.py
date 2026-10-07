@@ -1,9 +1,9 @@
 """Strategy settings per profile (spec F3 Strategies page): `strategies.json`.
 
 For each built-in strategy: on or off and its parameters; plus the signal filters. A file
-that cannot be read gives the defaults (both example strategies on, signal only), and
-invalid parameters fall back to the strategy's defaults with a note, so a typo never stops
-the analysis.
+that cannot be read gives the defaults (both example strategies on, the lab strategies off,
+signal only), and invalid parameters fall back to the strategy's defaults with a note, so a
+typo never stops the analysis.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.engine.filters import FilterSettings
 from app.strategies.base import Strategy
-from app.strategies.registry import STRATEGIES, create_strategy
+from app.strategies.registry import STRATEGIES, create_strategy, on_by_default
 
 STRATEGIES_FILE_NAME = "strategies.json"
 
@@ -30,8 +30,12 @@ class StrategyEntry(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+def _default_entry(name: str) -> StrategyEntry:
+    return StrategyEntry(enabled=on_by_default(name))
+
+
 def _default_entries() -> dict[str, StrategyEntry]:
-    return {name: StrategyEntry() for name in STRATEGIES}
+    return {name: _default_entry(name) for name in STRATEGIES}
 
 
 def _default_filters() -> FilterSettings:
@@ -45,7 +49,7 @@ class StrategySettings(BaseModel):
     filters: FilterSettings = Field(default_factory=_default_filters)
 
     def entry(self, name: str) -> StrategyEntry:
-        return self.strategies.get(name) or StrategyEntry()
+        return self.strategies.get(name) or _default_entry(name)
 
     def with_entry(self, name: str, entry: StrategyEntry) -> StrategySettings:
         strategies = {**self.strategies, name: entry}

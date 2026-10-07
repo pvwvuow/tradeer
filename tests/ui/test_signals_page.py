@@ -8,6 +8,7 @@ from app.core.clock import BrokerClock
 from app.core.strategy_settings import StrategySettingsSource, load_strategy_settings
 from app.core.ui_prefs import UiPrefs
 from app.domain.signals import SignalState
+from app.strategies.registry import STRATEGIES
 from app.ui.main_window import MainWindow
 from app.ui.signals_page import SignalsContext, SignalsPage
 from app.ui.strategies_page import StrategiesPage
@@ -51,7 +52,7 @@ def test_strategy_settings_are_saved_from_the_cards(qtbot: QtBot, tmp_path: Path
     source = StrategySettingsSource(tmp_path)
     page = StrategiesPage(source)
     qtbot.addWidget(page)
-    assert sorted(page.cards) == ["london_breakout", "trend_pullback"]
+    assert sorted(page.cards) == sorted(STRATEGIES)
     card = page.cards["trend_pullback"]
     card.enabled.setChecked(False)
     assert page.save()
