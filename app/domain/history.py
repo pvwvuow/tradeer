@@ -33,6 +33,10 @@ EXIT_REASONS: dict[int, str] = {
 }
 BREAKEVEN_MONEY = 0.005
 VOLUME_EPSILON = 1e-9
+# The magic number of the Health > Demo test's trades. They test the order code on a demo
+# account and count nowhere: not in the journal, the reports, the statistics or the daily
+# trade limit (0.24.1: the report of 6 October 2026 showed 26 losing "unknown" trades).
+TEST_MAGIC = 26_070_098
 
 
 @dataclass(frozen=True)
