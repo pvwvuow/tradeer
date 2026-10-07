@@ -84,8 +84,14 @@ def test_params_are_validated_and_hashed() -> None:
     assert default != TrendPullback(TrendPullbackParams(reward_r=3)).params_hash
 
 
-def test_the_registry_builds_both_strategies() -> None:
-    assert sorted(STRATEGIES) == ["london_breakout", "trend_pullback"]
+def test_the_registry_builds_every_strategy() -> None:
+    assert sorted(STRATEGIES) == [
+        "channel_breakout",
+        "ema_momentum",
+        "london_breakout",
+        "range_reversion",
+        "trend_pullback",
+    ]
     info = strategy_info("london_breakout")
     assert info.example and info.entry_timeframe == "M15" and info.defaults["reward_r"] == 1.5
     built = create_strategy("trend_pullback", {"reward_r": 2.5})

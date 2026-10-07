@@ -1,6 +1,7 @@
 """Daily and weekly reports (spec C12): P/L, trades, win rate, best and worst trade, rejected
 signals by reason, costs, errors and warnings, health issues and anomalies (high slippage,
-requotes). Saved in `daily_reports` (synced) and as a Markdown file on this PC, and optionally
+requotes), and the strategy lab review (each strategy's numbers with its strong and weak
+spots). Saved in `daily_reports` (synced) and as a Markdown file on this PC, and optionally
 sent to Telegram.
 
 A daily report covers one broker trading day; a weekly report the seven broker days from a
@@ -16,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.analytics.lab import review_lines, review_strategies
 from app.analytics.stats import compute_stats
 from app.analytics.trades import TradeRecord
 from app.storage.ids import stable_id
@@ -118,6 +120,7 @@ def build_report(
     if requotes >= MANY_REQUOTES:
         anomalies.append(f"{requotes} requotes or price changes from the broker")
     costs = -(stats.commission + stats.swap + stats.fee)
+    reviews = review_strategies(inside)
     summary: dict[str, Any] = {
         "kind": period.kind,
         "label": period.label,
@@ -139,6 +142,7 @@ def build_report(
         "top_errors": list(top_errors),
         "health_issues": list(health_issues),
         "anomalies": anomalies,
+        "strategies": [review.as_dict() for review in reviews],
     }
     unit = f" {currency}" if currency else ""
     lines = [
@@ -162,6 +166,9 @@ def build_report(
     lines.extend(f"  - {text}" for text in top_errors[:5])
     lines.append(f"- Health issues: {'; '.join(health_issues) if health_issues else 'none'}")
     lines.append(f"- Anomalies: {'; '.join(anomalies) if anomalies else 'none'}")
+    if reviews:
+        lines.append("- By strategy (best expectancy first; + strong, - weak):")
+        lines.extend(review_lines(reviews, currency))
     return Report(period, account, summary, "\n".join(lines) + "\n")
 
 

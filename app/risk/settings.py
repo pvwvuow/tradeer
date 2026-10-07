@@ -1,10 +1,11 @@
 """Risk settings per profile (spec B4, C6): `risk.json`.
 
-Three built-in profiles: Conservative (0.25% per trade), Normal (0.5%, the default) and
-Prop-firm (the usual prop daily-loss and drawdown rules with a safety buffer). Editing a value
-makes the profile "custom". The model's limits are hard caps: no setting can raise the risk
-per trade above 1%, and a file that cannot be read gives the Normal profile, never a riskier
-one.
+Four built-in profiles: Conservative (0.25% per trade), Normal (0.5%, the default),
+Prop-firm (the usual prop daily-loss and drawdown rules with a safety buffer) and Strategy
+lab (for a DEMO account that runs every strategy at once: small risk per trade, room for
+many trades). Editing a value makes the profile "custom". The model's limits are hard caps:
+no setting can raise the risk per trade above 1%, and a file that cannot be read gives the
+Normal profile, never a riskier one.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 RISK_FILE_NAME = "risk.json"
 CUSTOM = "custom"
+LAB = "strategy_lab"
 
 
 class RiskSettings(BaseModel):
@@ -119,11 +121,25 @@ PROFILES: dict[str, RiskSettings] = {
         drawdown_mode="static",
         max_trades_per_day=6,
     ),
+    # 7 October 2026: every strategy at once on the demo account, to compare them. Small
+    # risk per trade, so many trades fit; the daily loss and drawdown stops stay on.
+    LAB: RiskSettings(
+        risk_per_trade_percent=0.25,
+        max_total_open_risk_percent=3.0,
+        max_daily_loss_percent=5.0,
+        max_total_drawdown_percent=20.0,
+        max_open_trades=12,
+        max_open_per_symbol=5,
+        max_open_per_strategy=3,
+        max_trades_per_day=40,
+        max_currency_exposure_percent=2.0,
+    ),
 }
 PROFILE_TITLES: dict[str, str] = {
     "conservative": "Conservative",
     "normal": "Normal",
     "prop_firm": "Prop-firm",
+    LAB: "Strategy lab (demo)",
     CUSTOM: "Custom",
 }
 PROFILE_NOTES: dict[str, str] = {
@@ -132,6 +148,11 @@ PROFILE_NOTES: dict[str, str] = {
     "prop_firm": (
         "0.5% per trade, 4% daily loss, 8% static drawdown: a buffer below the common 5% / "
         "10% prop rules. Set your firm's exact numbers, then it becomes Custom."
+    ),
+    LAB: (
+        "For a DEMO account that runs every strategy at once to compare them: 0.25% per "
+        "trade, up to 12 open trades (5 per symbol, 3 per strategy) and 40 a day, 5% daily "
+        "loss, 20% drawdown. Not for a real account."
     ),
     CUSTOM: "Your own values.",
 }

@@ -11,6 +11,7 @@ from app.ml.registry import ModelRegistry
 from app.ml.service import ModelService
 from app.ml.trainer import TrainSettings, train
 from app.risk.settings import RiskSettingsSource
+from app.strategies.registry import STRATEGIES
 from app.ui.model_page import NOT_CONNECTED, ModelContext, ModelPage
 from tests.unit.backtest_helpers import noisy_history
 from tests.unit.ml_helpers import LogisticFactory, synthetic
@@ -88,7 +89,7 @@ def test_training_shows_the_report_saves_and_activates(qtbot: QtBot, tmp_path: P
         qtbot.waitUntil(lambda: page.last_outcome is not None, timeout=20_000)
         request = FakeJob.requests[-1]
         assert request.histories[0].symbol == "EURUSD"
-        assert set(request.strategies) == {"trend_pullback", "london_breakout"}
+        assert set(request.strategies) == set(STRATEGIES)  # the model learns from every one
         assert "Beats the baseline" in page.verdict.text()
         assert page.scores.rowCount() == 3 and page.buckets.rowCount() > 0
         assert page.importance.item(0, 0).text() == "adx"
