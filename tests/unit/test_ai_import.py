@@ -102,7 +102,7 @@ def test_the_difference_is_against_the_saved_params() -> None:
     assert applied.entry("london_breakout") == saved.entry("london_breakout")
     other = parse_suggestion(change({"rsi_level": 55}), StrategySettings())
     built, notes = build_strategies(apply_suggestion(StrategySettings(), other))
-    assert notes == [] and {s.name for s in built} == set(STRATEGIES)
+    assert notes == [] and {s.name for s in built} == set(StrategySettings().enabled())
 
 
 def test_a_new_config_version_links_to_the_one_it_replaces() -> None:

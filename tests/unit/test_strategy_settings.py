@@ -15,13 +15,14 @@ from app.core.strategy_settings import (
 from app.engine.filters import FilterSettings
 from app.strategies.london_breakout import LondonBreakoutParams
 
+EXAMPLES = ["trend_pullback", "london_breakout"]
 LAB = ["range_reversion", "channel_breakout", "ema_momentum"]
 
 
 def test_defaults_turn_both_example_strategies_on() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         settings = load_strategy_settings(Path(tmp))
-        assert settings.enabled() == ["trend_pullback", "london_breakout"]
+        assert settings.enabled() == EXAMPLES
         assert settings.filters == FilterSettings()
 
 
@@ -34,17 +35,17 @@ def test_the_lab_strategies_start_off_and_can_be_turned_on() -> None:
             assert not settings.entry(name).enabled
             settings = settings.with_entry(name, StrategyEntry(enabled=True))
         source.save(settings)
-        assert load_strategy_settings(folder).enabled() == ["trend_pullback", "london_breakout", *LAB]
+        assert load_strategy_settings(folder).enabled() == [*EXAMPLES, *LAB]
         old = {"strategies": {"trend_pullback": {"enabled": True}}}
         (folder / STRATEGIES_FILE_NAME).write_text(json.dumps(old), encoding="utf-8")
-        assert load_strategy_settings(folder).enabled() == ["trend_pullback", "london_breakout"]
+        assert load_strategy_settings(folder).enabled() == EXAMPLES
 
 
 def test_settings_round_trip_and_reload_on_change() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         source = StrategySettingsSource(folder)
-        assert [s.name for s in source.strategies()] == ["trend_pullback", "london_breakout"]
+        assert [s.name for s in source.strategies()] == EXAMPLES
         changed = source.settings.with_entry(
             "trend_pullback",
             StrategyEntry(enabled=False, params={"reward_r": 3.0}),
@@ -61,7 +62,7 @@ def test_bad_files_and_bad_params_fall_back_to_defaults() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         (folder / STRATEGIES_FILE_NAME).write_text("{broken", encoding="utf-8")
-        assert load_strategy_settings(folder).enabled() == ["trend_pullback", "london_breakout"]
+        assert load_strategy_settings(folder).enabled() == EXAMPLES
         raw = {
             "strategies": {"trend_pullback": {"enabled": True, "params": {"reward_r": -1}}},
             "filters": {"min_probability_percent": 500},

@@ -15,16 +15,20 @@ real account.
 | ema_momentum | M15 EMA9/EMA21 cross on the side of the EMA100, ADX > 25, RSI 50 to 70 | market | 1.5 ATR, 1.5R | London, New York | 26070005 |
 
 None of them is proven to be profitable: that is what the lab is for. Each has its own magic
-number, so every trade in MT5 and in the journal belongs to exactly one strategy. All are on
-by default; the Strategies page turns each one on or off and edits its rules.
+number, so every trade in MT5 and in the journal belongs to exactly one strategy. The two spec
+examples are on by default; the three lab strategies start off (on a real account each one
+that is on would need its own Go-Live approval). The Strategies page turns each one on or off
+and edits its rules.
 
 ## How to run it
 
-1. Use a DEMO account. Risk > profile **Strategy lab (demo)** > Use this profile > Save:
+1. Strategies page: tick On for range_reversion, channel_breakout and ema_momentum, then
+   Save.
+2. Use a DEMO account. Risk > profile **Strategy lab (demo)** > Use this profile > Save:
    0.25% per trade, up to 12 open trades (5 per symbol, 3 per strategy), 40 trades a day,
    5% daily loss and 20% drawdown stops.
-2. Trading mode Auto (on a demo account it needs no Go-Live approval).
-3. Leave it on through the London and New York sessions on as many weekdays as you can.
+3. Trading mode Auto (on a demo account it needs no Go-Live approval).
+4. Leave it on through the London and New York sessions on as many weekdays as you can.
 
 ## Reading the results
 
