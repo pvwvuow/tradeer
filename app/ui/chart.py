@@ -3,7 +3,8 @@ EMA overlays, key levels, swing structure and session shading.
 
 The x axis counts bars (no gaps for nights and weekends); its labels show local time. Only
 the bars kept by the analysis are drawn (at most 600 per timeframe), and the y axis fits the
-visible bars.
+visible bars. Since 7 October 2026 the prices sit on the right, like trading platforms, and
+a dotted line marks the last close with its price in a colored tag.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ EMA_PERIODS = (20, 50, 200)
 MAX_LEVELS = 8
 SESSION_DAYS = 10
 INTRADAY = ("M5", "M15", "H1")
+PRICE_AXIS = "right"
 SESSION_COLORS: dict[Session, tuple[int, int, int]] = {
     Session.ASIA: (91, 140, 255),
     Session.LONDON: (34, 197, 94),
@@ -105,6 +107,8 @@ class CandleChart(QWidget):
         self.plot.showGrid(x=True, y=True, alpha=0.12)
         self.plot.setMenuEnabled(False)
         self.plot.hideButtons()
+        self.plot.showAxis(PRICE_AXIS)
+        self.plot.hideAxis("left")
         self.view = self.plot.getViewBox()
         self.view.setAutoVisible(y=True)
         self._v_line = pg.InfiniteLine(angle=90, movable=False)
@@ -136,7 +140,7 @@ class CandleChart(QWidget):
     def apply_tokens(self, tokens: ThemeTokens) -> None:
         self._tokens = tokens
         self.plot_widget.setBackground(tokens.card)
-        for name in ("left", "bottom"):
+        for name in (PRICE_AXIS, "bottom"):
             axis = self.plot.getAxis(name)
             axis.setPen(pg.mkPen(tokens.border))
             axis.setTextPen(pg.mkPen(tokens.text_secondary))
@@ -165,6 +169,7 @@ class CandleChart(QWidget):
             self._draw_levels(analysis)
         if self.show_structure.isChecked():
             self._draw_swings(analysis, bars)
+        self._draw_last_price(bars, analysis.digits)
         size = len(bars)
         self.plot.setXRange(max(size - VISIBLE_BARS, 0) - 0.5, size + 1.5, padding=0)
         self._update_ticks()
@@ -200,6 +205,21 @@ class CandleChart(QWidget):
             xs = np.repeat(x[mask], 2)
             ys = np.column_stack([bars.low[mask], bars.high[mask]]).ravel()
             self._add(pg.PlotDataItem(xs, ys, connect="pairs", pen=pg.mkPen(color, width=1)))
+
+    def _draw_last_price(self, bars: Bars, digits: int) -> None:
+        """A dotted line at the last close, its price in a tag of the candle's color."""
+        last = float(bars.close[-1])
+        rising = bool(bars.close[-1] >= bars.open[-1])
+        color = self._tokens.profit if rising else self._tokens.loss
+        line = pg.InfiniteLine(
+            pos=last,
+            angle=0,
+            movable=False,
+            pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine),
+            label=f"{last:,.{digits}f}",
+            labelOpts={"position": 0.97, "color": self._tokens.accent_text, "fill": color},
+        )
+        self._add(line, ignore_bounds=True)
 
     def _draw_emas(self, bars: Bars) -> None:
         x = np.arange(len(bars), dtype=np.float64)
