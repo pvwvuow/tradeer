@@ -6,9 +6,10 @@ The PC is off overnight, so nothing here can be tried on it before the morning.
 
 | Phase | What | PR | State |
 |---|---|---|---|
-| 1 | Soak report adds up runs of 4 h or more to 24 h (the PC cannot stay on overnight) | #66 | CI |
-| 2 | Fresher look: depth on cards and the top bar, gradient primary buttons, pill tabs, drawn combo and spin arrows, filled check boxes and ring radios, row hover in tables, rounder corners, menus and tooltips | #67 | CI |
-| 3 | One release with both (0.24.0) | release PR | after 1 and 2 |
+| 1 | Soak report adds up runs of 4 h or more to 24 h (the PC cannot stay on overnight) | #66 | CI (Windows run restarted) |
+| 2 | Fresher look: depth on cards and the top bar, gradient primary buttons, pill tabs, drawn combo and spin arrows, filled check boxes and ring radios, row hover in tables, rounder corners, menus and tooltips | #67 | merged |
+| 3 | Page polish (7 Oct): sidebar, page headers, Home cards, charts | next | planned |
+| 4 | One release with all of it (0.24.0) | release PR | after 1 to 3 |
 
 Rules kept: the spec palette and every WCAG AA pair stay (tests), no image files, no Qt
 style property Qt does not know (it would log a warning on every repaint), and a single 24 h
