@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/pvwvuow/tradeer/compare/v0.24.1...v0.25.0) (2026-10-07)
+
+
+### Features
+
+* **strategies:** strategy lab: three new strategies, a demo lab risk profile and a By strategy review in the reports ([#72](https://github.com/pvwvuow/tradeer/issues/72)) ([db35763](https://github.com/pvwvuow/tradeer/commit/db35763be65d126f687422388177c5011aef1f0d))
+
 ## [0.24.1](https://github.com/pvwvuow/tradeer/compare/v0.24.0...v0.24.1) (2026-10-07)
 
 
