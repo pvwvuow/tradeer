@@ -6,10 +6,10 @@ The PC is off overnight, so nothing here can be tried on it before the morning.
 
 | Phase | What | PR | State |
 |---|---|---|---|
-| 1 | Soak report adds up runs of 4 h or more to 24 h (the PC cannot stay on overnight) | #66 | CI (Windows run restarted) |
+| 1 | Soak report adds up runs of 4 h or more to 24 h (the PC cannot stay on overnight) | #66 | merged |
 | 2 | Fresher look: depth on cards and the top bar, gradient primary buttons, pill tabs, drawn combo and spin arrows, filled check boxes and ring radios, row hover in tables, rounder corners, menus and tooltips | #67 | merged |
-| 3 | Page polish (7 Oct): sidebar, page headers, Home cards, charts | next | planned |
-| 4 | One release with all of it (0.24.0) | release PR | after 1 to 3 |
+| 3 | Window polish (7 Oct): Windows title bar in the theme's colors, pages fade in, hand cursor on everything clickable, candle chart prices on the right with a last-price tag, smooth chart lines | #69 | merged |
+| 4 | One release with all of it (0.24.0) | #68 | CI |
 
 Rules kept: the spec palette and every WCAG AA pair stay (tests), no image files, no Qt
 style property Qt does not know (it would log a warning on every repaint), and a single 24 h
@@ -19,6 +19,8 @@ run still gives the same soak report as before.
 
 1. Update to 0.24.0 and look through Home, Signals, Positions, Risk and Settings in the dark
    and the light theme: buttons, inputs, check boxes, tabs and tables.
-2. Send a screenshot of anything that looks clipped or wrong.
-3. Each evening keep the app on for 4 hours or more; after three such evenings Health >
+2. The title bar should be dark in the dark theme (Windows 11 also gives it the top bar's
+   color). Market > chart: prices on the right and a colored tag at the last price.
+3. Send a screenshot of anything that looks clipped or wrong.
+4. Each evening keep the app on for 4 hours or more; after three such evenings Health >
    Create soak report should add them up to 24 hours.
