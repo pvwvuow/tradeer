@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.24.0](https://github.com/pvwvuow/tradeer/compare/v0.23.5...v0.24.0) (2026-10-07)
+
+
+### Features
+
+* **health:** the soak report adds up runs of 4 hours or more to 24 hours ([#66](https://github.com/pvwvuow/tradeer/issues/66)) ([8ed1d25](https://github.com/pvwvuow/tradeer/commit/8ed1d25135598ac14ffabd710a393547cfb8bd10))
+* **ui:** a fresher look: depth, gradient buttons, pill tabs, drawn arrows and check marks ([#67](https://github.com/pvwvuow/tradeer/issues/67)) ([3c0dbd8](https://github.com/pvwvuow/tradeer/commit/3c0dbd80555c775eb8290c7a7906ff076dc400e1))
+* **ui:** themed title bar, page fade, hand cursors and chart prices on the right ([#69](https://github.com/pvwvuow/tradeer/issues/69)) ([bbb05cc](https://github.com/pvwvuow/tradeer/commit/bbb05cc6c0698d619a1bf46183541cc1436c7d7c))
+
 ## [0.23.5](https://github.com/pvwvuow/tradeer/compare/v0.23.4...v0.23.5) (2026-10-06)
 
 
