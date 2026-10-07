@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.1](https://github.com/pvwvuow/tradeer/compare/v0.24.0...v0.24.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **journal:** the demo test's trades count in no report, statistic or daily trade limit ([#70](https://github.com/pvwvuow/tradeer/issues/70)) ([d156b22](https://github.com/pvwvuow/tradeer/commit/d156b22c44094542074f9a8f3f397a799f206cc2))
+
 ## [0.24.0](https://github.com/pvwvuow/tradeer/compare/v0.23.5...v0.24.0) (2026-10-07)
 
 
