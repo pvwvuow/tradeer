@@ -6,20 +6,33 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.strategies.base import Strategy, StrategyInfo
+from app.strategies.channel_breakout import ChannelBreakout
+from app.strategies.ema_momentum import EmaMomentum
 from app.strategies.london_breakout import LondonBreakout
+from app.strategies.range_reversion import RangeReversion
 from app.strategies.trend_pullback import TrendPullback
 
+# The two spec examples, then the lab strategies (7 October 2026): different ideas (a range
+# fade, a channel breakout, a M15 momentum cross) so a demo account running all of them at
+# once shows which kind of trade works on which symbol and session.
 STRATEGIES: dict[str, type[Strategy]] = {
     TrendPullback.name: TrendPullback,
     LondonBreakout.name: LondonBreakout,
+    RangeReversion.name: RangeReversion,
+    ChannelBreakout.name: ChannelBreakout,
+    EmaMomentum.name: EmaMomentum,
 }
 
 # One magic number per strategy (spec C7): MT5 marks every bot order and position with it, so
 # the risk limits count each strategy's trades and manual trades (magic 0) apart. Never reuse
-# or change a number: old positions and history are matched by it.
+# or change a number: old positions and history are matched by it. 26_070_098 is the demo
+# test's (app.domain.history.TEST_MAGIC).
 MAGIC_NUMBERS: dict[str, int] = {
     TrendPullback.name: 26_070_001,
     LondonBreakout.name: 26_070_002,
+    RangeReversion.name: 26_070_003,
+    ChannelBreakout.name: 26_070_004,
+    EmaMomentum.name: 26_070_005,
 }
 
 
