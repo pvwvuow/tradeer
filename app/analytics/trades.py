@@ -3,7 +3,8 @@ config and predicted probability from the signal, and the filters every page sha
 
 Rows come from the `trades` table (bot trades of the execution engine and every trade of
 the MT5 history import) joined with their signal. A bot trade without a signal row gets its
-strategy from the magic number; a manual trade is "manual".
+strategy from the magic number; a manual trade is "manual". The demo test's trades
+(`TEST_MAGIC`) are left out: they test the order code and are no one's trading.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from app.domain.history import TEST_MAGIC
 from app.storage.signal_store import epoch
 
 TRADE_QUERY = (
@@ -81,6 +83,11 @@ class TradeRecord:
     def gross(self) -> float:
         """The result before costs (profit without commission, swap and fees)."""
         return self.profit
+
+    @property
+    def demo_test(self) -> bool:
+        """A trade of the Health > Demo test, which counts nowhere."""
+        return self.magic == TEST_MAGIC
 
 
 def _float(value: Any) -> float | None:
@@ -157,10 +164,13 @@ def record_from_row(
 def load_trades(
     db: Database,
     strategy_for_magic: Callable[[int], str | None] | None = None,
+    *,
+    tests: bool = False,
 ) -> list[TradeRecord]:
-    """Every closed trade, oldest close first."""
+    """Every closed trade, oldest close first; the demo test's trades only with `tests`."""
     rows = db.query(TRADE_QUERY + " ORDER BY t.close_time, t.open_time")
-    return [record_from_row(dict(row), strategy_for_magic) for row in rows]
+    records = [record_from_row(dict(row), strategy_for_magic) for row in rows]
+    return records if tests else [record for record in records if not record.demo_test]
 
 
 @dataclass(frozen=True)

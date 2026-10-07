@@ -4,7 +4,8 @@
 quotes, gold and cross-currency accounts are converted by MT5 itself; the symbol's tick value
 is never used (ADR 60: on a real FIBO account XAUUSD reported 0.1 USD where a point is worth
 1 USD). `order_calc_margin` gives the margin a new trade needs. Positions, the account and
-today's deals come back as one `AccountPicture`.
+today's deals come back as one `AccountPicture`. The demo test's entries (`TEST_MAGIC`) are
+not counted toward the trades of the day: 26 of them would block the bot until midnight.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import math
 from collections.abc import Callable, MutableMapping
 from typing import Any
 
-from app.domain.history import DEAL_ENTRY_IN
+from app.domain.history import DEAL_ENTRY_IN, TEST_MAGIC
 from app.domain.signals import Direction
 from app.mt5 import api
 from app.mt5.api import MT5Api
@@ -135,7 +136,9 @@ def read_picture(
     today = [deal for deal in deals if deal.time >= day_start_server]
     realized = sum(d.profit + d.commission + d.swap + d.fee for d in today if d.is_trade)
     deposits = sum(d.profit for d in today if d.type == api.DEAL_TYPE_BALANCE)
-    entries = [d for d in today if d.is_trade and d.entry == DEAL_ENTRY_IN]
+    entries = [
+        d for d in today if d.is_trade and d.entry == DEAL_ENTRY_IN and d.magic != TEST_MAGIC
+    ]
     money = AccountMoney(day, account.balance, account.equity, realized, deposits)
     return AccountPicture(
         currency=account.currency,
