@@ -7,6 +7,9 @@ status bar stay English, left to right.
 Keyboard (spec F1): Tab reaches every control and shows a focus ring, Ctrl+, opens Settings,
 Ctrl+K the command palette (Advanced view) and Ctrl+Shift+K the kill switch. Buttons that only
 show an icon or an arrow get a name for screen readers.
+
+7 October 2026 polish: the Windows title bar takes the theme's colors, a page fades in when
+it opens, and everything clickable shows a hand cursor.
 """
 
 from __future__ import annotations
@@ -58,6 +61,7 @@ from app.ui.journal_page import JournalContext, JournalPage
 from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
 from app.ui.model_page import ModelContext, ModelPage
+from app.ui.motion import fade_in
 from app.ui.navigation import (
     ADVANCED_GROUPS,
     ADVANCED_PAGES,
@@ -77,6 +81,7 @@ from app.ui.style import (
     Glyph,
     chip,
     glyph_icon,
+    hand_cursors,
     icons_available,
     name_controls,
     set_chip,
@@ -86,6 +91,7 @@ from app.ui.style import (
 )
 from app.ui.theme import ThemeTokens, build_qss, tokens_for
 from app.ui.updates_page import UpdateBanner, UpdatesContext, UpdatesPage
+from app.ui.window_chrome import style_title_bar
 
 SIDEBAR_WIDTH = 224
 KILL_SHORTCUT = "Ctrl+Shift+K"
@@ -123,6 +129,7 @@ class MainWindow(QMainWindow):
         self._nav_buttons: dict[str, QPushButton] = {}
         self._palette: CommandPalette | None = None
         self._crash_dialog: CrashDialog | None = None
+        self.page_motion = True  # pages fade in when they open
         # Plain data only: crash reports read this from other threads (never touch widgets).
         self._crash_state: dict[str, str] = {
             "page": "",
@@ -236,6 +243,7 @@ class MainWindow(QMainWindow):
             self._keep_english_left_to_right()
         style_tables(self)
         name_controls(self)
+        hand_cursors(self)
         self.home.stop = self.ask_kill
         self.home.on_onboarded = self.finish_onboarding
         self.home.on_status_bar = self._show_status_bar
@@ -282,7 +290,12 @@ class MainWindow(QMainWindow):
         return dict(self._crash_state)
 
     def show_page(self, page_id: str) -> None:
-        self.pages.setCurrentIndex(self._page_index[page_id])
+        index = self._page_index[page_id]
+        changed = index != self.pages.currentIndex()
+        self.pages.setCurrentIndex(index)
+        page = self.pages.currentWidget()
+        if changed and self.page_motion and page is not None:
+            fade_in(page)
         self._crash_state["page"] = page_id
         self.page_crumb.setText(page_crumb(page_id))
         button = self._nav_buttons.get(page_id)
@@ -389,6 +402,7 @@ class MainWindow(QMainWindow):
         self._crash_state["theme"] = theme.value
         tokens = tokens_for(theme)
         self.setStyleSheet(build_qss(tokens))
+        style_title_bar(self, tokens)
         if self.logs_page is not None:
             self.logs_page.apply_tokens(tokens)
         self.market_page.apply_tokens(tokens)

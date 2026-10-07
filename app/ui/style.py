@@ -7,6 +7,9 @@ the icons are simply left out instead of drawing empty boxes.
 Phase 16b (spec F1): icons are drawn at the screen's pixel ratio (sharp at 150-300% scaling),
 charts take their colors from the current theme (`chart_tokens`), and buttons without a
 readable text get a name for screen readers (`name_controls`).
+
+7 October 2026: charts draw smooth (antialiased) lines without pyqtgraph's small "A" button,
+and buttons, drop-downs and tabs show a hand cursor (`hand_cursors`), like modern apps.
 """
 
 from __future__ import annotations
@@ -20,8 +23,10 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, 
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
+    QComboBox,
     QGraphicsView,
     QLabel,
+    QTabBar,
     QTableView,
     QWidget,
 )
@@ -195,6 +200,7 @@ def style_plots(root: QWidget, tokens: ThemeTokens) -> int:
     Returns how many charts were styled.
     """
     _CHART["tokens"] = tokens
+    pg.setConfigOptions(antialias=True)
     plots = [view for view in root.findChildren(QGraphicsView) if isinstance(view, pg.PlotWidget)]
     for plot in plots:
         _style_plot(plot, tokens)
@@ -204,6 +210,7 @@ def style_plots(root: QWidget, tokens: ThemeTokens) -> int:
 def _style_plot(plot: Any, tokens: ThemeTokens) -> None:
     plot.setBackground(tokens.card)
     item = plot.getPlotItem()
+    item.hideButtons()
     for name in ("left", "bottom", "right", "top"):
         axis = item.getAxis(name)
         axis.setPen(pg.mkPen(tokens.border_strong))
@@ -229,6 +236,18 @@ def style_tables(root: QWidget) -> int:
         if table.selectionMode() == QAbstractItemView.SelectionMode.NoSelection:
             table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     return len(tables)
+
+
+def hand_cursors(root: QWidget) -> int:
+    """A hand cursor over every button, drop-down and tab bar under `root` (and `root`).
+
+    Returns how many widgets got it.
+    """
+    widgets = [root, *root.findChildren(QWidget)]
+    clickable = [w for w in widgets if isinstance(w, QAbstractButton | QComboBox | QTabBar)]
+    for widget in clickable:
+        widget.setCursor(Qt.CursorShape.PointingHandCursor)
+    return len(clickable)
 
 
 def _readable(text: str) -> str:
