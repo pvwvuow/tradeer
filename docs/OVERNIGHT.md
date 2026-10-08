@@ -13,11 +13,18 @@ The PC is off overnight, so nothing here can be tried on it before the morning.
 | 5 | PC log of 7 Oct: the demo test's 26 trades were in the daily report of 6 Oct and counted toward the trades-per-day limit (Auto would refuse signals until midnight); now they count nowhere (0.24.1) | #70 | released |
 | 6 | Strategy lab (7 Oct evening): three new strategies (range_reversion, channel_breakout, ema_momentum, off until turned on), the Strategy lab (demo) risk profile and a By strategy review in every report; see STRATEGY_LAB.md (0.25.0) | #72 | released |
 | 7 | 8 Oct: the chart's prices looked different from MT5. The tag showed the last closed bar's close and the times were local; now the live bid (tag) and ask lines move every second and the times are broker time, as in MT5 (0.25.1) | #74 | released |
-| 8 | 8 Oct: the Dashboard lists were squeezed and showed only 8 signals. The page now scrolls; open positions and signals are full-width lists of 10 rows a page with Previous and Next, every signal with its strategy, side, prices and why it was or was not traded, and a filter (all, traded, waiting, not traded) (0.25.2) | #81 | merged |
+| 8 | 8 Oct: the Dashboard lists were squeezed and showed only 8 signals. The page now scrolls; open positions and signals are full-width lists of 10 rows a page with Previous and Next, every signal with its strategy, side, prices and why it was or was not traded, and a filter (all, traded, waiting, not traded) (0.25.2) | #81 | released |
+| 9 | 8 Oct: scrolling the page with the mouse over a number box or drop-down changed its value. The wheel now scrolls the page; a field takes the wheel only after a click into it (0.26.0) | #83 | merged |
+| 10 | 8 Oct: "a new, beautiful, professional interface, a real rework". Phase 1, the whole app: ink and violet palette, flat layers (chrome, page, cards), recessed fields, tables without stripes, segmented tabs, a violet pill for the current page, figures in Bahnschrift (0.26.0) | #84 | merged |
 
-Rules kept: the spec palette and every WCAG AA pair stay (tests), no image files, no Qt
-style property Qt does not know (it would log a warning on every repaint), and a single 24 h
-run still gives the same soak report as before.
+Rules kept: every WCAG AA pair stays (tests), no image files, no Qt style property Qt does
+not know (it would log a warning on every repaint), and a single 24 h run still gives the
+same soak report as before.
+
+PC log of 8 October 07:00 UTC (London open): the first Auto trades on the demo account.
+london_breakout placed both sides on EURUSD and GBPUSD; the sell side filled on both within
+two minutes and the buy side was cancelled at once (OCO). XAUUSD was refused by risk: 0.01
+lot would have risked 43 USD, above the 25 USD allowed at 0.25%.
 
 ## Check on the PC
 
@@ -36,3 +43,7 @@ run still gives the same soak report as before.
    within a second or two, and the time labels should match MT5's.
 8. 0.25.2: Dashboard: scroll down to Open positions and Latest signals, page with Next,
    try the filter (Not traded shows why each signal was skipped) and hover a row.
+9. 0.26.0: on Strategies and Risk, scroll with the mouse over the number boxes: nothing may
+   change. Click into a box, then the wheel changes it.
+10. 0.26.0: screenshots of Dashboard, Strategies, Signals and Settings in both themes, so
+    phase 2 of the rework (page layouts) starts from what you see.
