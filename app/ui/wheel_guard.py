@@ -57,7 +57,8 @@ def plot_of(widget: QWidget) -> QWidget | None:
     """The chart whose drawing area `widget` is, or None."""
     parent = widget.parentWidget()
     if isinstance(parent, pg.PlotWidget) and parent.viewport() is widget:
-        return parent
+        found: QWidget = parent
+        return found
     return None
 
 
