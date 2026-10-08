@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.ui.theme import CHIP_TONES, DARK, ThemeTokens
+from app.ui.wheel_guard import calm_tree, install_wheel_guard
 
 ICON_FAMILIES: tuple[str, ...] = ("Segoe Fluent Icons", "Segoe MDL2 Assets")
 ICON_SIZE = 18
@@ -241,8 +242,12 @@ def style_tables(root: QWidget) -> int:
 def hand_cursors(root: QWidget) -> int:
     """A hand cursor over every button, drop-down and tab bar under `root` (and `root`).
 
-    Returns how many widgets got it.
+    8 October 2026: this also starts the wheel guard (`app.ui.wheel_guard`), so turning the
+    wheel over a spin box or a drop-down scrolls the page instead of changing the value.
+    Returns how many widgets got the hand cursor.
     """
+    install_wheel_guard()
+    calm_tree(root)
     widgets = [root, *root.findChildren(QWidget)]
     clickable = [w for w in widgets if isinstance(w, QAbstractButton | QComboBox | QTabBar)]
     for widget in clickable:
