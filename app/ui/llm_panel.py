@@ -4,18 +4,25 @@ Off by default. Saving stores the endpoint, model and prices in the profile and 
 in Windows Credential Manager (never in a file or a log). Asking sends only the compact
 summary from `app.analytics.llm_client`; the answer goes to the AI Lab's answer box, so the
 usual check, backtest and Paper-only activation decide what happens with it.
+
+Phase 17a (docs/AI_DESK.md section 8) adds the provider presets (xAI Grok first), the API
+style, the reasoning effort, the cached-input price and Test connection: one tiny fixed
+question that shows the model, the latency, whether JSON works and what a desk cycle costs.
 """
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
     QLineEdit,
@@ -24,6 +31,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.ai.probe import ProbeResult, probe
+from app.ai.providers import (
+    CUSTOM,
+    PRESETS,
+    REASONING_EFFORTS,
+    STYLE_NAMES,
+    find_preset,
+    matching_preset,
+)
+from app.ai.settings import (
+    AiSettings,
+    AiSettingsSource,
+    connection_of,
+    learned_options,
+    with_learned,
+)
+from app.ai.transport import AiClient, CallOptions, host_of
 from app.analytics.ai_export import ExportData
 from app.analytics.llm_client import (
     DEFAULT_BASE_URL,
@@ -66,19 +90,45 @@ def _ignore(text: str) -> str:
     return ""
 
 
-def _price_box(name: str) -> QDoubleSpinBox:
+def _price_box(name: str, tip: str = "USD per one million tokens (0 = unknown)") -> QDoubleSpinBox:
     box = QDoubleSpinBox()
     box.setObjectName(name)
     box.setRange(0.0, 1000.0)
     box.setDecimals(3)
     box.setPrefix("$")
-    box.setToolTip("USD per one million tokens (0 = unknown)")
+    box.setToolTip(tip)
     return box
+
+
+def _combo(name: str, accessible: str, items: list[tuple[str, str]]) -> QComboBox:
+    box = QComboBox()
+    box.setObjectName(name)
+    box.setAccessibleName(accessible)
+    for text, value in items:
+        box.addItem(text, value)
+    return box
+
+
+def _select(box: QComboBox, value: str) -> None:
+    index = box.findData(value)
+    box.setCurrentIndex(index if index >= 0 else 0)
+
+
+def _data(box: QComboBox) -> str:
+    value = box.currentData()
+    return value if isinstance(value, str) else ""
+
+
+@dataclass(frozen=True)
+class _Tested:
+    result: ProbeResult
+    learned: dict[str, CallOptions]
 
 
 class _Bridge(QObject):
     answered = Signal(object)
     failed = Signal(str)
+    tested = Signal(object)
 
 
 class LlmPanel(QWidget):
@@ -92,17 +142,22 @@ class LlmPanel(QWidget):
         self.data = data
         self.deliver = deliver
         self.llm: LlmContext | None = None
+        self.ai_source: AiSettingsSource | None = None
         self.start_job: Callable[[Job], None] = _start_thread
         self._asking = False
         self.bridge = _Bridge()
         self.bridge.answered.connect(self.show_answer, Qt.ConnectionType.QueuedConnection)
         self.bridge.failed.connect(self.show_failure, Qt.ConnectionType.QueuedConnection)
+        self.bridge.tested.connect(self.show_test, Qt.ConnectionType.QueuedConnection)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         card, layout = card_frame()
         outer.addWidget(card)
         layout.addWidget(styled_label("Or ask your own AI from here (optional)", "heading"))
         layout.addWidget(styled_label(NOTE, "muted", wrap=True))
+        presets = [("Custom", CUSTOM), *((preset.name, preset.key) for preset in PRESETS)]
+        self.preset = _combo("AiLlmPreset", "Provider preset", presets)
+        self.preset.activated.connect(self.apply_preset)
         self.enabled_box = QCheckBox("Use my AI endpoint")
         self.enabled_box.setObjectName("AiLlmEnabled")
         self.url = QLineEdit()
@@ -114,6 +169,8 @@ class LlmPanel(QWidget):
         self._row(
             layout,
             self.enabled_box,
+            styled_label("Preset", "muted"),
+            self.preset,
             styled_label("Endpoint", "muted"),
             self.url,
             styled_label("Model", "muted"),
@@ -143,6 +200,32 @@ class LlmPanel(QWidget):
             self.save_button,
             self.forget_button,
         )
+        styles = [(name, style.value) for style, name in STYLE_NAMES.items()]
+        self.style_box = _combo("AiLlmStyle", "API style", styles)
+        self.style_box.setToolTip(
+            "Auto tries Chat Completions and moves to Responses when the model needs it.",
+        )
+        efforts = [(effort.capitalize() or "Default", effort) for effort in REASONING_EFFORTS]
+        self.reasoning = _combo("AiLlmReasoning", "Reasoning effort", efforts)
+        self.reasoning.setToolTip("For models that think first; low keeps calls fast and cheap.")
+        self.cached_price = _price_box(
+            "AiLlmCachedPrice",
+            "USD per one million cached input tokens (0 = the input price)",
+        )
+        self.test_button = QPushButton("Test connection")
+        self.test_button.setObjectName("AiLlmTest")
+        self.test_button.setToolTip("Sends one tiny fixed question, no account data.")
+        self.test_button.clicked.connect(self.check_connection)
+        self._row(
+            layout,
+            styled_label("API style", "muted"),
+            self.style_box,
+            styled_label("Reasoning", "muted"),
+            self.reasoning,
+            styled_label("Cached input per 1M", "muted"),
+            self.cached_price,
+            self.test_button,
+        )
         self.question = QLineEdit()
         self.question.setObjectName("AiLlmQuestion")
         self.question.setPlaceholderText(DEFAULT_QUESTION)
@@ -169,6 +252,7 @@ class LlmPanel(QWidget):
 
     def attach(self, llm: LlmContext) -> None:
         self.llm = llm
+        self.ai_source = AiSettingsSource(llm.source.directory)
         self.show_settings()
 
     def has_key(self) -> bool:
@@ -180,15 +264,23 @@ class LlmPanel(QWidget):
         except CredentialError:
             return False
 
+    def ai_settings(self) -> AiSettings:
+        return self.ai_source.settings if self.ai_source is not None else AiSettings()
+
     def show_settings(self) -> None:
         llm = self.llm
         settings = llm.source.settings if llm is not None else LlmSettings()
+        ai = self.ai_settings()
         self.enabled_box.setChecked(settings.enabled)
         self.url.setText(settings.base_url)
         self.model.setText(settings.model)
         self.input_price.setValue(settings.input_price)
         self.output_price.setValue(settings.output_price)
+        self.cached_price.setValue(ai.cached_input_price)
         self.login.setChecked(settings.include_login)
+        _select(self.preset, matching_preset(settings.base_url))
+        _select(self.style_box, ai.api_style)
+        _select(self.reasoning, ai.reasoning_effort)
         saved = self.has_key()
         self.key.clear()
         self.key.setPlaceholderText(
@@ -204,6 +296,19 @@ class LlmPanel(QWidget):
                 f"On: {settings.model}. Nothing is sent until you press Ask AI.{key}",
             )
         self._update()
+
+    def apply_preset(self, index: int) -> None:
+        """A preset only fills the fields; every field stays editable."""
+        value = self.preset.itemData(index)
+        preset = find_preset(value if isinstance(value, str) else "")
+        if preset is None:
+            return
+        self.url.setText(preset.base_url)
+        self.model.setText(preset.model)
+        self.input_price.setValue(preset.input_price)
+        self.cached_price.setValue(preset.cached_input_price)
+        self.output_price.setValue(preset.output_price)
+        self.status.setText(preset.note or f"{preset.name}: check the fields and press Save.")
 
     def form_settings(self) -> LlmSettings | str:
         """The settings in the form, or why they cannot be saved."""
@@ -224,6 +329,16 @@ class LlmPanel(QWidget):
         problem = url_problem(found.base_url) if found.enabled else ""
         return problem or found
 
+    def form_ai(self) -> AiSettings:
+        values: dict[str, Any] = self.ai_settings().model_dump()
+        values.update(
+            preset=_data(self.preset) or CUSTOM,
+            api_style=_data(self.style_box) or "auto",
+            reasoning_effort=_data(self.reasoning),
+            cached_input_price=self.cached_price.value(),
+        )
+        return AiSettings.model_validate(values)
+
     def save(self) -> bool:
         llm = self.llm
         if llm is None:
@@ -235,17 +350,21 @@ class LlmPanel(QWidget):
             return False
         key = self.key.text().strip()
         before = llm.source.settings
+        ai_before = self.ai_settings()
         try:
+            ai = self.form_ai()
             if key:
                 save_password(llm.credentials, llm.key_name, key)
             llm.source.save(found)
-        except (CredentialError, OSError) as error:
+            if self.ai_source is not None:
+                self.ai_source.save(ai)
+        except (CredentialError, OSError, ValueError) as error:
             self.status.setText(f"Not saved: {redact(str(error), (key,))}")
             return False
         llm.record(
             "llm settings changed",
-            before.model_dump(mode="json"),
-            found.model_dump(mode="json"),
+            {**before.model_dump(mode="json"), **ai_before.model_dump(exclude={"learned"})},
+            {**found.model_dump(mode="json"), **ai.model_dump(exclude={"learned"})},
         )
         if key:
             llm.record("llm api key saved", "", llm.key_name)
@@ -267,6 +386,68 @@ class LlmPanel(QWidget):
         self.show_settings()
         self.status.setText("The API key was removed.")
         return True
+
+    def check_connection(self) -> bool:
+        """Test connection with the fields as they are now (nothing is saved by it)."""
+        llm = self.llm
+        if llm is None:
+            self.status.setText(NO_CONTEXT)
+            return False
+        if self._asking:
+            return False
+        found = self.form_settings()
+        if isinstance(found, str):
+            self.status.setText(found)
+            return False
+        problem = url_problem(found.base_url)
+        if problem:
+            self.status.setText(problem)
+            return False
+        typed = self.key.text().strip()
+        try:
+            key = typed or read_password(llm.credentials, llm.key_name) or ""
+        except CredentialError as error:
+            self.status.setText(f"The API key could not be read: {error}")
+            return False
+        if not key and not local_endpoint(found.base_url):
+            self.status.setText("Type or save your API key first.")
+            return False
+        ai = self.form_ai()
+        client = AiClient(
+            connection_of(found, ai),
+            key,
+            transport=llm.transport,
+            learned=learned_options(ai),
+        )
+        self._asking = True
+        host = host_of(found.base_url)
+        self.status.setText(f"Testing {found.model} at {host}: one tiny question, no account data.")
+        self._update()
+
+        def job() -> None:
+            try:
+                result = probe(client)
+            except Exception as error:
+                text = redact(f"Test failed: {type(error).__name__}: {error}", (key,))
+                result = ProbeResult(False, text)
+            self.bridge.tested.emit(_Tested(result, dict(client.learned)))
+
+        llm.log("INFO", f"AI test connection to {found.model} at {host}")
+        self.start_job(job)
+        return True
+
+    def show_test(self, tested: object) -> None:
+        self._asking = False
+        if isinstance(tested, _Tested):
+            result = tested.result
+            self.status.setText(result.text)
+            if self.llm is not None:
+                level = "INFO" if result.ok else "WARNING"
+                self.llm.log(level, f"AI test connection: {result.text}")
+            if result.ok and self.ai_source is not None:
+                with contextlib.suppress(OSError):
+                    self.ai_source.save(with_learned(self.ai_source.settings, tested.learned))
+        self._update()
 
     def ask_ai(self) -> bool:
         llm = self.llm
@@ -346,5 +527,6 @@ class LlmPanel(QWidget):
     def _update(self) -> None:
         ready = self.llm is not None
         self.ask_button.setEnabled(ready and not self._asking)
+        self.test_button.setEnabled(ready and not self._asking)
         for widget in (self.save_button, self.forget_button):
             widget.setEnabled(ready)
