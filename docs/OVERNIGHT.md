@@ -21,6 +21,11 @@ Rules kept: every WCAG AA pair stays (tests), no image files, no Qt style proper
 not know (it would log a warning on every repaint), and a single 24 h run still gives the
 same soak report as before.
 
+PC log of 8 October 07:00 UTC (London open): the first Auto trades on the demo account.
+london_breakout placed both sides on EURUSD and GBPUSD; the sell side filled on both within
+two minutes and the buy side was cancelled at once (OCO). XAUUSD was refused by risk: 0.01
+lot would have risked 43 USD, above the 25 USD allowed at 0.25%.
+
 ## Check on the PC
 
 1. Update to 0.24.1 and look through Home, Signals, Positions, Risk and Settings in the dark
