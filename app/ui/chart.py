@@ -59,8 +59,7 @@ def time_ticks(bars: Bars, left: float, right: float, count: int = 6) -> list[tu
     step = max((last - first) // max(count - 1, 1), 1)
     pattern = "%d %b %Y" if bars.timeframe == "D1" else "%d %b %H:%M"
     return [
-        (index, bar_moment(bars, index).strftime(pattern))
-        for index in range(first, last + 1, step)
+        (index, bar_moment(bars, index).strftime(pattern)) for index in range(first, last + 1, step)
     ]
 
 
