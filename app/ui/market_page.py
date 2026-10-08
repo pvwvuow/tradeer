@@ -3,7 +3,8 @@ currency strength and the economic calendar.
 
 The analysis runs in its own thread (`MarketWatch`); snapshots arrive here through a queued
 Qt signal, so this page never waits for MT5. A card changes when its symbol is evaluated
-again (a closed bar, a calendar change) and says so while MT5 still loads its bars.
+again (a closed bar, a calendar change) and says so while MT5 still loads its bars. The
+chart's live bid and ask are read from the market watch every second (8 October 2026).
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ from app.ui.pages import PAGE_MARGIN, styled_label
 from app.ui.theme import ThemeTokens
 
 CARD_COLUMNS = 3
+QUOTE_MS = 1_000  # the chart's live price; the market watch reads MT5 every 2 seconds
 CALENDAR_COLUMNS = [
     "When (local)",
     "Countdown",
@@ -195,6 +197,9 @@ class MarketPage(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh_countdowns)
         self._timer.start(30_000)
+        self._quote_timer = QTimer(self)
+        self._quote_timer.timeout.connect(self._show_chart_quote)
+        self._quote_timer.start(QUOTE_MS)
         watchlist = load_watchlist(context.profile_dir) if context is not None else Watchlist()
         self.watchlist_edit.setText(", ".join(watchlist.symbols))
         self._make_cards(watchlist.symbols)
@@ -279,10 +284,25 @@ class MarketPage(QWidget):
             self._show_correlation(snapshot)
         if previous is None or previous.strength is not snapshot.strength:
             self._show_strength(snapshot)
+        self._show_chart_quote()
 
     def _chart_symbol_changed(self, symbol: str) -> None:
         snapshot = self.last_snapshot
         self.chart.set_analysis(snapshot.analyses.get(symbol) if snapshot is not None else None)
+        self._show_chart_quote()
+
+    def _show_chart_quote(self) -> None:
+        """The live bid and ask of the chart's symbol, as MT5 shows them (8 October 2026: the
+        chart showed only the last closed bar, up to 5 minutes old)."""
+        snapshot = self.context.watch.snapshot if self.context is not None else self.last_snapshot
+        if snapshot is None:
+            self.chart.set_quote(None, None)
+            return
+        quote = snapshot.quotes.get(self.chart_symbol.currentText())
+        if quote is None:
+            self.chart.set_quote(None, None)
+            return
+        self.chart.set_quote(quote.bid, quote.ask, int(quote.server_time))
 
     def _show_matrix(self, snapshot: MarketSnapshot) -> None:
         names = list(snapshot.analyses)

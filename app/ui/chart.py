@@ -1,15 +1,17 @@
 """Interactive candle chart (spec F3) on pyqtgraph: timeframe switch, zoom and pan, crosshair,
 EMA overlays, key levels, swing structure and session shading.
 
-The x axis counts bars (no gaps for nights and weekends); its labels show local time. Only
-the bars kept by the analysis are drawn (at most 600 per timeframe), and the y axis fits the
-visible bars. Since 7 October 2026 the prices sit on the right, like trading platforms, and
-a dotted line marks the last close with its price in a colored tag.
+The x axis counts bars (no gaps for nights and weekends); its labels show broker server time,
+as MT5 does. Only the bars kept by the analysis are drawn (at most 600 per timeframe), and
+the y axis fits the visible bars. Since 7 October 2026 the prices sit on the right, like
+trading platforms. Since 8 October 2026 the live bid (with its price in a tag) and the ask
+are drawn from the quote the market watch reads every 2 seconds, as MT5 draws them; before
+the first quote a dotted line marks the last close.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
@@ -47,7 +49,7 @@ SESSION_COLORS: dict[Session, tuple[int, int, int]] = {
 
 
 def time_ticks(bars: Bars, left: float, right: float, count: int = 6) -> list[tuple[int, str]]:
-    """About `count` evenly spaced labels (local time) for the visible bar indexes."""
+    """About `count` evenly spaced labels (broker time, as MT5) for the visible bar indexes."""
     if not len(bars):
         return []
     first = max(int(np.ceil(left)), 0)
@@ -57,9 +59,16 @@ def time_ticks(bars: Bars, left: float, right: float, count: int = 6) -> list[tu
     step = max((last - first) // max(count - 1, 1), 1)
     pattern = "%d %b %Y" if bars.timeframe == "D1" else "%d %b %H:%M"
     return [
-        (index, datetime.fromtimestamp(int(bars.time[index])).strftime(pattern))
-        for index in range(first, last + 1, step)
+        (index, bar_moment(bars, index).strftime(pattern)) for index in range(first, last + 1, step)
     ]
+
+
+def bar_moment(bars: Bars, index: int) -> datetime:
+    """A bar's open in broker server time, as MT5 labels its charts (8 October 2026: local
+    time made the candles look shifted against MT5). Local time when there is no server time."""
+    if len(bars.server_time) == len(bars):
+        return datetime.fromtimestamp(int(bars.server_time[index]), UTC)
+    return datetime.fromtimestamp(int(bars.time[index]))
 
 
 class CandleChart(QWidget):
@@ -71,6 +80,8 @@ class CandleChart(QWidget):
         self._timeframe = "H1"
         self._tokens: ThemeTokens = DARK
         self._items: list[Any] = []
+        self._price_items: list[Any] = []
+        self._quote: tuple[float, float, int] | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -129,8 +140,22 @@ class CandleChart(QWidget):
         return len(self._items)
 
     def set_analysis(self, analysis: SymbolAnalysis | None) -> None:
+        if analysis is None or self._analysis is None or analysis.symbol != self._analysis.symbol:
+            self._quote = None  # another symbol: its price comes with the next quote
         self._analysis = analysis
         self.redraw()
+
+    def set_quote(self, bid: float | None, ask: float | None, server_time: int = 0) -> None:
+        """The live price of the shown symbol (every market watch poll): moves the bid and ask
+        lines without drawing the candles again. None clears them."""
+        valid = bid is not None and ask is not None and 0 < bid <= ask
+        quote = (float(bid or 0.0), float(ask or 0.0), int(server_time)) if valid else None
+        if quote == self._quote:
+            return
+        self._quote = quote
+        if self._bars is not None and self._analysis is not None:
+            self._draw_last_price(self._bars, self._analysis.digits)
+            self._show_info()
 
     def set_timeframe(self, timeframe: str) -> None:
         self._timeframe = timeframe
@@ -153,6 +178,7 @@ class CandleChart(QWidget):
         for item in self._items:
             self.plot.removeItem(item)
         self._items = []
+        self._price_items = []
         analysis = self._analysis
         bars = analysis.bars.get(self._timeframe) if analysis is not None else None
         self._bars = bars if bars is not None and len(bars) else None
@@ -173,9 +199,21 @@ class CandleChart(QWidget):
         size = len(bars)
         self.plot.setXRange(max(size - VISIBLE_BARS, 0) - 0.5, size + 1.5, padding=0)
         self._update_ticks()
-        self.info.setText(
-            f"{analysis.symbol} {bars.timeframe}: {size} closed bars. Drag to pan, wheel to zoom.",
-        )
+        self._show_info()
+
+    def _show_info(self) -> None:
+        analysis, bars = self._analysis, self._bars
+        if analysis is None or bars is None:
+            return
+        text = f"{analysis.symbol} {bars.timeframe}: {len(bars)} closed bars"
+        if self._quote is not None:
+            bid, ask, server_time = self._quote
+            digits = analysis.digits
+            text += f", live bid {bid:,.{digits}f} ask {ask:,.{digits}f}"
+            if server_time:
+                moment = datetime.fromtimestamp(server_time, UTC).strftime("%H:%M:%S")
+                text += f" at {moment} broker time"
+        self.info.setText(f"{text}. Drag to pan, wheel to zoom.")
 
     # Drawing -----------------------------------------------------------------------------
     def _add(self, item: Any, ignore_bounds: bool = False) -> None:
@@ -207,19 +245,42 @@ class CandleChart(QWidget):
             self._add(pg.PlotDataItem(xs, ys, connect="pairs", pen=pg.mkPen(color, width=1)))
 
     def _draw_last_price(self, bars: Bars, digits: int) -> None:
-        """A dotted line at the last close, its price in a tag of the candle's color."""
-        last = float(bars.close[-1])
-        rising = bool(bars.close[-1] >= bars.open[-1])
-        color = self._tokens.profit if rising else self._tokens.loss
+        """The live bid in a tag and the ask as a dotted line, like MT5; before the first
+        quote a dotted line at the last close. Only these lines are drawn again."""
+        for item in self._price_items:
+            self.plot.removeItem(item)
+            if item in self._items:
+                self._items.remove(item)
+        self._price_items = []
+        close = float(bars.close[-1])
+        if self._quote is None:
+            rising = bool(bars.close[-1] >= bars.open[-1])
+            self._price_line(close, rising, f"{close:,.{digits}f}", Qt.PenStyle.DotLine)
+            return
+        bid, ask, _ = self._quote
+        rising = bid >= close
+        self._price_line(bid, rising, f"{bid:,.{digits}f}", Qt.PenStyle.SolidLine)
         line = pg.InfiniteLine(
-            pos=last,
+            pos=ask,
             angle=0,
             movable=False,
-            pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine),
-            label=f"{last:,.{digits}f}",
+            pen=pg.mkPen(self._tokens.loss, width=1, style=Qt.PenStyle.DotLine),
+        )
+        self._add(line, ignore_bounds=True)
+        self._price_items.append(line)
+
+    def _price_line(self, price: float, rising: bool, label: str, style: Qt.PenStyle) -> None:
+        color = self._tokens.profit if rising else self._tokens.loss
+        line = pg.InfiniteLine(
+            pos=price,
+            angle=0,
+            movable=False,
+            pen=pg.mkPen(color, width=1, style=style),
+            label=label,
             labelOpts={"position": 0.97, "color": self._tokens.accent_text, "fill": color},
         )
         self._add(line, ignore_bounds=True)
+        self._price_items.append(line)
 
     def _draw_emas(self, bars: Bars) -> None:
         x = np.arange(len(bars), dtype=np.float64)
@@ -309,7 +370,7 @@ class CandleChart(QWidget):
         self._v_line.setPos(index)
         self._h_line.setPos(point.y())
         digits = analysis.digits
-        moment = datetime.fromtimestamp(int(bars.time[index])).strftime("%a %d %b %H:%M")
+        moment = bar_moment(bars, index).strftime("%a %d %b %H:%M")
         self.info.setText(
             f"{moment}  O {bars.open[index]:,.{digits}f}  H {bars.high[index]:,.{digits}f}  "
             f"L {bars.low[index]:,.{digits}f}  C {bars.close[index]:,.{digits}f}  "
