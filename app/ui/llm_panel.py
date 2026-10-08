@@ -11,7 +11,7 @@ question that shows the model, the latency, whether JSON works and what a desk c
 
 Phase 18a (docs/AI_LAB_AGENT.md section 9): every setting lives in the AI Lab settings
 window (the gear on the page); the card itself keeps one status line, the question and
-Ask AI.
+Ask AI. `make_client` gives the AI Lab chat (18b) its client from the saved settings.
 """
 
 from __future__ import annotations
@@ -322,6 +322,31 @@ class LlmPanel(QWidget):
 
     def ai_settings(self) -> AiSettings:
         return self.ai_source.settings if self.ai_source is not None else AiSettings()
+
+    def make_client(self) -> AiClient | str:
+        """A client from the saved settings for the AI Lab chat, or why there is none."""
+        llm = self.llm
+        if llm is None:
+            return NO_CONTEXT
+        settings = llm.source.settings
+        if not settings.enabled:
+            return "The AI connection is off: turn it on in AI settings (the gear) and Save."
+        problem = url_problem(settings.base_url)
+        if problem:
+            return problem
+        try:
+            key = read_password(llm.credentials, llm.key_name) or ""
+        except CredentialError as error:
+            return f"The API key could not be read: {error}"
+        if not key and not local_endpoint(settings.base_url):
+            return "Save your API key first (AI settings, the gear at the top)."
+        ai = self.ai_settings()
+        return AiClient(
+            connection_of(settings, ai),
+            key,
+            transport=llm.transport,
+            learned=learned_options(ai),
+        )
 
     def show_settings(self) -> None:
         llm = self.llm
