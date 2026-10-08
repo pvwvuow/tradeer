@@ -1,4 +1,8 @@
-"""The AI Lab page (spec C13, F3.9): the loop with an outside AI, in four steps.
+"""The AI Lab page (spec C13, F3.9, docs/AI_LAB_AGENT.md).
+
+Two tabs. **Chat** (Phase 18b): ask in your own words; the agent reads the trades and the
+settings with read-only tools, shows each step and answers. **Manual**: the loop with an
+outside AI, in four steps.
 
 1. Export the trades and a report with an analysis prompt for the AI of your choice, or
    (optional, off by default) ask your own OpenAI-compatible endpoint from here: only a
@@ -9,7 +13,7 @@
 4. Activate it, only in Paper or Analysis-only mode: the settings are saved, a new config
    version (created by "ai_suggestion") and an audit row are written.
 
-The gear at the top opens the AI Lab settings window (Phase 18a, docs/AI_LAB_AGENT.md).
+The gear at the top opens the AI Lab settings window (Phase 18a).
 An AI answer is advice only, and this page never sends real orders.
 """
 
@@ -37,10 +41,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from app.ai.agent import Tool
+from app.ai.lab_tools import LabData, lab_tools
 from app.analytics.ai_export import PROMPT, ExportData, rejected_counts, select_trades, write_export
 from app.analytics.ai_import import (
     RunSummary,
@@ -64,10 +71,11 @@ from app.core.execution_settings import ExecutionSettingsSource
 from app.core.strategy_settings import StrategySettings, StrategySettingsSource
 from app.storage.repositories import Store
 from app.strategies.registry import STRATEGIES
+from app.ui.ai_chat import ChatPanel
 from app.ui.analytics_page import AnalyticsContext, start_balance
 from app.ui.backtest_page import BacktestContext
 from app.ui.llm_panel import SETTINGS_TIP, LlmPanel
-from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
+from app.ui.pages import PAGE_MARGIN, card_frame, page_header_for, styled_label
 from app.ui.tables import fill_table, make_table
 
 ALL = "All"
@@ -182,25 +190,26 @@ class AiLabPage(QWidget):
         self.bridge.finished.connect(self.show_comparison, Qt.ConnectionType.QueuedConnection)
         self.bridge.failed.connect(self.show_failure, Qt.ConnectionType.QueuedConnection)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        outer.addWidget(scroll_area)
-        body = QWidget()
-        scroll_area.setWidget(body)
-        layout = QVBoxLayout(body)
-        layout.setContentsMargins(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN)
-        layout.setSpacing(16)
-        header = QHBoxLayout()
-        header.addWidget(styled_label("AI Lab", "title"))
-        header.addStretch(1)
+        outer.setContentsMargins(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN)
+        outer.setSpacing(12)
+        self.header = page_header_for("ai_lab")
         self.settings_button = QPushButton("\u2699  Settings")
         self.settings_button.setObjectName("AiLabSettings")
         self.settings_button.setAccessibleName("AI Lab settings")
         self.settings_button.setToolTip(SETTINGS_TIP)
-        header.addWidget(self.settings_button)
-        layout.addLayout(header)
+        self.header.add_action(self.settings_button)
+        outer.addWidget(self.header)
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("AiLabTabs")
+        outer.addWidget(self.tabs, 1)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        scroll_area.setWidget(body)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(16)
         layout.addWidget(styled_label(INTRO, "muted", wrap=True))
         layout.addWidget(self._build_export())
         self.llm_panel = LlmPanel(self.llm_data, self.take_answer)
@@ -210,6 +219,9 @@ class AiLabPage(QWidget):
         layout.addWidget(self._build_test())
         layout.addWidget(self._build_activate())
         layout.addStretch(1)
+        self.chat = ChatPanel(self.llm_panel.make_client, self.agent_tools)
+        self.tabs.addTab(self.chat, "Chat")
+        self.tabs.addTab(scroll_area, "Manual (export and paste)")
         if context is None:
             for button in (self.export_button, self.check_button):
                 button.setEnabled(False)
@@ -219,6 +231,24 @@ class AiLabPage(QWidget):
     def open_settings(self) -> None:
         """The AI Lab settings window (the gear)."""
         self.llm_panel.open_settings()
+
+    def agent_tools(self) -> list[Tool]:
+        """The chat's read-only tools over this page's data (none without a context)."""
+        context = self.context
+        if context is None:
+            return []
+        strategies = context.strategies
+        execution = context.execution
+        return lab_tools(
+            LabData(
+                trades=context.trades,
+                settings=lambda: strategies.settings,
+                mode=lambda: execution.mode.label,
+                balance=context.balance,
+                currency=context.currency,
+                backtests=context.backtests,
+            ),
+        )
 
     # 1. Export ----------------------------------------------------------------------------
     def _build_export(self) -> QWidget:
