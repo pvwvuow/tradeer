@@ -2,6 +2,10 @@
 
 `None` as the result means "not applied", with the reason in the detail (for example a
 probability that needs more history). Any `False` filters the signal out.
+
+8 October 2026: a channel breakout sold EURUSD on top of the London breakout's open sell,
+doubling the risk on one idea. Since then one symbol and side holds one trade at a time,
+whichever strategy found it first.
 """
 
 from __future__ import annotations
@@ -123,6 +127,9 @@ class FilterInput:
     trade_mode: SymbolTradeMode
     duplicate_of: str = ""
     hours_since_losses: float | None = None  # since the newest loss of the losing streak
+    # Other strategies' trades on this symbol and side (open, sent or waiting to be sent)
+    same_side: int = 0
+    same_side_of: str = ""
 
 
 def _minutes(text: str) -> int:
@@ -217,6 +224,14 @@ def run_filters(data: FilterInput, settings: FilterSettings) -> list[TraceStep]:
         data.open_positions,
         0,
         f"{data.open_positions} already open" if data.open_positions else "none open",
+    )
+    side = "buy" if signal.direction is Direction.LONG else "sell"
+    add(
+        "one trade per symbol and side (all strategies)",
+        data.same_side == 0,
+        data.same_side,
+        0,
+        f"already a {side} by {data.same_side_of}" if data.same_side else f"no other {side}",
     )
     waited = data.bars_since_loss
     add(
