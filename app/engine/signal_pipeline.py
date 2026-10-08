@@ -48,6 +48,16 @@ FILTERED_RISK_NOTE = "not sized: the signal was filtered out"
 EXECUTION_NOTE = "approve to send it (Paper or Semi-auto mode); unapproved signals expire"
 NO_EXECUTION_NOTE = "No execution engine is running: signal only"
 OCO_REASON = "the other side of the breakout filled (OCO)"
+# A trade on its way or open: one per symbol and side across strategies (8 October 2026)
+LIVE_STATES = frozenset(
+    {
+        SignalState.PENDING_APPROVAL,
+        SignalState.APPROVED,
+        SignalState.SENT,
+        SignalState.FILLED,
+        SignalState.MANAGED,
+    },
+)
 
 Log = Callable[[str, str], None]
 Listener = Callable[["SignalsSnapshot"], None]
@@ -476,6 +486,7 @@ class SignalPipeline:
         fresh = analysis.quality.ok and age <= seconds + FRESH_GRACE_SECONDS
         end = history.streak_end
         since_streak = (signal.created_at - end) / 3600.0 if end is not None else None
+        same_side = self._same_side(signal)
         data = FilterInput(
             signal=signal,
             now=now,
@@ -495,6 +506,8 @@ class SignalPipeline:
             data_text=f"signal bar closed {age / 60:.0f} min ago; {analysis.quality.text()}",
             trade_mode=spec.trade_mode if spec is not None else SymbolTradeMode.UNKNOWN,
             duplicate_of=other.id if other is not None else "",
+            same_side=len(same_side),
+            same_side_of=", ".join(sorted({item.strategy for item in same_side})),
         )
         trace.extend(run_filters(data, settings))
         trace.add(
@@ -642,6 +655,19 @@ class SignalPipeline:
             and record.signal.strategy == signal.strategy
             and record.signal.symbol == signal.symbol
         )
+
+    def _same_side(self, signal: Signal) -> list[Signal]:
+        """Other strategies' signals on this symbol and side that are waiting, on their way
+        or open: a second one would double the risk on the same move."""
+        return [
+            record.signal
+            for record in self._records.values()
+            if record.signal.state in LIVE_STATES
+            and record.signal.strategy != signal.strategy
+            and record.signal.symbol == signal.symbol
+            and record.signal.direction is signal.direction
+            and record.signal.id != signal.id
+        ]
 
     def _finish(self, signal_id: str, state: SignalState, now: float, reason: str) -> bool:
         record = self._records.get(signal_id)
