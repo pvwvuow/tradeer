@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/pvwvuow/tradeer/compare/v0.28.0...v0.29.0) (2026-10-08)
+
+
+### Features
+
+* AI Lab chat with an agent that reads the app (18b + 18c part 1) ([#95](https://github.com/pvwvuow/tradeer/issues/95)) ([93cfca8](https://github.com/pvwvuow/tradeer/commit/93cfca83b954ae0a4b9a3f72b3b73ed3547401f5))
+
 ## [0.28.0](https://github.com/pvwvuow/tradeer/compare/v0.27.1...v0.28.0) (2026-10-08)
 
 
