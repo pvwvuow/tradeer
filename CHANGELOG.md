@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.1](https://github.com/pvwvuow/tradeer/compare/v0.25.0...v0.25.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **chart:** live bid and ask lines like MT5, and time labels in broker time ([#74](https://github.com/pvwvuow/tradeer/issues/74)) ([28ad3e4](https://github.com/pvwvuow/tradeer/commit/28ad3e4e49d09ac1b92c53a60119d0b3aad105c4))
+
 ## [0.25.0](https://github.com/pvwvuow/tradeer/compare/v0.24.1...v0.25.0) (2026-10-07)
 
 
