@@ -8,6 +8,10 @@ usual check, backtest and Paper-only activation decide what happens with it.
 Phase 17a (docs/AI_DESK.md section 8) adds the provider presets (xAI Grok first), the API
 style, the reasoning effort, the cached-input price and Test connection: one tiny fixed
 question that shows the model, the latency, whether JSON works and what a desk cycle costs.
+
+Phase 18a (docs/AI_LAB_AGENT.md section 9): every setting lives in the AI Lab settings
+window (the gear on the page); the card itself keeps one status line, the question and
+Ask AI.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QHBoxLayout,
     QLineEdit,
@@ -75,6 +80,8 @@ NOTE = (
     "goes to step 2 and nothing changes until you test and activate it."
 )
 NO_CONTEXT = "The AI connection needs the local database and the settings."
+SETTINGS_TITLE = "AI Lab settings"
+SETTINGS_TIP = "Provider, model, API key, prices, reasoning and Test connection"
 Job = Callable[[], None]
 
 
@@ -154,6 +161,43 @@ class LlmPanel(QWidget):
         card, layout = card_frame()
         outer.addWidget(card)
         layout.addWidget(styled_label("Or ask your own AI from here (optional)", "heading"))
+        self.summary = styled_label(NO_CONTEXT, "muted", wrap=True)
+        self.summary.setObjectName("AiLlmSummary")
+        layout.addWidget(self.summary)
+        self.question = QLineEdit()
+        self.question.setObjectName("AiLlmQuestion")
+        self.question.setPlaceholderText(DEFAULT_QUESTION)
+        self.ask_button = QPushButton("Ask AI")
+        self.ask_button.setObjectName("AiLlmAsk")
+        self.ask_button.setProperty("variant", "accent")
+        self.ask_button.clicked.connect(self.ask_ai)
+        self.settings_button = QPushButton("AI settings")
+        self.settings_button.setObjectName("AiLlmOpenSettings")
+        self.settings_button.setToolTip(SETTINGS_TIP)
+        self.settings_button.clicked.connect(self.open_settings)
+        self._row(
+            layout,
+            styled_label("Question", "muted"),
+            self.question,
+            self.ask_button,
+            self.settings_button,
+        )
+        self.status = styled_label(NO_CONTEXT, "muted", wrap=True)
+        self.status.setObjectName("AiLlmStatus")
+        layout.addWidget(self.status)
+        self.settings_dialog = self._build_dialog()
+        self.show_settings()
+
+    def _build_dialog(self) -> QDialog:
+        """Every connection setting, in one window opened from the page's gear."""
+        dialog = QDialog(self)
+        dialog.setObjectName("AiLabSettingsDialog")
+        dialog.setWindowTitle(SETTINGS_TITLE)
+        dialog.setMinimumWidth(760)
+        dialog_layout = QVBoxLayout(dialog)
+        card, layout = card_frame()
+        dialog_layout.addWidget(card)
+        layout.addWidget(styled_label("AI connection", "heading"))
         layout.addWidget(styled_label(NOTE, "muted", wrap=True))
         presets = [("Custom", CUSTOM), *((preset.name, preset.key) for preset in PRESETS)]
         self.preset = _combo("AiLlmPreset", "Provider preset", presets)
@@ -183,12 +227,6 @@ class LlmPanel(QWidget):
         self.output_price = _price_box("AiLlmOutputPrice")
         self.login = QCheckBox("Send the account number")
         self.login.setObjectName("AiLlmLogin")
-        self.save_button = QPushButton("Save")
-        self.save_button.setObjectName("AiLlmSave")
-        self.save_button.clicked.connect(self.save)
-        self.forget_button = QPushButton("Remove key")
-        self.forget_button.setObjectName("AiLlmForget")
-        self.forget_button.clicked.connect(self.forget_key)
         self._row(
             layout,
             styled_label("API key", "muted"),
@@ -197,8 +235,6 @@ class LlmPanel(QWidget):
             self.input_price,
             self.output_price,
             self.login,
-            self.save_button,
-            self.forget_button,
         )
         styles = [(name, style.value) for style, name in STYLE_NAMES.items()]
         self.style_box = _combo("AiLlmStyle", "API style", styles)
@@ -212,10 +248,6 @@ class LlmPanel(QWidget):
             "AiLlmCachedPrice",
             "USD per one million cached input tokens (0 = the input price)",
         )
-        self.test_button = QPushButton("Test connection")
-        self.test_button.setObjectName("AiLlmTest")
-        self.test_button.setToolTip("Sends one tiny fixed question, no account data.")
-        self.test_button.clicked.connect(self.check_connection)
         self._row(
             layout,
             styled_label("API style", "muted"),
@@ -224,20 +256,31 @@ class LlmPanel(QWidget):
             self.reasoning,
             styled_label("Cached input per 1M", "muted"),
             self.cached_price,
-            self.test_button,
         )
-        self.question = QLineEdit()
-        self.question.setObjectName("AiLlmQuestion")
-        self.question.setPlaceholderText(DEFAULT_QUESTION)
-        self.ask_button = QPushButton("Ask AI")
-        self.ask_button.setObjectName("AiLlmAsk")
-        self.ask_button.setProperty("variant", "accent")
-        self.ask_button.clicked.connect(self.ask_ai)
-        self._row(layout, styled_label("Question", "muted"), self.question, self.ask_button)
-        self.status = styled_label(NO_CONTEXT, "muted", wrap=True)
-        self.status.setObjectName("AiLlmStatus")
-        layout.addWidget(self.status)
-        self.show_settings()
+        self.save_button = QPushButton("Save")
+        self.save_button.setObjectName("AiLlmSave")
+        self.save_button.setProperty("variant", "primary")
+        self.save_button.clicked.connect(self.save)
+        self.test_button = QPushButton("Test connection")
+        self.test_button.setObjectName("AiLlmTest")
+        self.test_button.setToolTip("Sends one tiny fixed question, no account data.")
+        self.test_button.clicked.connect(self.check_connection)
+        self.forget_button = QPushButton("Remove key")
+        self.forget_button.setObjectName("AiLlmForget")
+        self.forget_button.clicked.connect(self.forget_key)
+        close = QPushButton("Close")
+        close.setObjectName("AiLlmClose")
+        close.clicked.connect(dialog.close)
+        buttons = QHBoxLayout()
+        for button in (self.save_button, self.test_button, self.forget_button):
+            buttons.addWidget(button)
+        buttons.addStretch(1)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        self.dialog_status = styled_label("", "muted", wrap=True)
+        self.dialog_status.setObjectName("AiLlmDialogStatus")
+        layout.addWidget(self.dialog_status)
+        return dialog
 
     @staticmethod
     def _row(layout: QVBoxLayout, *widgets: QWidget) -> None:
@@ -246,9 +289,22 @@ class LlmPanel(QWidget):
             row.addWidget(widget)
         layout.addLayout(row)
 
+    def _say(self, text: str) -> None:
+        """One status for the card and the settings window."""
+        self.status.setText(text)
+        self.dialog_status.setText(text)
+
     @property
     def asking(self) -> bool:
         return self._asking
+
+    def open_settings(self) -> None:
+        """The AI Lab settings window, with the saved values (unsaved edits are dropped)."""
+        if not self.settings_dialog.isVisible():
+            self.show_settings()
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
 
     def attach(self, llm: LlmContext) -> None:
         self.llm = llm
@@ -287,14 +343,18 @@ class LlmPanel(QWidget):
             "saved (type a new one to replace it)" if saved else "kept in Credential Manager",
         )
         if llm is None:
-            self.status.setText(NO_CONTEXT)
+            self.summary.setText(NO_CONTEXT)
+            self._say(NO_CONTEXT)
         elif not settings.enabled:
-            self.status.setText("Off: nothing is ever sent.")
+            self.summary.setText("Off. Turn it on in AI settings (the gear at the top).")
+            self._say("Off: nothing is ever sent.")
         else:
-            key = "" if saved or local_endpoint(settings.base_url) else " Save your API key."
-            self.status.setText(
-                f"On: {settings.model}. Nothing is sent until you press Ask AI.{key}",
-            )
+            local = local_endpoint(settings.base_url)
+            key = "" if saved or local else " Save your API key."
+            where = host_of(settings.base_url)
+            state = "key saved" if saved else "local, no key" if local else "no key yet"
+            self.summary.setText(f"On: {settings.model} at {where}, {state}.")
+            self._say(f"On: {settings.model}. Nothing is sent until you press Ask AI.{key}")
         self._update()
 
     def apply_preset(self, index: int) -> None:
@@ -308,7 +368,7 @@ class LlmPanel(QWidget):
         self.input_price.setValue(preset.input_price)
         self.cached_price.setValue(preset.cached_input_price)
         self.output_price.setValue(preset.output_price)
-        self.status.setText(preset.note or f"{preset.name}: check the fields and press Save.")
+        self._say(preset.note or f"{preset.name}: check the fields and press Save.")
 
     def form_settings(self) -> LlmSettings | str:
         """The settings in the form, or why they cannot be saved."""
@@ -342,11 +402,11 @@ class LlmPanel(QWidget):
     def save(self) -> bool:
         llm = self.llm
         if llm is None:
-            self.status.setText(NO_CONTEXT)
+            self._say(NO_CONTEXT)
             return False
         found = self.form_settings()
         if isinstance(found, str):
-            self.status.setText(found)
+            self._say(found)
             return False
         key = self.key.text().strip()
         before = llm.source.settings
@@ -359,7 +419,7 @@ class LlmPanel(QWidget):
             if self.ai_source is not None:
                 self.ai_source.save(ai)
         except (CredentialError, OSError, ValueError) as error:
-            self.status.setText(f"Not saved: {redact(str(error), (key,))}")
+            self._say(f"Not saved: {redact(str(error), (key,))}")
             return False
         llm.record(
             "llm settings changed",
@@ -380,37 +440,37 @@ class LlmPanel(QWidget):
         try:
             llm.credentials.delete(llm.key_name)
         except CredentialError as error:
-            self.status.setText(f"The key was not removed: {error}")
+            self._say(f"The key was not removed: {error}")
             return False
         llm.record("llm api key removed", llm.key_name, "")
         self.show_settings()
-        self.status.setText("The API key was removed.")
+        self._say("The API key was removed.")
         return True
 
     def check_connection(self) -> bool:
         """Test connection with the fields as they are now (nothing is saved by it)."""
         llm = self.llm
         if llm is None:
-            self.status.setText(NO_CONTEXT)
+            self._say(NO_CONTEXT)
             return False
         if self._asking:
             return False
         found = self.form_settings()
         if isinstance(found, str):
-            self.status.setText(found)
+            self._say(found)
             return False
         problem = url_problem(found.base_url)
         if problem:
-            self.status.setText(problem)
+            self._say(problem)
             return False
         typed = self.key.text().strip()
         try:
             key = typed or read_password(llm.credentials, llm.key_name) or ""
         except CredentialError as error:
-            self.status.setText(f"The API key could not be read: {error}")
+            self._say(f"The API key could not be read: {error}")
             return False
         if not key and not local_endpoint(found.base_url):
-            self.status.setText("Type or save your API key first.")
+            self._say("Type or save your API key first.")
             return False
         ai = self.form_ai()
         client = AiClient(
@@ -421,7 +481,7 @@ class LlmPanel(QWidget):
         )
         self._asking = True
         host = host_of(found.base_url)
-        self.status.setText(f"Testing {found.model} at {host}: one tiny question, no account data.")
+        self._say(f"Testing {found.model} at {host}: one tiny question, no account data.")
         self._update()
 
         def job() -> None:
@@ -440,7 +500,7 @@ class LlmPanel(QWidget):
         self._asking = False
         if isinstance(tested, _Tested):
             result = tested.result
-            self.status.setText(result.text)
+            self._say(result.text)
             if self.llm is not None:
                 level = "INFO" if result.ok else "WARNING"
                 self.llm.log(level, f"AI test connection: {result.text}")
@@ -452,41 +512,41 @@ class LlmPanel(QWidget):
     def ask_ai(self) -> bool:
         llm = self.llm
         if llm is None:
-            self.status.setText(NO_CONTEXT)
+            self._say(NO_CONTEXT)
             return False
         if self._asking:
             return False
         settings = llm.source.settings
         if not settings.enabled:
-            self.status.setText("The AI connection is off: tick it and press Save first.")
+            self._say("The AI connection is off: turn it on in AI settings and press Save.")
             return False
         problem = url_problem(settings.base_url)
         if problem:
-            self.status.setText(problem)
+            self._say(problem)
             return False
         try:
             key = read_password(llm.credentials, llm.key_name) or ""
         except CredentialError as error:
-            self.status.setText(f"The API key could not be read: {error}")
+            self._say(f"The API key could not be read: {error}")
             return False
         if not key and not local_endpoint(settings.base_url):
-            self.status.setText("Save your API key first.")
+            self._say("Save your API key first (AI settings).")
             return False
         now = time.time()
         try:
             data = self.data(now)
             if data is None:
-                self.status.setText(NO_CONTEXT)
+                self._say(NO_CONTEXT)
                 return False
             login = llm.login() if settings.include_login else None
             summary = compact_summary(data, now, login=login, secrets=(key,))
         except Exception as error:
-            self.status.setText(f"The summary failed: {type(error).__name__}: {error}")
+            self._say(f"The summary failed: {type(error).__name__}: {error}")
             return False
         messages = build_messages(summary, self.question.text())
         transport = llm.transport
         self._asking = True
-        self.status.setText(f"Asking {settings.model}: only the summary is sent...")
+        self._say(f"Asking {settings.model}: only the summary is sent...")
         self._update()
 
         def job() -> None:
@@ -511,7 +571,7 @@ class LlmPanel(QWidget):
             if self.llm is not None:
                 self.llm.log("INFO", f"AI answer from {answer.model}: {usage}")
             result = self.deliver(answer.text)
-            self.status.setText(
+            self._say(
                 f"Answer from {answer.model} in {answer.seconds:.0f}s ({usage}). {result} "
                 "Advice only: nothing changes until you test and activate it.",
             )
@@ -519,7 +579,7 @@ class LlmPanel(QWidget):
 
     def show_failure(self, text: str) -> None:
         self._asking = False
-        self.status.setText(f"The AI request failed: {text}")
+        self._say(f"The AI request failed: {text}")
         if self.llm is not None:
             self.llm.log("WARNING", f"AI request failed: {text}")
         self._update()
