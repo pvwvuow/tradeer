@@ -12,7 +12,8 @@ The PC is off overnight, so nothing here can be tried on it before the morning.
 | 4 | One release with all of it (0.24.0) | #68 | released |
 | 5 | PC log of 7 Oct: the demo test's 26 trades were in the daily report of 6 Oct and counted toward the trades-per-day limit (Auto would refuse signals until midnight); now they count nowhere (0.24.1) | #70 | released |
 | 6 | Strategy lab (7 Oct evening): three new strategies (range_reversion, channel_breakout, ema_momentum, off until turned on), the Strategy lab (demo) risk profile and a By strategy review in every report; see STRATEGY_LAB.md (0.25.0) | #72 | released |
-| 7 | 8 Oct: the chart's prices looked different from MT5. The tag showed the last closed bar's close and the times were local; now the live bid (tag) and ask lines move every second and the times are broker time, as in MT5 (0.25.1) | #74 | merged |
+| 7 | 8 Oct: the chart's prices looked different from MT5. The tag showed the last closed bar's close and the times were local; now the live bid (tag) and ask lines move every second and the times are broker time, as in MT5 (0.25.1) | #74 | released |
+| 8 | 8 Oct: the Dashboard lists were squeezed and showed only 8 signals. The page now scrolls; open positions and signals are full-width lists of 10 rows a page with Previous and Next, every signal with its strategy, side, prices and why it was or was not traded, and a filter (all, traded, waiting, not traded) (0.25.2) | #81 | merged |
 
 Rules kept: the spec palette and every WCAG AA pair stay (tests), no image files, no Qt
 style property Qt does not know (it would log a warning on every repaint), and a single 24 h
@@ -33,3 +34,5 @@ run still gives the same soak report as before.
    Strategy lab (demo), Use this profile, Save. Then leave Auto on during London and New York.
 7. 0.25.1: Market > Chart next to the same MT5 chart: the bid tag should match MT5's bid
    within a second or two, and the time labels should match MT5's.
+8. 0.25.2: Dashboard: scroll down to Open positions and Latest signals, page with Next,
+   try the filter (Not traded shows why each signal was skipped) and hover a row.

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.2](https://github.com/pvwvuow/tradeer/compare/v0.25.1...v0.25.2) (2026-10-08)
+
+
+### Bug Fixes
+
+* **dashboard:** scrollable page, paged positions and signals lists ([#81](https://github.com/pvwvuow/tradeer/issues/81)) ([c7e91fd](https://github.com/pvwvuow/tradeer/commit/c7e91fd908c23aa4942c629d036765b2b48f1c06))
+
 ## [0.25.1](https://github.com/pvwvuow/tradeer/compare/v0.25.0...v0.25.1) (2026-10-08)
 
 
