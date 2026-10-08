@@ -1,28 +1,33 @@
-# Faster build, release and publish (6 October 2026)
+# Faster CI, version 2 (8 October 2026)
 
-Until 0.23.4 one fix ran the whole test suite five times and the build three times before
-its release was published (about 75 minutes):
+Measured on 8 October: a docs-only PR (#86) took 30+ minutes, with a Linux segfault (exit
+139) and a Windows `ci` job hung for 20 minutes. Every PR, even docs, ran everything:
 
-| Stage | Before | After |
+| Stage | Now | Version 2 |
 |---|---|---|
-| Fix PR | tests, ci, then build after ci (about 20 min) | tests, ci and build in parallel (about 12 min) |
-| Merge to main | tests and ci again | nothing (release-please only, on Linux) |
-| Release PR | no CI until a docs commit, then everything again (about 20 min) | CI starts by itself, jobs skipped (seconds), merges by itself |
-| Publish | check.ps1 and the clean-install test again, then the build (about 25 min) | build, self-check, pack and upload (about 12 min) |
+| Docs-only PR | Linux tests + Windows lint/mypy/tests (~9 min) + build after ci (~10 min): ~20 min | `changes` sees docs only, the three jobs are skipped: under 1 min |
+| Code PR | ~20 min, build waits for ci | ci and build in parallel: ~10 min (the build is the longest part) |
+| Install | `pip install` of PySide6, lightgbm, PyInstaller... on every job (~2 min on Windows) | `uv` with a cache: ~15 s |
+| Lint and mypy | on Windows (slow start) | on Linux, mypy with `--platform win32` |
+| Tests | one process, one crash kills the run | `pytest-xdist` workers (`-n auto`), a crashed worker only fails its test |
+| Hung job | 30 min timeout | 15 min (`ci`), 12 min (Linux), plus the 5 min per-test timeout |
+| Release PR | needs a commit to start CI, then everything again | skipped in seconds (and auto-merge with the token) |
 
-`release.ps1` and `build.ps1` already work the new way (the publish job no longer runs the
-checks and the clean-install test a second time). The rest needs three changes by hand,
-because the bot's GitHub token may not change workflows:
+Already in the repo (no hand work): `pytest-xdist` and `-n auto` in pyproject.toml,
+`check.ps1 -SkipInstall -SkipLint`, `build.ps1 -SkipInstall`.
 
-1. Copy `ci.yml` and `release.yml` from this folder over `.github/workflows/ci.yml` and
-   `.github/workflows/release.yml` (GitHub: open the file, Edit, paste, Commit to main).
-2. Create a fine-grained personal access token for this repository only, with Contents and
-   Pull requests: Read and write. Save it as the repository secret `RELEASE_PLEASE_TOKEN`
-   (Settings > Secrets and variables > Actions). Release PRs made with it run CI.
-3. Settings > General > Pull Requests: tick Allow auto-merge.
+## What you do once (5 minutes, GitHub website)
 
-Without the token everything still works as before: the release PR then waits for a commit
-that starts its CI and for a merge by hand.
+1. Open `.github/workflows/ci.yml` on GitHub, Edit, replace everything with
+   `scripts/ci/workflows/ci.yml` from this folder, Commit to main. Same for `release.yml`.
+2. Optional, for releases without waiting: a fine-grained token for this repository only
+   (Contents and Pull requests: Read and write) saved as the secret `RELEASE_PLEASE_TOKEN`,
+   and Settings > General > Allow auto-merge.
 
-The 0.23.4 publish hung in its second test run and uploaded nothing, so 0.23.5 carries its
-fix (and pytest-timeout: a hung test now fails after 5 minutes).
+The required checks keep their names (`ci`, `build`, `Tests (Linux, Qt offscreen)`), so the
+branch protection needs no change. A skipped job counts as passed; if the `changes` job
+itself fails, the three jobs run anyway, so a broken filter never lets untested code in.
+
+If `mypy --platform win32` reports something on Linux that Windows did not, remove
+`--platform win32` from the Linux job and run `check.ps1 -SkipInstall` (with lint) on
+Windows instead.
