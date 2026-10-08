@@ -1,7 +1,13 @@
 #Requires -Version 7
-# Install, lint, type-check and test. Called by .github/workflows/ci.yml and by release.ps1.
+# Install, lint, type-check and test. Called by .github/workflows/ci.yml.
 # Every check runs even after an earlier one failed, and the output of a failed check is
 # repeated as a GitHub annotation, so the reason is visible without opening the job log.
+# -SkipInstall: the workflow installed the project already (uv, cached).
+# -SkipLint: ruff and mypy ran in the Linux job (CI version 2, scripts/ci/workflows).
+param(
+    [switch]$SkipInstall,
+    [switch]$SkipLint
+)
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -39,13 +45,19 @@ function Invoke-Check([string]$Name, [scriptblock]$Command) {
     }
 }
 
-Invoke-Step "Upgrade pip" { python -m pip install --upgrade pip }
-Invoke-Step "Install" { python -m pip install -e ".[dev]" }
-Invoke-Check "Ruff lint" { ruff check --output-format=concise . }
-Invoke-Check "Ruff format" { ruff format --diff . }
-Invoke-Check "Mypy" { mypy }
+if (-not $SkipInstall) {
+    Invoke-Step "Upgrade pip" { python -m pip install --upgrade pip }
+    Invoke-Step "Install" { python -m pip install -e ".[dev]" }
+}
+if (-not $SkipLint) {
+    Invoke-Check "Ruff lint" { ruff check --output-format=concise . }
+    Invoke-Check "Ruff format" { ruff format --diff . }
+    Invoke-Check "Mypy" { mypy }
+}
 
 # Pytest streams its output; tests/conftest.py writes the annotations for failed tests.
+# It runs in parallel workers (pyproject: -n auto); a crashed worker is replaced and only
+# its test fails, instead of the whole run.
 Write-Host "::group::Pytest"
 $global:LASTEXITCODE = 0
 pytest --cov=app --cov-report=xml --cov-report=term-missing
