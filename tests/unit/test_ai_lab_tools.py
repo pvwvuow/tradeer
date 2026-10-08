@@ -35,6 +35,10 @@ def test_every_tool_has_a_name_a_description_and_a_step_title() -> None:
         "strategy_settings",
         "filter_settings",
         "backtests",
+        "signals",
+        "signal",
+        "logs",
+        "log_summary",
     ]
     for tool in found.values():
         assert tool.description and tool.title
@@ -65,3 +69,9 @@ def test_settings_show_values_limits_and_meaning() -> None:
     assert run("strategy_settings", strategy="nope").startswith("Unknown strategy nope")
     assert "max_spread_atr = 0.25" in run("filter_settings")
     assert "EURUSD trend_pullback" in run("backtests")
+
+
+def test_without_signals_or_logs_the_tools_say_so() -> None:
+    assert run("signals") == "No signals match."
+    assert run("logs").startswith("No log lines at WARNING or above")
+    assert run("log_summary").startswith("No log lines in the last 24 h")
