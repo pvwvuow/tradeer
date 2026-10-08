@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/pvwvuow/tradeer/compare/v0.29.0...v0.30.0) (2026-10-08)
+
+
+### Features
+
+* AI Lab agent reads signals, decision traces and logs (18c part 2) ([#97](https://github.com/pvwvuow/tradeer/issues/97)) ([6443545](https://github.com/pvwvuow/tradeer/commit/6443545b618372426a7d54814dcb483234e472f9))
+
 ## [0.29.0](https://github.com/pvwvuow/tradeer/compare/v0.28.0...v0.29.0) (2026-10-08)
 
 
