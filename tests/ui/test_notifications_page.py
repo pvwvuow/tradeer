@@ -1,5 +1,6 @@
 """Settings > Notifications and the tray (spec C14)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,11 @@ def test_saving_keeps_the_token_in_the_credential_store(qtbot: QtBot, tmp_path: 
     assert settings.chat_ids == [42, 43] and settings.pin_matches("2468")
     assert context.credentials.get("default/telegram-bot-token") == "123:secret"
     text = (tmp_path / "notifications.json").read_text()
-    assert "123:secret" not in text and "2468" not in text
+    assert "123:secret" not in text
+    # The PIN is kept only as a salted hash. Its hex digits may contain "2468" by chance,
+    # so look at the saved values, not at the raw text.
+    values = [str(value) for value in json.loads(text).values()]
+    assert "2468" not in values
     assert page.status.text() == "Saved. Telegram bot started."
     assert page.token.text() == "" and "saved" in page.token.placeholderText()
 
