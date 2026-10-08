@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.26.0](https://github.com/pvwvuow/tradeer/compare/v0.25.2...v0.26.0) (2026-10-08)
+
+
+### Features
+
+* **ui:** 0.26 look, ink and violet palette, flat layers, Bahnschrift figures ([#84](https://github.com/pvwvuow/tradeer/issues/84)) ([60bb028](https://github.com/pvwvuow/tradeer/commit/60bb028cff3f3824a0e5926ff865f40b85a150db))
+
+
+### Bug Fixes
+
+* **ui:** the mouse wheel scrolls the page instead of changing settings ([#83](https://github.com/pvwvuow/tradeer/issues/83)) ([2d210b4](https://github.com/pvwvuow/tradeer/commit/2d210b4f9eea9b871d6fca35e33b25df3282eada))
+
 ## [0.25.2](https://github.com/pvwvuow/tradeer/compare/v0.25.1...v0.25.2) (2026-10-08)
 
 
