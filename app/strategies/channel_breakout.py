@@ -3,7 +3,12 @@
 Long (short mirrored): H1 EMA50 above EMA200; a M15 bar closes above the highest high of
 the 40 bars before it, and the bar before closed inside that channel (a fresh break). The
 channel must be 2 to 10 ATR wide: a narrower one is noise, a wider one an exhausted move.
-SL 2 ATR, TP 2R. Market order at the close of the signal bar.
+The close must clear the edge by at least 0.3 ATR (a close a hair past the edge is often a
+false break), and no key level (support for a sell, resistance for a buy) may sit within
+0.3 H1 ATR ahead of the entry. SL 2 ATR, TP 2R. Market order at the close of the signal bar.
+
+8 October 2026: a sell 0.1 ATR below the channel low, right on an H1 support, was stopped
+out. Both checks were added for that (version 1.1.0).
 """
 
 from __future__ import annotations
@@ -27,6 +32,18 @@ class ChannelBreakoutParams(BaseModel):
     channel_bars: int = Field(default=40, ge=5, le=300, description="M15 bars of the channel")
     min_width_atr: float = Field(default=2.0, ge=0, le=50, description="Narrowest channel, ATR")
     max_width_atr: float = Field(default=10.0, gt=0, le=100, description="Widest channel, ATR")
+    min_break_atr: float = Field(
+        default=0.3,
+        ge=0,
+        le=5,
+        description="Smallest close past the edge, ATR",
+    )
+    level_clearance_atr: float = Field(
+        default=0.3,
+        ge=0,
+        le=5,
+        description="Room to the next key level, H1 ATR",
+    )
     sl_atr: float = Field(default=2.0, gt=0, le=10, description="Stop distance in ATR")
     reward_r: float = Field(default=2.0, gt=0, le=10, description="Take profit in R")
     expiry_bars: int = Field(
@@ -37,13 +54,35 @@ class ChannelBreakoutParams(BaseModel):
     )
 
 
+def level_ahead(
+    ctx: MarketContext,
+    price: float,
+    sign: int,
+    clearance_atr: float,
+) -> tuple[float, str] | None:
+    """The nearest key level within `clearance_atr` H1 ATR ahead of `price` in the trade's
+    direction (support below a sell, resistance above a buy): its distance in ATR and its
+    text. None when there is none or no levels are known."""
+    levels = ctx.levels
+    if levels is None or not (math.isfinite(levels.atr) and levels.atr > 0):
+        return None
+    found: tuple[float, str] | None = None
+    for level in levels.levels:
+        ahead = (level.price - price) * sign / levels.atr
+        if 0 <= ahead <= clearance_atr and (found is None or ahead < found[0]):
+            text = f"{level.kind} {level.price:.{ctx.digits}f}"
+            found = (ahead, text)
+    return found
+
+
 class ChannelBreakout(Strategy):
     name: ClassVar[str] = "channel_breakout"
-    version: ClassVar[str] = "1.0.0"
+    version: ClassVar[str] = "1.1.0"
     title: ClassVar[str] = "Channel breakout"
     description: ClassVar[str] = (
-        "With the H1 trend, buys a fresh M15 close above the 40-bar high (sells below the "
-        "low) when the channel is 2 to 10 ATR wide. SL 2 ATR, TP 2R."
+        "With the H1 trend, buys a fresh M15 close at least 0.3 ATR above the 40-bar high "
+        "(sells below the low) when the channel is 2 to 10 ATR wide and no key level is just "
+        "ahead. SL 2 ATR, TP 2R."
     )
     params_model: ClassVar[type[BaseModel]] = ChannelBreakoutParams
     entry_timeframe: ClassVar[str] = "M15"
@@ -101,26 +140,52 @@ class ChannelBreakout(Strategy):
         else:
             edge_before = float(m15.low[earlier].min())
         last, previous = float(m15.close[-1]), float(m15.close[-2])
-        broke = (last - edge) * sign > 0 and (previous - edge_before) * sign <= 0
+        beyond = (last - edge) * sign / atr_now
+        broke = beyond > 0 and (previous - edge_before) * sign <= 0
         word = "above the high" if direction is Direction.LONG else "below the low"
         breakout = Condition(
             f"fresh M15 close {word}",
             broke,
-            value=round((last - edge) * sign / atr_now, 2),
+            value=round(beyond, 2),
             threshold=0.0,
             detail=f"edge {edge:.{ctx.digits}f}",
         )
         conditions.append(breakout)
+        clear = beyond >= cfg.min_break_atr
+        conditions.append(
+            Condition(
+                f"close at least {cfg.min_break_atr:g} ATR beyond the edge",
+                clear,
+                value=round(beyond, 2),
+                threshold=cfg.min_break_atr,
+                detail="a close a hair past the edge is often a false break",
+            ),
+        )
+        blocker = level_ahead(ctx, last, sign, cfg.level_clearance_atr)
+        kind = "support below" if direction is Direction.SHORT else "resistance above"
+        room = Condition(
+            f"no {kind} within {cfg.level_clearance_atr:g} H1 ATR",
+            blocker is None,
+            value=round(blocker[0], 2) if blocker is not None else None,
+            threshold=cfg.level_clearance_atr,
+            detail=blocker[1] if blocker is not None else "room to run",
+        )
+        conditions.append(room)
         if not sized:
             return self.result(ctx, SetupState.NONE, conditions, note="channel too narrow or wide")
         if not broke:
             near = abs(last - edge) <= atr_now
             state = SetupState.FORMING if near else SetupState.NONE
             return self.result(ctx, state, conditions, note="no breakout")
+        if not clear:
+            return self.result(ctx, SetupState.NONE, conditions, note="break too small")
+        if blocker is not None:
+            note = f"{kind.split()[0]} just ahead: {blocker[1]}"
+            return self.result(ctx, SetupState.NONE, conditions, note=note)
         distance = cfg.sl_atr * atr_now
         reason = (
-            f"H1 {'uptrend' if sign > 0 else 'downtrend'}, M15 closed {word} of the last "
-            f"{count} bars ({width:.1f} ATR channel)"
+            f"H1 {'uptrend' if sign > 0 else 'downtrend'}, M15 closed {beyond:.1f} ATR {word} "
+            f"of the last {count} bars ({width:.1f} ATR channel)"
         )
         signal = self.make_signal(
             ctx,
@@ -133,7 +198,7 @@ class ChannelBreakout(Strategy):
             expires_at=self.bars_later(ctx, cfg.expiry_bars),
             features={
                 "channel_atr": round(width, 3),
-                "break_atr": round((last - edge) * sign / atr_now, 3),
+                "break_atr": round(beyond, 3),
                 "ema_gap_h1_atr": round((fast - slow) / atr_now, 3),
             },
         )

@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.analysis.bars import Bars
+from app.analysis.levels import Level, LevelSet
 from app.domain.signals import Direction, OrderType
 from app.strategies.base import Evaluation, SetupState, Strategy
 from app.strategies.channel_breakout import ChannelBreakout, ChannelBreakoutParams
@@ -51,15 +52,68 @@ def check(evaluation: Evaluation, name: str, side: Direction) -> None:
     assert signal.expires_at > signal.created_at
 
 
-def test_the_channel_breakout_buys_and_sells_a_fresh_break_with_the_trend() -> None:
+def sharp_breaks(direction: int, count: int = 2000) -> Bars:
+    """A fast trend whose pushes close about 0.4 ATR past the channel edge."""
+    base = 1.1 if direction > 0 else 1.6
+    closes = wave(count, drift=direction * 0.0002, amp=0.002, period=24, base=base)
+    return bars(closes, start=WEDNESDAY - count * 900)
+
+
+def stop_after(m15: Bars, evaluation: Evaluation) -> int:
+    """How many bars to keep so the newest closed bar is the evaluation's signal bar."""
+    signal = evaluation.signal
+    assert signal is not None
+    return int(np.searchsorted(m15.time, signal.bar_time, side="right"))
+
+
+def test_the_channel_breakout_buys_and_sells_a_clear_break_with_the_trend() -> None:
     for direction, side in ((1, Direction.LONG), (-1, Direction.SHORT)):
-        found = signals(ChannelBreakout(), steep_trend(direction))
+        found = signals(ChannelBreakout(), sharp_breaks(direction))
         assert found
         for evaluation in found:
             check(evaluation, "channel_breakout", side)
-            assert evaluation.signal is not None and abs(evaluation.signal.rr - 2.0) < 0.02
+            signal = evaluation.signal
+            assert signal is not None and abs(signal.rr - 2.0) < 0.02
+            assert float(signal.features["break_atr"]) >= 0.3
         times = [evaluation.signal.bar_time for evaluation in found if evaluation.signal]
         assert min(np.diff(sorted(times))) > 900  # a fresh break, not every bar after it
+
+
+def test_a_close_a_hair_past_the_edge_is_not_a_breakout() -> None:
+    """8 October 2026: EURUSD sold 0.1 ATR below the channel low and was stopped out."""
+    market = steep_trend(-1)  # its breaks close less than 0.1 ATR past the edge
+    assert signals(ChannelBreakout(), market) == []
+    loose = signals(ChannelBreakout(ChannelBreakoutParams(min_break_atr=0.0)), market)
+    assert loose
+    stop = stop_after(market, loose[0])
+    evaluation = ChannelBreakout().evaluate(context(frames(market.slice(0, stop))))
+    assert evaluation.signal is None and evaluation.note == "break too small"
+    failed = [condition.name for condition in evaluation.conditions if not condition.passed]
+    assert failed == ["close at least 0.3 ATR beyond the edge"]
+
+
+def test_no_breakout_straight_into_a_key_level() -> None:
+    """A support just below a sell (a resistance above a buy) leaves no room to run."""
+    for direction in (1, -1):
+        market = sharp_breaks(direction)
+        found = signals(ChannelBreakout(), market)
+        assert found
+        signal = found[0].signal
+        assert signal is not None
+        frame = frames(market.slice(0, stop_after(market, found[0])))
+        atr_h1 = 0.004
+        ahead = signal.entry + direction * 0.1 * atr_h1
+        blocked = LevelSet(signal.entry, atr_h1, (Level(ahead, "swing cluster", 2),))
+        evaluation = ChannelBreakout().evaluate(context(frame, levels=blocked))
+        assert evaluation.signal is None
+        assert evaluation.note.endswith(f"just ahead: swing cluster {ahead:.5f}")
+        kind = "resistance above" if direction > 0 else "support below"
+        failed = [condition.name for condition in evaluation.conditions if not condition.passed]
+        assert failed == [f"no {kind} within 0.3 H1 ATR"]
+        behind = Level(signal.entry - direction * 0.1 * atr_h1, "swing")
+        far = Level(signal.entry + direction * 0.5 * atr_h1, "swing")
+        room = LevelSet(signal.entry, atr_h1, (behind, far))
+        assert ChannelBreakout().evaluate(context(frame, levels=room)).signal is not None
 
 
 def test_the_ema_momentum_trades_the_cross_with_the_trend() -> None:
