@@ -9,7 +9,7 @@ Measured on 8 October: a docs-only PR (#86) took 30+ minutes, with a Linux segfa
 | Code PR | ~20 min, build waits for ci | ci and build in parallel: ~10 min (the build is the longest part) |
 | Install | `pip install` of PySide6, lightgbm, PyInstaller... on every job (~2 min on Windows) | `uv` with a cache: ~15 s |
 | Lint and mypy | on Windows (slow start) | on Linux, mypy with `--platform win32` |
-| Tests | one process, one crash kills the run | `pytest-xdist` workers (`-n auto`), a crashed worker only fails its test |
+| Tests | one process on both | `pytest-xdist` workers on Windows (`-n auto`, 9 min to 5 min on 8 Oct, a crashed worker only fails its test); Linux stays serial (it hung under xdist, ~3 min serial) |
 | Hung job | 30 min timeout | 15 min (`ci`), 12 min (Linux), plus the 5 min per-test timeout |
 | Release PR | needs a commit to start CI, then everything again | skipped in seconds (and auto-merge with the token) |
 
