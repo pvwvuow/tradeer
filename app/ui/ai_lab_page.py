@@ -1,8 +1,8 @@
 """The AI Lab page (spec C13, F3.9, docs/AI_LAB_AGENT.md).
 
-Two tabs. **Chat** (Phase 18b): ask in your own words; the agent reads the trades and the
-settings with read-only tools, shows each step and answers. **Manual**: the loop with an
-outside AI, in four steps.
+Two tabs. **Chat** (Phase 18b, 18c): ask in your own words; the agent reads the trades, the
+settings, the signals with their decision traces and the saved logs with read-only tools,
+shows each step and answers. **Manual**: the loop with an outside AI, in four steps.
 
 1. Export the trades and a report with an analysis prompt for the AI of your choice, or
    (optional, off by default) ask your own OpenAI-compatible endpoint from here: only a
@@ -69,7 +69,10 @@ from app.backtest.service import BacktestReport, BacktestRequest, run_report, st
 from app.calendar.models import CalendarEvent
 from app.core.execution_settings import ExecutionSettingsSource
 from app.core.strategy_settings import StrategySettings, StrategySettingsSource
+from app.domain.signals import SignalRecord
+from app.observability.log_reader import read_entries
 from app.storage.repositories import Store
+from app.storage.signal_store import SignalRepository
 from app.strategies.registry import STRATEGIES
 from app.ui.ai_chat import ChatPanel
 from app.ui.analytics_page import AnalyticsContext, start_balance
@@ -81,6 +84,7 @@ from app.ui.tables import fill_table, make_table
 ALL = "All"
 DAY = 86_400
 EXPORT_FOLDER = "exports"
+SIGNALS_FOR_AI = 300
 INTRO = (
     "Ask an AI to review your trading. Export the trades and a report, give them to the AI "
     "you like, paste its JSON answer back, backtest it against your current settings and "
@@ -111,6 +115,17 @@ def _no_account() -> str | None:
 
 def _no_runs() -> Sequence[tuple[str, Mapping[str, Any]]]:
     return ()
+
+
+def log_reader(root: Path | None) -> Callable[[float], Sequence[Mapping[str, Any]]]:
+    """The saved log entries since a time, read in the agent's worker thread."""
+
+    def read(since: float) -> Sequence[Mapping[str, Any]]:
+        if root is None:
+            return []
+        return read_entries(root, since=since)
+
+    return read
 
 
 @dataclass
@@ -176,6 +191,7 @@ class AiLabPage(QWidget):
         super().__init__(parent)
         self.setObjectName("page_ai_lab")
         self.context = context
+        self.logs_dir: Path | None = None  # None: the main window's log folder
         self.suggestion: Suggestion | None = None
         self.verdict: Verdict | None = None
         self.comparison: Comparison | None = None
@@ -232,6 +248,25 @@ class AiLabPage(QWidget):
         """The AI Lab settings window (the gear)."""
         self.llm_panel.open_settings()
 
+    def log_root(self) -> Path | None:
+        """The folder of the saved logs: set on the page, or the main window's."""
+        if self.logs_dir is not None:
+            return self.logs_dir
+        controls = getattr(self.window(), "log_controls", None)
+        found = getattr(controls, "log_dir", None)
+        return found if isinstance(found, Path) else None
+
+    def saved_signals(self) -> list[SignalRecord]:
+        """The newest saved signals with their traces, read here in the UI thread."""
+        context = self.context
+        if context is None or context.store is None:
+            return []
+        try:
+            return SignalRepository(context.store).recent(SIGNALS_FOR_AI)
+        except Exception as error:
+            context.log("WARNING", f"AI Lab: the signals could not be read: {error}")
+            return []
+
     def agent_tools(self) -> list[Tool]:
         """The chat's read-only tools over this page's data (none without a context)."""
         context = self.context
@@ -239,6 +274,7 @@ class AiLabPage(QWidget):
             return []
         strategies = context.strategies
         execution = context.execution
+        records = self.saved_signals()
         return lab_tools(
             LabData(
                 trades=context.trades,
@@ -247,6 +283,8 @@ class AiLabPage(QWidget):
                 balance=context.balance,
                 currency=context.currency,
                 backtests=context.backtests,
+                signals=lambda: records,
+                log_entries=log_reader(self.log_root()),
             ),
         )
 
