@@ -8,6 +8,11 @@ a sign, and a limit bar says in words when it is near or at its limit.
 
 The page only reads snapshots (it polls them every two seconds) and the closed trades and the
 readiness (every minute); it never changes anything.
+
+8 October 2026: the page scrolls instead of squeezing the lists into thin strips; open
+positions and signals are full-width lists of ten rows a page with Previous and Next; every
+signal is listed (not only the newest eight) with its strategy, side, prices and why it was
+or was not traded, and a filter shows all, traded, waiting or not traded signals.
 """
 
 from __future__ import annotations
@@ -21,29 +26,34 @@ from datetime import UTC, datetime
 import pyqtgraph as pg
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from app.analytics.stats import compute_stats, equity_curve
 from app.analytics.trades import TradeRecord
-from app.engine.execution import ExecutionSnapshot
+from app.domain.signals import Direction, OrderType, SignalRecord, SignalState
+from app.engine.execution import ExecutionSnapshot, PositionView
 from app.engine.market_watch import MarketSnapshot
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.risk.risk_manager import RiskSnapshot
+from app.strategies.registry import STRATEGIES
+from app.ui.paged_table import PagedTable
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
 from app.ui.style import chart_pen, chart_tokens, repolish
-from app.ui.tables import fill_table, make_table, number, signed
+from app.ui.tables import number, signed
 
 POLL_MS = 2_000
 TRADES_SECONDS = 60.0
 DAY = 86_400.0
-LATEST_SIGNALS = 8
+LATEST_SIGNALS = 8  # before 0.25.2 only this many were shown; now every signal, paged
 UP = "\u25b2"
 DOWN = "\u25bc"
 LIMIT_WORDS = {"warning": " (near the limit)", "loss": " (limit reached)"}
@@ -51,6 +61,21 @@ GO_LIVE_NOTE = (
     "Go-Live readiness: the checklist before Auto trades real money is on the Strategies page. "
     "Until a strategy is approved, use Paper, Semi-auto or a demo account."
 )
+POSITION_COLUMNS = ("Symbol", "Strategy", "Side", "Lots", "Entry", "SL", "TP", "P/L", "Mode")
+SIGNAL_COLUMNS = ("Time (UTC)", "Strategy", "Symbol", "Side", "Entry", "SL", "TP", "State")
+NO_POSITIONS = "No open positions or pending orders of the bot."
+NO_SIGNALS = "No signals yet. They appear here when a strategy finds a setup on a closed bar."
+TRADED = frozenset(
+    {
+        SignalState.APPROVED,
+        SignalState.SENT,
+        SignalState.FILLED,
+        SignalState.MANAGED,
+        SignalState.CLOSED,
+    },
+)
+WAITING = frozenset({SignalState.NEW, SignalState.PENDING_APPROVAL})
+SIGNAL_VIEWS = ("All signals", "Traded", "Waiting for approval", "Not traded")
 
 
 @dataclass
@@ -100,6 +125,90 @@ def bias_text(snapshot: MarketSnapshot) -> list[tuple[str, str]]:
     return found
 
 
+def strategy_title(name: str) -> str:
+    """The strategy's display name, e.g. "Trend pullback"; "-" for an unknown position."""
+    kind = STRATEGIES.get(name)
+    if kind is not None:
+        return str(kind.title)
+    return name.replace("_", " ").capitalize() or "-"
+
+
+def price_text(value: float) -> str:
+    """A price as MT5 shows it; "-" when there is none (no SL or TP is 0 in MT5)."""
+    if not math.isfinite(value) or value <= 0:
+        return "-"
+    return f"{value:g}"
+
+
+def position_row(view: PositionView) -> list[str]:
+    side = "Buy" if view.direction in ("buy", "long") else "Sell"
+    return [
+        view.symbol,
+        strategy_title(view.strategy),
+        side + (" (pending order)" if view.pending else ""),
+        f"{view.volume:g}",
+        price_text(view.entry),
+        price_text(view.sl),
+        price_text(view.tp),
+        "-" if view.pending else signed(view.profit),
+        view.mode,
+    ]
+
+
+def ordered_positions(views: Sequence[PositionView]) -> list[PositionView]:
+    """Open positions first, then pending orders; each by symbol and ticket."""
+    return sorted(views, key=lambda view: (view.pending, view.symbol, view.ticket))
+
+
+def signal_view(state: SignalState) -> str:
+    """Which filter group a state belongs to (one of `SIGNAL_VIEWS` after the first)."""
+    if state in TRADED:
+        return "Traded"
+    if state in WAITING:
+        return "Waiting for approval"
+    return "Not traded"
+
+
+def shows(view: str, state: SignalState) -> bool:
+    return view == SIGNAL_VIEWS[0] or signal_view(state) == view
+
+
+def state_text(record: SignalRecord) -> str:
+    """The state in words with its reason, e.g. "filtered out: trading session"."""
+    signal = record.signal
+    words = signal.state.value.replace("_", " ").lower()
+    if signal.state in (SignalState.FILTERED_OUT, SignalState.RISK_REJECTED):
+        reason = record.reject_reason
+    else:
+        reason = signal.history[-1].reason if signal.history else ""
+    return f"{words}: {reason}" if reason else words
+
+
+def signal_row(record: SignalRecord) -> list[str]:
+    signal = record.signal
+    side = "Buy" if signal.direction is Direction.LONG else "Sell"
+    if signal.order_type is not OrderType.MARKET:
+        side += f" {signal.order_type.value}"
+    return [
+        _utc(signal.created_at),
+        strategy_title(signal.strategy),
+        signal.symbol,
+        side,
+        signal.price(signal.entry),
+        signal.price(signal.sl),
+        signal.price(signal.tp),
+        state_text(record),
+    ]
+
+
+def signal_tip(record: SignalRecord) -> str:
+    """The full story on hover: the signal, why it came and what became of it."""
+    signal = record.signal
+    lines = [f"{signal.summary()} [{strategy_title(signal.strategy)}]", signal.reason]
+    lines.append(f"State: {state_text(record)}")
+    return "\n".join(line for line in lines if line)
+
+
 class _Kpi(QFrame):
     def __init__(self, title: str) -> None:
         super().__init__()
@@ -143,7 +252,18 @@ class DashboardPage(QWidget):
         self.trades: list[TradeRecord] = []
         self._trades_at = -math.inf
         self._go_live_at = -math.inf
-        layout = QVBoxLayout(self)
+        self._signals_snapshot: SignalsSnapshot | None = None
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("DashboardScroll")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(self.scroll_area)
+        body = QWidget()
+        body.setObjectName("DashboardBody")
+        self.scroll_area.setWidget(body)
+        layout = QVBoxLayout(body)
         layout.setContentsMargins(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN)
         layout.setSpacing(12)
         layout.addWidget(styled_label("Dashboard", "title"))
@@ -187,19 +307,36 @@ class DashboardPage(QWidget):
         self.limits_layout.setRowStretch(9, 1)
         middle.addWidget(limits, 1)
         layout.addLayout(middle)
-        tables = QHBoxLayout()
-        tables.setSpacing(12)
-        self.positions = make_table(("Symbol", "Side", "Lots", "Entry", "SL", "TP", "P/L", "Mode"))
+
+        positions_card, positions_layout = card_frame()
+        self.positions_title = styled_label("OPEN POSITIONS", "crumb")
+        positions_layout.addWidget(self.positions_title)
+        self.positions_list = PagedTable(POSITION_COLUMNS, stretch=1, empty=NO_POSITIONS)
+        self.positions_list.setObjectName("DashboardPositionsList")
+        self.positions = self.positions_list.table
         self.positions.setObjectName("DashboardPositions")
-        self.signals = make_table(("Time (UTC)", "Symbol", "Signal", "State"))
+        positions_layout.addWidget(self.positions_list)
+        layout.addWidget(positions_card)
+
+        signals_card, signals_layout = card_frame()
+        top = QHBoxLayout()
+        self.signals_title = styled_label("LATEST SIGNALS", "crumb")
+        top.addWidget(self.signals_title)
+        top.addStretch(1)
+        self.signal_filter = QComboBox()
+        self.signal_filter.setObjectName("DashboardSignalFilter")
+        self.signal_filter.setAccessibleName("Show signals")
+        self.signal_filter.addItems(list(SIGNAL_VIEWS))
+        self.signal_filter.currentTextChanged.connect(self._filter_changed)
+        top.addWidget(self.signal_filter)
+        signals_layout.addLayout(top)
+        self.signals_list = PagedTable(SIGNAL_COLUMNS, empty=NO_SIGNALS)
+        self.signals_list.setObjectName("DashboardSignalsList")
+        self.signals = self.signals_list.table
         self.signals.setObjectName("DashboardSignals")
-        for title, table in (("OPEN POSITIONS", self.positions), ("LATEST SIGNALS", self.signals)):
-            column = QVBoxLayout()
-            column.setSpacing(6)
-            column.addWidget(styled_label(title, "crumb"))
-            column.addWidget(table, 1)
-            tables.addLayout(column, 1)
-        layout.addLayout(tables, 1)
+        signals_layout.addWidget(self.signals_list)
+        layout.addWidget(signals_card)
+
         self.bias = styled_label("Market bias: waiting for the analysis.", "muted", wrap=True)
         self.bias.setObjectName("DashboardBias")
         layout.addWidget(self.bias)
@@ -209,6 +346,7 @@ class DashboardPage(QWidget):
         self.go_live_label = styled_label(GO_LIVE_NOTE, "muted", wrap=True)
         self.go_live_label.setObjectName("DashboardGoLive")
         layout.addWidget(self.go_live_label)
+        layout.addStretch(1)
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_MS)
         self.timer.timeout.connect(self.refresh)
@@ -291,29 +429,28 @@ class DashboardPage(QWidget):
             self.equity_plot.plot(curve.times, curve.equity, pen=pen)
 
     def _show_positions(self, snapshot: ExecutionSnapshot) -> None:
-        rows = [
-            [
-                view.symbol + (" (pending)" if view.pending else ""),
-                "Buy" if view.direction in ("buy", "long") else "Sell",
-                f"{view.volume:g}",
-                f"{view.entry:g}",
-                f"{view.sl:g}",
-                f"{view.tp:g}",
-                signed(view.profit),
-                view.mode,
-            ]
-            for view in snapshot.positions
-        ]
-        fill_table(self.positions, rows)
+        views = ordered_positions(snapshot.positions)
+        self.positions_list.set_rows([position_row(view) for view in views])
+        opened = sum(1 for view in views if not view.pending)
+        title = "OPEN POSITIONS"
+        if views:
+            title += f" ({opened} open, {len(views) - opened} pending)"
+        self.positions_title.setText(title)
 
     def _show_signals(self, snapshot: SignalsSnapshot) -> None:
-        rows = [
-            [
-                _utc(record.signal.created_at),
-                record.signal.symbol,
-                record.signal.summary(),
-                record.signal.state.value.replace("_", " ").lower(),
-            ]
-            for record in snapshot.signals[:LATEST_SIGNALS]
-        ]
-        fill_table(self.signals, rows)
+        self._signals_snapshot = snapshot
+        view = self.signal_filter.currentText() or SIGNAL_VIEWS[0]
+        records = [r for r in snapshot.signals if shows(view, r.signal.state)]
+        self.signals_list.set_rows(
+            [signal_row(record) for record in records],
+            [signal_tip(record) for record in records],
+        )
+        title = "LATEST SIGNALS"
+        if snapshot.signals:
+            title += f" ({len(records)} of {len(snapshot.signals)})"
+        self.signals_title.setText(title)
+
+    def _filter_changed(self, _text: str) -> None:
+        self.signals_list.show_page(0)
+        if self._signals_snapshot is not None:
+            self._show_signals(self._signals_snapshot)
