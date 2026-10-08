@@ -30,6 +30,8 @@ suggests until its strategy is approved on the Go-Live desk.
    not affected.
 6. **Private.** Prompts carry no login, holder name, chat id or key (the existing masking of
    `app.analytics.llm_client`). The key stays in the credential store.
+7. **Any provider.** Base URL, API key and model are plain settings; nothing is tied to one
+   company (section 8).
 
 ## 2. Modes (one control on the page)
 
@@ -128,7 +130,7 @@ New sidebar group **AI** with the page **AI Desk** (page id `ai_desk`), in the 0
 
 ```
 +----------------------------------------------------------------------------------+
-| AI Desk   [Off | Advisor | Co-pilot]   (o) Thinking...   gpt-4o-mini            |
+| AI Desk   [Off | Advisor | Co-pilot]   (o) Thinking...   xAI grok-4.6           |
 | Today $0.18 of $1.00 [=====-----]   Next run 12:45   [ Run now ]                 |
 +-------------------------+----------------------------+---------------------------+
 | MARKET BRIEF            | IDEAS                      | OPEN TRADES               |
@@ -144,8 +146,8 @@ New sidebar group **AI** with the page **AI Desk** (page id `ai_desk`), in the 0
 ```
 
 - **Header**: the mode as a segmented control, a status chip (off, thinking with a soft
-  pulse, ready, offline, budget reached), the model, today's cost against the cap as a slim
-  bar, the next run time and Run now.
+  pulse, ready, offline, budget reached), the provider and model, today's cost against the
+  cap as a slim bar, the next run time and Run now.
 - **Market brief**: one card per symbol with a drawn confidence ring, the bias pill (word
   and arrow, never color only), the thesis and the levels as chips; a click opens the full
   reasoning and the mini chart with the AI levels drawn on it.
@@ -162,12 +164,36 @@ New sidebar group **AI** with the page **AI Desk** (page id `ai_desk`), in the 0
 - Empty, offline and budget states say in one sentence what is going on and what fixes it.
 - Every text through `i18n_fa` so the page also works in the Persian view.
 
-## 8. Settings (Settings > AI)
+## 8. Provider and settings (Settings > AI)
 
-Reuses the provider settings of the AI Lab (base URL, model, key in the credential store,
-prices) and adds: mode, cadence (default 30 minutes, minimum 15, plus the session opens and
-the events), daily cost cap (default 1.00 USD) and call cap (default 60), symbols, sessions,
-answer language, "Let the AI manage demo trades", "Review the other strategies' trades too".
+Any OpenAI-compatible service works: the user types the base URL, the API key and the model
+name. A preset only fills the fields; every field stays editable.
+
+| Preset | Base URL | Example model | Notes |
+|---|---|---|---|
+| xAI Grok (the user's key, 8 Oct 2026) | `https://api.x.ai/v1` | `grok-4.6` | 2 / 6 USD per 1M tokens in / out; `grok-4.7` may answer only on the Responses API |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | |
+| OpenRouter | `https://openrouter.ai/api/v1` | any listed model | one key for many companies |
+| Local (Ollama, LM Studio) | `http://localhost:11434/v1` | any pulled model | no key, no cost, no internet |
+| Custom | any https address (or localhost) | any | |
+
+- **API style**: Auto (default), Chat Completions or Responses. Auto sends
+  `/chat/completions` and moves to `/responses` when the service says the model needs it,
+  then remembers that for the model.
+- **Test connection**: one tiny request, and `/models` where the service has it to offer a
+  model list; shows the latency, the model that answered and the cost of one desk cycle.
+- **Reasoning effort** (low, medium, high) for models that have it; default low, to keep the
+  calls fast and cheap.
+- **Prices** per 1M tokens (input, output) for the cost cap, filled by the preset.
+- One provider for the AI Lab and the AI Desk; the key in the credential store with the
+  same masking.
+- Desk settings: mode, cadence (default 30 minutes, minimum 15, plus the session opens and
+  the events), daily cost cap (default 1.00 USD) and call cap (default 60), symbols,
+  sessions, answer language, "Let the AI manage demo trades", "Review the other strategies'
+  trades too".
+
+Cost estimate: one cycle is about 5 000 input and 800 output tokens, about 0.015 USD on
+`grok-4.6`, so 60 cycles a day stay under the 1.00 USD cap.
 
 ## 9. Storage
 
@@ -178,7 +204,7 @@ with the account id, in the outbox for the optional cloud sync like the other ta
 
 | Phase | Content | Release |
 |---|---|---|
-| 17a | context builder, answer schema, validator, scheduler with cadence, caps and backoff, storage, shadow tracking; all with fake transports | 0.27.0 |
+| 17a | provider presets, API style Auto (Chat Completions or Responses), Test connection, context builder, answer schema, validator, scheduler with cadence, caps and backoff, storage, shadow tracking; all with fake transports | 0.27.0 |
 | 17b | `ai_analyst` strategy, the `ai` trace stage, hard caps, Go-Live entry, By strategy | 0.28.0 |
 | 17c | open-trade advisor through the management layer, Apply and Ignore | 0.29.0 |
 | 17d | reviews, lessons, playbook, calibration, weekly condense | 0.30.0 |
@@ -187,11 +213,12 @@ with the account id, in the outbox for the optional cloud sync like the other ta
 
 ## 11. Tests (each phase)
 
-Golden answers through a fake transport; every validator rule with a passing and a failing
-case; a stop is never widened; real accounts never get an automatic change; Auto sends AI
-ideas only on demo or paper without an approval; caps and backoff; offline and budget
-states; prompt injection strings in news titles and in the model's answer stay data;
-no login, name, chat id or key in any prompt; the page builds empty, offline and full.
+Golden answers through a fake transport, in both API styles; every validator rule with a
+passing and a failing case; a stop is never widened; real accounts never get an automatic
+change; Auto sends AI ideas only on demo or paper without an approval; caps and backoff;
+offline and budget states; prompt injection strings in news titles and in the model's
+answer stay data; no login, name, chat id or key in any prompt; the page builds empty,
+offline and full.
 
 ## 12. Honest limits
 
