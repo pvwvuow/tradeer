@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.1](https://github.com/pvwvuow/tradeer/compare/v0.27.0...v0.27.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* channel breakout needs a clear break and room to run; one trade per symbol and side ([#91](https://github.com/pvwvuow/tradeer/issues/91)) ([d6e8db7](https://github.com/pvwvuow/tradeer/commit/d6e8db752ca2c33e8324d4f74456219acdfd375c))
+
 ## [0.27.0](https://github.com/pvwvuow/tradeer/compare/v0.26.0...v0.27.0) (2026-10-08)
 
 
