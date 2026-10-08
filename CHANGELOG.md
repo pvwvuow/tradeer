@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.27.0](https://github.com/pvwvuow/tradeer/compare/v0.26.0...v0.27.0) (2026-10-08)
+
+
+### Features
+
+* AI Desk 17a core + Test connection (presets, both API styles, caps, schema, validator) ([#90](https://github.com/pvwvuow/tradeer/issues/90)) ([c2f5bbf](https://github.com/pvwvuow/tradeer/commit/c2f5bbf92d24f2484309c66ad5ba07382a9a31dd))
+
+
+### Documentation
+
+* AI Desk spec (Phase 17) ([#86](https://github.com/pvwvuow/tradeer/issues/86)) ([1008a65](https://github.com/pvwvuow/tradeer/commit/1008a6587ebc56f9ff849447c3bd427db2b9e7b3))
+* news watch, shock guard and target cap (Phases 17g, 17h) ([#89](https://github.com/pvwvuow/tradeer/issues/89)) ([9802e2b](https://github.com/pvwvuow/tradeer/commit/9802e2b1dc598e059b30330069f007e96f6742e9))
+
 ## [0.26.0](https://github.com/pvwvuow/tradeer/compare/v0.25.2...v0.26.0) (2026-10-08)
 
 

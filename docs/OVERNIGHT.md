@@ -16,6 +16,9 @@ The PC is off overnight, so nothing here can be tried on it before the morning.
 | 8 | 8 Oct: the Dashboard lists were squeezed and showed only 8 signals. The page now scrolls; open positions and signals are full-width lists of 10 rows a page with Previous and Next, every signal with its strategy, side, prices and why it was or was not traded, and a filter (all, traded, waiting, not traded) (0.25.2) | #81 | released |
 | 9 | 8 Oct: scrolling the page with the mouse over a number box or drop-down changed its value. The wheel now scrolls the page; a field takes the wheel only after a click into it (0.26.0) | #83 | merged |
 | 10 | 8 Oct: "a new, beautiful, professional interface, a real rework". Phase 1, the whole app: ink and violet palette, flat layers (chrome, page, cards), recessed fields, tables without stripes, segmented tabs, a violet pill for the current page, figures in Bahnschrift (0.26.0) | #84 | merged |
+| 11 | 8 Oct: AI Desk spec (Phase 17) reviewed twice, plus news watch, shock guard and TP cap before key levels (17g, 17h) | #86, #89 | merged |
+| 12 | 8 Oct: faster CI: Windows tests in parallel (9 to 5 min); CI version 2 for the workflows waits in scripts/ci/workflows | #87 | merged |
+| 13 | 8 Oct: AI Desk 17a: presets (xAI Grok first), Chat Completions and Responses with fallbacks, cost and caps, answer schema, validator, prompts, context, scheduler; Test connection in AI Lab (0.27.0) | #90 | merged |
 
 Rules kept: every WCAG AA pair stays (tests), no image files, no Qt style property Qt does
 not know (it would log a warning on every repaint), and a single 24 h run still gives the
@@ -47,3 +50,6 @@ lot would have risked 43 USD, above the 25 USD allowed at 0.25%.
    change. Click into a box, then the wheel changes it.
 10. 0.26.0: screenshots of Dashboard, Strategies, Signals and Settings in both themes, so
     phase 2 of the rework (page layouts) starts from what you see.
+11. 0.27.0: AI Lab > the AI card: Preset xAI Grok, paste the key, Test connection. It should
+    say "Connected: grok-4.6 ... JSON works; one desk cycle costs about $0.024". If it says
+    "No answer from api.x.ai", turn the VPN on (like Telegram). Then Save.
