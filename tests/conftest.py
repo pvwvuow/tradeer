@@ -1,6 +1,7 @@
 """Shared test configuration."""
 
 import os
+import sys
 from typing import Any
 
 # Headless Qt for CI and local runs; must be set before any Qt module is imported.
@@ -9,6 +10,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ANNOTATION_CHARS = 12_000
 MAX_ANNOTATIONS = 4
 TRACEBACK_TAIL_CHARS = 3_000
+
+
+def pytest_xdist_auto_num_workers(config: Any) -> int | None:
+    """Parallel workers for `-n auto` on Windows only.
+
+    On 8 October 2026 the Windows suite ran in 5 minutes instead of 9 with workers, but the
+    Linux offscreen Qt run hung under xdist until the job timeout (it takes 2 to 4 minutes
+    in one process), so Linux stays serial. None keeps the xdist default (the core count).
+    """
+    if sys.platform == "win32":
+        return None
+    return 0
 
 
 def _workflow_escape(text: str) -> str:
