@@ -15,7 +15,7 @@ license = { text = "Proprietary. All rights reserved." }
 dependencies = [
   "httpx==0.28.1",
   "keyring==25.7.0",
-  "lightgbm==4.6.0",
+  "lightgbm==4.7.0",
   "loguru==0.7.3",
   "MetaTrader5==5.0.6090; sys_platform == 'win32'",
   "numpy==2.4.6",
