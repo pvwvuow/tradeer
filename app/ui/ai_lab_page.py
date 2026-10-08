@@ -9,6 +9,7 @@
 4. Activate it, only in Paper or Analysis-only mode: the settings are saved, a new config
    version (created by "ai_suggestion") and an audit row are written.
 
+The gear at the top opens the AI Lab settings window (Phase 18a, docs/AI_LAB_AGENT.md).
 An AI answer is advice only, and this page never sends real orders.
 """
 
@@ -65,7 +66,7 @@ from app.storage.repositories import Store
 from app.strategies.registry import STRATEGIES
 from app.ui.analytics_page import AnalyticsContext, start_balance
 from app.ui.backtest_page import BacktestContext
-from app.ui.llm_panel import LlmPanel
+from app.ui.llm_panel import SETTINGS_TIP, LlmPanel
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
 from app.ui.tables import fill_table, make_table
 
@@ -191,10 +192,19 @@ class AiLabPage(QWidget):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN)
         layout.setSpacing(16)
-        layout.addWidget(styled_label("AI Lab", "title"))
+        header = QHBoxLayout()
+        header.addWidget(styled_label("AI Lab", "title"))
+        header.addStretch(1)
+        self.settings_button = QPushButton("\u2699  Settings")
+        self.settings_button.setObjectName("AiLabSettings")
+        self.settings_button.setAccessibleName("AI Lab settings")
+        self.settings_button.setToolTip(SETTINGS_TIP)
+        header.addWidget(self.settings_button)
+        layout.addLayout(header)
         layout.addWidget(styled_label(INTRO, "muted", wrap=True))
         layout.addWidget(self._build_export())
         self.llm_panel = LlmPanel(self.llm_data, self.take_answer)
+        self.settings_button.clicked.connect(self.llm_panel.open_settings)
         layout.addWidget(self.llm_panel)
         layout.addWidget(self._build_import())
         layout.addWidget(self._build_test())
@@ -205,6 +215,10 @@ class AiLabPage(QWidget):
                 button.setEnabled(False)
             self.export_status.setText("The AI Lab needs the local database and the settings.")
         self._update_buttons()
+
+    def open_settings(self) -> None:
+        """The AI Lab settings window (the gear)."""
+        self.llm_panel.open_settings()
 
     # 1. Export ----------------------------------------------------------------------------
     def _build_export(self) -> QWidget:
