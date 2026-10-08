@@ -8,3 +8,5 @@
   ended with exit code 139 (a segmentation fault in the offscreen Qt platform) after 2 min,
   while the Windows `ci` job ran the full suite green on the same commit. No code changed,
   so it was run again with this commit.
+- Same PR, next commit: Linux green, but the Windows `ci` job was still running after 17
+  minutes (it normally takes about 9). Treated as a hung runner and run again.
