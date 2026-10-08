@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/pvwvuow/tradeer/compare/v0.27.1...v0.28.0) (2026-10-08)
+
+
+### Features
+
+* AI Lab settings window behind a gear (18a) + AI Lab agent spec ([#93](https://github.com/pvwvuow/tradeer/issues/93)) ([51e282c](https://github.com/pvwvuow/tradeer/commit/51e282cd403f20b497e811b5f2f93c21ddf1a743))
+
 ## [0.27.1](https://github.com/pvwvuow/tradeer/compare/v0.27.0...v0.27.1) (2026-10-08)
 
 
