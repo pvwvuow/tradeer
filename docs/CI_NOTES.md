@@ -10,3 +10,7 @@
   so it was run again with this commit.
 - Same PR, next commit: Linux green, but the Windows `ci` job was still running after 17
   minutes (it normally takes about 9). Treated as a hung runner and run again.
+- 8 October 2026, PR #89 (docs only, news watch spec): Windows `ci` still running after 14
+  minutes with parallel tests (5 to 6 minutes on #87 and #86). Run again. Three hangs in a
+  day on docs-only commits: the CI version 2 `changes` job (scripts/ci/workflows) would have
+  skipped all of them.
