@@ -2,8 +2,10 @@
 # Build the one-folder Windows app with PyInstaller, verify it with --self-check, zip it, then
 # install it with the real Setup.exe on this clean machine and check it again (install-test.ps1).
 # -SkipInstallTest leaves the clean install out (the release: its PR's build job ran it).
+# -SkipInstall: the workflow installed the project already (uv, cached; CI version 2).
 param(
-    [switch]$SkipInstallTest
+    [switch]$SkipInstallTest,
+    [switch]$SkipInstall
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -25,7 +27,7 @@ $fontCommit = "6f9713a50c628d79f60259319d05fa0a239a9a7f"
 $fontSha256 = "696249a2c74b39ffdef55de4df2809c5b639d3ff80d618d8160a095d2fd49dca"
 $fontDir = Join-Path $root "app/ui/fonts"
 
-Invoke-Step "Install" { python -m pip install -e ".[dev]" }
+if (-not $SkipInstall) { Invoke-Step "Install" { python -m pip install -e ".[dev]" } }
 Invoke-Step "Persian font" {
     New-Item -ItemType Directory -Force -Path $fontDir | Out-Null
     $base = "https://raw.githubusercontent.com/google/fonts/$fontCommit/ofl/vazirmatn"
