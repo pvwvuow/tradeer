@@ -30,8 +30,8 @@ from app.ui.pages import card_frame, styled_label
 Job = Callable[[], None]
 ClientFactory = Callable[[], AiClient | str]
 WELCOME = (
-    "Ask about your trades, strategies and settings, for example: \"Why did channel_breakout "
-    "lose this week?\" or \"Which session is my best?\". The AI reads the app with read-only "
+    'Ask about your trades, strategies and settings, for example: "Why did channel_breakout '
+    'lose this week?" or "Which session is my best?". The AI reads the app with read-only '
     "tools; it never changes a setting or trades."
 )
 EXAMPLES = (
@@ -54,19 +54,19 @@ def _app_language() -> str:
 
 
 def persian(text: str) -> bool:
-    """Mostly Persian or Arabic letters: the message runs right to left."""
-    letters = [char for char in text if char.isalpha()]
-    if not letters:
-        return False
-    rtl = sum(1 for char in letters if "\u0600" <= char <= "\u06ff")
-    return rtl * 2 >= len(letters)
+    """The first letter is Persian or Arabic: the message runs right to left (the rule of
+    the first strong character, as in Unicode bidi)."""
+    for char in text:
+        if char.isalpha():
+            return "\u0600" <= char <= "\u06ff"
+    return False
 
 
-def _label(text: str, role: str, *, markdown: bool = False) -> QLabel:
+def _label(text: str, role: str, *, markdown: bool = False, source: str = "") -> QLabel:
     label = styled_label(text, role, wrap=True)
     label.setTextFormat(Qt.TextFormat.MarkdownText if markdown else Qt.TextFormat.PlainText)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    if persian(text):
+    if persian(source or text):
         label.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
     return label
@@ -81,7 +81,7 @@ class TurnView(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        self.question = _label(f"You: {question}", "heading")
+        self.question = _label(f"You: {question}", "heading", source=question)
         layout.addWidget(self.question)
         self.steps = _label("\u2026 Thinking", "muted")
         self.steps.setObjectName("AiChatSteps")
