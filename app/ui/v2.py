@@ -332,13 +332,13 @@ class Section(QWidget):
         line = hairline()
         line.setMinimumWidth(20)
         row.addWidget(line, 1, Qt.AlignmentFlag.AlignVCenter)
-        self.actions = QHBoxLayout()
-        self.actions.setSpacing(6)
-        row.addLayout(self.actions)
+        self.tools = QHBoxLayout()  # not `actions`: QWidget.actions() is a Qt method
+        self.tools.setSpacing(6)
+        row.addLayout(self.tools)
         self.setMinimumHeight(30)
 
     def add(self, widget: QWidget) -> None:
-        self.actions.addWidget(widget)
+        self.tools.addWidget(widget)
 
 
 class Spark(Painted):
