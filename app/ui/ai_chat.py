@@ -378,9 +378,10 @@ class ChatPanel(QWidget):
         self.quick = FlowBox(8)
         self.example_buttons: list[QPushButton] = []
         for text in QUICK_PROMPTS:
-            button = lab_button(word(text), "sg")
+            label = word(text)
+            button = lab_button(label, "sg")
             button.setObjectName("AiChatExample")
-            button.clicked.connect(lambda _checked=False, value=word(text): self.set_text(value))
+            button.clicked.connect(lambda _checked=False, value=label: self.set_text(value))
             self.quick.add(button)
             self.example_buttons.append(button)
         lower.addWidget(self.quick)
@@ -416,9 +417,10 @@ class ChatPanel(QWidget):
         self.suggestions = FlowBox(10)
         self.suggestion_buttons: list[QPushButton] = []
         for text in SUGGESTIONS:
-            button = lab_button(word(text), "sg")
+            label = word(text)
+            button = lab_button(label, "sg")
             button.setObjectName("AiChatSuggestion")
-            button.clicked.connect(lambda _checked=False, value=word(text): self.set_text(value))
+            button.clicked.connect(lambda _checked=False, value=label: self.set_text(value))
             self.suggestions.add(button)
             self.suggestion_buttons.append(button)
         layout.addSpacing(8)
