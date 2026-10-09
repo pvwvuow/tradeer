@@ -1,4 +1,4 @@
-"""The Dashboard lists: every signal and position, ten rows a page (UI v2 tables)."""
+"""The Dashboard lists: every signal and position, ten rows a page (No Curve v2 rows)."""
 
 from dataclasses import replace
 
@@ -170,8 +170,10 @@ def test_positions_list_open_first_and_pending_orders_plainly(qtbot: QtBot) -> N
     qtbot.addWidget(page)
     page.timer.stop()
     page.refresh(now=float(MORNING))
-    assert page.positions.total == 3 and page.positions.text(0, 0) == "EURUSD"
-    assert page.positions.text(0, 7) == "\u2212$3.20"
-    assert page.positions.text(2, 7) == "Pending order"
+    assert page.positions.total == 3 and page.positions.text(0, 0) == "EUR/USD"
+    assert page.positions.text(0, 1) == "Sell" and page.positions.text(0, 4) == "\u2014"
+    assert page.positions.text(0, 5) == "1.32189"
+    assert page.positions.text(0, 6) == "\u2212$3.20"
+    assert page.positions.text(2, 6) == "Pending order"
     assert page.positions_title.text() == "2 open, 1 pending"
     assert strategy_title("") == "-"
