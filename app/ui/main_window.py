@@ -118,6 +118,7 @@ from app.ui.style import (
 )
 from app.ui.theme import ThemeTokens, build_qss, tokens_for
 from app.ui.updates_page import UpdateBanner, UpdatesContext, UpdatesPage
+from app.ui.v2 import v2_qss
 from app.ui.window_chrome import style_title_bar
 
 KILL_SHORTCUT = "Ctrl+Shift+K"
@@ -225,7 +226,8 @@ class MainWindow(QMainWindow):
         self.positions_page = PositionsPage(trading)
         self.backtest_page = BacktestPage(backtest)
         self.model_page = ModelPage(model)
-        self.dashboard_page = DashboardPage(dashboard)
+        self.dashboard_page = DashboardPage(dashboard, persian=self.persian)
+        self.dashboard_page.go = self.show_page
         self.analytics_page = AnalyticsPage(analytics)
         self.journal_page = JournalPage(journal)
         self.ai_lab_page = AiLabPage(ai_lab_context(analytics, backtest))
@@ -465,11 +467,13 @@ class MainWindow(QMainWindow):
         self.prefs = self.prefs.model_copy(update={"theme": theme})
         self._crash_state["theme"] = theme.value
         tokens = tokens_for(theme)
-        self.setStyleSheet(build_qss(tokens) + frame_qss(tokens, self.persian))
+        qss = build_qss(tokens) + frame_qss(tokens, self.persian) + v2_qss(tokens)
+        self.setStyleSheet(qss)
         style_title_bar(self, tokens)
         if self.logs_page is not None:
             self.logs_page.apply_tokens(tokens)
         self.market_page.apply_tokens(tokens)
+        self.dashboard_page.apply_tokens(tokens)
         self.home.apply_tokens(tokens)
         style_plots(self, tokens)
         self._apply_frame_tokens(tokens)
@@ -522,6 +526,7 @@ class MainWindow(QMainWindow):
         self.connection_label.setText(footer_connection(status, self.persian))
         self.connection_led.set_tone(tone)
         self._connected = status.connected
+        self._dashboard_connection(status, tone)
         badge = "ANALYSIS-ONLY" if status.analysis_only else self.operating_mode_label().upper()
         self._set_mode(badge)
         if self.trading is not None:
@@ -568,6 +573,7 @@ class MainWindow(QMainWindow):
         self.session_clock_label.setText(self._foot(f"{session_label(moment)}{upcoming}"))
         self.news_label.setText(self.market_page.next_news_text(moment))
         self._update_ticker(moment)
+        self._update_badges()
         self.home.tick()
         self._retranslate()
 
@@ -576,6 +582,7 @@ class MainWindow(QMainWindow):
         if isinstance(status, SyncStatus):
             self.sync_label.setText(self._foot(status.status_bar_text()))
             self.sync_label.setToolTip(status.message)
+            self.dashboard_page.set_health("Cloud sync", *sync_health(status))
 
     def trigger_crash_test(self) -> None:
         """Raise on purpose: the crash hook must write a report and show the dialog."""
@@ -783,11 +790,46 @@ class MainWindow(QMainWindow):
         """The bodies of the Advanced pages and Settings stay English: left to right."""
         for page_id, index in self._page_index.items():
             page = self.pages.widget(index)
-            if page_id != SIMPLE_HOME.page_id and page is not None:
+            ready = bool(getattr(page, "right_to_left_ready", False))
+            if page_id != SIMPLE_HOME.page_id and page is not None and not ready:
                 page.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
                 for header in page.findChildren(PageHeader):
                     if header.crumb.text() == page_crumb(page_id):
                         header.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+    def _dashboard_connection(self, status: ConnectionStatus, tone: str) -> None:
+        """The account kind under the balance and the MT5 line of System health."""
+        account = status.account
+        kinds = {
+            AccountKind.DEMO: "Demo account",
+            AccountKind.REAL: "Real account",
+            AccountKind.CONTEST: "Contest account",
+        }
+        page = self.dashboard_page
+        page.set_account_kind(kinds.get(account.kind, "") if account is not None else "")
+        if status.connected:
+            page.set_health("MT5 connection", "OK", "profit")
+        elif tone == "warning":
+            page.set_health("MT5 connection", "Connecting", "warning")
+        elif status.state is ConnectionState.FAILED:
+            page.set_health("MT5 connection", "Failed", "loss")
+        else:
+            page.set_health("MT5 connection", "OFF", "loss")
+
+    def _update_badges(self) -> None:
+        """Sidebar: signals waiting for approval, and a light on Health when a line is not OK."""
+        page = self.dashboard_page
+        if self.data_page is not None:
+            page.set_health("Local database", "OK", "profit")
+        if self.updates is not None:
+            snapshot = self.updates.service.snapshot
+            if snapshot.ready:
+                page.set_health("Update", f"{snapshot.version} ready", "warning")
+            else:
+                page.set_health("Update", "Up to date", "profit")
+        waiting = str(page.waiting_count) if page.waiting_count else ""
+        self.set_nav_badge("signals", persian_digits(waiting) if self.persian else waiting)
+        self.set_nav_dot("health", page.health_tone)
 
     def _update_ticker(self, now: float) -> None:
         if self._prices is None:
@@ -943,6 +985,17 @@ def connection_chip(status: ConnectionStatus) -> tuple[str, str]:
     if status.state is ConnectionState.FAILED:
         return f"{dot}FAILED", "loss"
     return f"{dot}NOT CONNECTED", "neutral"
+
+
+def sync_health(status: SyncStatus) -> tuple[str, str]:
+    """The Cloud sync line of System health: its words and tone."""
+    if status.failed:
+        return f"{status.failed} refused", "loss"
+    if status.pending:
+        return f"{status.pending} waiting", "warning"
+    words = status.status_bar_text().removeprefix("Cloud: ")
+    tone = "profit" if words in ("up to date", "uploading") else "neutral"
+    return words.capitalize(), tone
 
 
 def footer_connection(status: ConnectionStatus, persian: bool) -> str:
