@@ -1,4 +1,4 @@
-"""Persian and right to left in the Simple view (spec A, F1, G3 phase 16)."""
+"""Persian and right to left (spec A, F1, G3 phase 16; the UI v2 frame of 0.32)."""
 
 from pathlib import Path
 
@@ -9,7 +9,9 @@ from pytestqt.qtbot import QtBot
 from app.core.ui_prefs import Language, UiPrefs, ViewMode, load_prefs
 from app.ui.i18n import PERSIAN_FAMILIES, RESTART_TEXT, persian_font
 from app.ui.i18n_fa import PERSIAN
-from app.ui.main_window import MainWindow
+from app.ui.main_window import LANGUAGE_TEXT, MainWindow
+from app.ui.pages import PageHeader
+from app.ui.shell import PAGE_HEADS_FA, SHELL_FA
 
 RTL = Qt.LayoutDirection.RightToLeft
 LTR = Qt.LayoutDirection.LeftToRight
@@ -26,8 +28,8 @@ def test_persian_home_runs_right_to_left(qtbot: QtBot, tmp_path: Path) -> None:
     prefs = UiPrefs(language=Language.FA, onboarded=True)
     window = make_window(qtbot, tmp_path, prefs)
     assert window.layoutDirection() == RTL and window.home.layoutDirection() == RTL
-    assert window.dashboard_page.layoutDirection() == LTR  # Advanced pages stay English
-    assert window.statusBar().layoutDirection() == LTR
+    assert window.dashboard_page.layoutDirection() == LTR  # page bodies stay English
+    assert window.statusBar().layoutDirection() == RTL  # the UI v2 frame is Persian
     home = window.home
     assert home.empty_title.text() == PERSIAN["No trade suggestions right now"]
     assert home.stop_button.text() == PERSIAN["Stop trading now"]
@@ -35,13 +37,31 @@ def test_persian_home_runs_right_to_left(qtbot: QtBot, tmp_path: Path) -> None:
     assert home.state_line.text() == PERSIAN[not_connected]
     assert home.balance_title.text() == PERSIAN["PRACTICE BALANCE"]
     assert window.settings_button.text() == PERSIAN["Settings"]
-    assert window.view_button.text() == PERSIAN["Switch to Advanced"]
-    assert window.mode_badge.text() == "PAPER"  # the status bar stays English
-    assert window.language_button.text() == "English"
+    assert window.view_button.text() == SHELL_FA["Advanced"]
+    assert window.mode_badge.text() == "PAPER"
+    assert window.language_button.text() == LANGUAGE_TEXT
     home.details_button.setChecked(True)
     assert home.details_button.text() == PERSIAN["Hide details"]
     qtbot.mouseClick(window.view_button, Qt.MouseButton.LeftButton)
-    assert window.view_button.text() == PERSIAN["Switch to Simple"]
+    assert window.view_button.text() == SHELL_FA["Simple"]
+
+
+def test_the_persian_frame_follows_the_design(qtbot: QtBot, tmp_path: Path) -> None:
+    prefs = UiPrefs(language=Language.FA, onboarded=True, view_mode=ViewMode.ADVANCED)
+    window = make_window(qtbot, tmp_path, prefs)
+    assert window.nav_buttons["dashboard"].accessibleName() == SHELL_FA["Dashboard"]
+    assert window.nav_buttons["ai_lab"].text() == f"09   {SHELL_FA['AI Lab']}"
+    assert window.kill_switch.text() == SHELL_FA["Stop trading"]
+    assert window.search_button.text() == SHELL_FA["Search"]
+    assert window.page_crumb.text() == "TRADE / 01"
+    header = window.dashboard_page.findChildren(PageHeader)[0]
+    assert header.title.text() == PAGE_HEADS_FA["dashboard"][0]
+    assert header.crumb.text() == "TRADE / 01"
+    assert header.layoutDirection() == RTL
+    assert window.bot_state_label.text() == "ربات خاموش"
+    window.update_session_clock(1_791_100_800.0)
+    assert window.session_clock_label.text()
+    assert not any(digit in window.bot_state_label.text() for digit in "0123456789")
 
 
 def test_the_first_start_in_persian(qtbot: QtBot, tmp_path: Path) -> None:
@@ -56,11 +76,11 @@ def test_the_language_is_saved_for_the_next_start(qtbot: QtBot, tmp_path: Path) 
     notes: list[str] = []
     window.notify_language = notes.append
     assert window.layoutDirection() == LTR
-    assert window.language_button.text() == "فارسی"
+    assert window.language_button.text() == LANGUAGE_TEXT
     assert window.home.stop_button.text() == "Stop trading now"
     assert window.toggle_language() is Language.FA
     assert load_prefs(tmp_path).language is Language.FA
-    assert notes == [RESTART_TEXT] and window.language_button.text() == "English"
+    assert notes == [RESTART_TEXT] and window.language_button.text() == LANGUAGE_TEXT
     window.toggle_theme()  # a later change keeps the saved language
     assert load_prefs(tmp_path).language is Language.FA
     window.set_view_mode(ViewMode.ADVANCED)
