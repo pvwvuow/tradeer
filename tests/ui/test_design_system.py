@@ -132,9 +132,10 @@ def test_main_window_top_bar_follows_the_page_mode_and_connection(
     window = MainWindow(UiPrefs(view_mode=ViewMode.ADVANCED, onboarded=True), tmp_path)
     qtbot.addWidget(window)
     window.show()
-    assert window.page_crumb.text() == page_crumb("dashboard") == "TRADE / 01"
+    assert window.view_caption.text() == "ADVANCED VIEW" and window.view_caption.isVisible()
+    assert page_crumb("dashboard") == "TRADE / 01"
     window.show_page("risk")
-    assert window.page_crumb.text() == "SYSTEM / 11"
+    assert page_crumb("risk") == "SYSTEM / 11"
     assert window.mode_chip.text() == "PAPER" and window.mode_chip.property("chip") == "accent"
     assert window.search_button.isVisible()
     status = ConnectionStatus(ConnectionState.CONNECTED, "Connected", demo_account())
