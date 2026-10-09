@@ -29,6 +29,7 @@ from app.analysis.symbol import SymbolAnalysis
 from app.core.clock import BrokerClock
 from app.domain.probability import ProbabilityEstimate, baseline, cost_in_r, expected_value_r
 from app.domain.signals import TRANSITIONS, Signal, SignalRecord, SignalState
+from app.engine.currency_guard import shared_bet
 from app.engine.execution import SignalUpdate
 from app.engine.filters import FilterInput, FilterSettings, run_filters
 from app.ml import features as model_features
@@ -487,6 +488,7 @@ class SignalPipeline:
         end = history.streak_end
         since_streak = (signal.created_at - end) / 3600.0 if end is not None else None
         same_side = self._same_side(signal)
+        same_bet = self._same_bet(signal)
         data = FilterInput(
             signal=signal,
             now=now,
@@ -508,6 +510,8 @@ class SignalPipeline:
             duplicate_of=other.id if other is not None else "",
             same_side=len(same_side),
             same_side_of=", ".join(sorted({item.strategy for item in same_side})),
+            same_bet=len(same_bet),
+            same_bet_of=", ".join(same_bet),
         )
         trace.extend(run_filters(data, settings))
         trace.add(
@@ -668,6 +672,20 @@ class SignalPipeline:
             and record.signal.direction is signal.direction
             and record.signal.id != signal.id
         ]
+
+    def _same_bet(self, signal: Signal) -> list[str]:
+        """Live trades on other symbols (any strategy) that bet the same way on a currency,
+        as 'london_breakout EURUSD sell (long USD)'."""
+        found: list[str] = []
+        for record in self._records.values():
+            other = record.signal
+            if other.state not in LIVE_STATES or other.id == signal.id:
+                continue
+            bet = shared_bet(signal.symbol, signal.direction, other.symbol, other.direction)
+            if bet:
+                side = "buy" if other.direction.sign > 0 else "sell"
+                found.append(f"{other.strategy} {other.symbol} {side} ({bet})")
+        return sorted(found)
 
     def _finish(self, signal_id: str, state: SignalState, now: float, reason: str) -> bool:
         record = self._records.get(signal_id)
