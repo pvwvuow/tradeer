@@ -8,6 +8,7 @@ from app.ui.theme import (
     NUMBER_FONT,
     build_qss,
     chip_colors,
+    contrast_failures,
     contrast_ratio,
     shades,
     tokens_for,
@@ -23,26 +24,29 @@ def test_all_color_tokens_are_uppercase_hex() -> None:
             assert HEX_COLOR.match(value), (tokens.name, name, value)
 
 
-def test_dark_theme_uses_the_0_26_ink_and_violet_palette() -> None:
-    assert DARK.bg == "#08080C"
-    assert DARK.surface == "#0E0E14"
-    assert DARK.card == "#14141C"
-    assert DARK.border == "#22222E"
-    assert DARK.text == "#EDECF4"
-    assert DARK.text_secondary == "#9C9AB0"
-    assert DARK.accent == "#8E80FF"
-    assert DARK.profit == "#2AD07A"
-    assert DARK.loss == "#FF5C5C"
-    assert DARK.warning == "#F5A524"
+def test_dark_theme_uses_the_0_31_ink_and_cream_palette() -> None:
+    assert DARK.bg == "#0E100F"
+    assert DARK.text == "#ECE8DC"
+    assert DARK.text_secondary == "#A2ACA4"
+    assert DARK.border_strong == "#364039"
+    # The ink is the accent: selected and primary controls are drawn inverted.
+    assert DARK.accent == DARK.text
+    assert DARK.accent_text == DARK.bg
+    assert DARK.profit == "#5AD19A"
+    assert DARK.loss == "#F2795F"
+    assert DARK.warning == "#D9B45A"
+    assert LIGHT.bg == "#F1EEE6"
+    assert LIGHT.text == "#1B1C19"
+    assert LIGHT.accent == LIGHT.text
 
 
 def test_the_layers_go_from_page_to_chrome_to_content() -> None:
     for tokens in (DARK, LIGHT):
         page, chrome, content = (tokens.bg, tokens.surface, tokens.card)
         assert len({page, chrome, content}) == 3, tokens.name
-    # Dark: content is lighter than the page; light: content is white paper on grey.
+    # Dark: content is lighter than the page; light: content is brighter paper on cream.
     assert contrast_ratio(DARK.card, "#000000") > contrast_ratio(DARK.bg, "#000000")
-    assert LIGHT.card == "#FFFFFF"
+    assert contrast_ratio(LIGHT.card, "#000000") > contrast_ratio(LIGHT.bg, "#000000")
 
 
 def test_text_colors_meet_wcag_aa_on_every_surface() -> None:
@@ -53,6 +57,7 @@ def test_text_colors_meet_wcag_aa_on_every_surface() -> None:
                 ratio = contrast_ratio(foreground, background)
                 assert ratio >= WCAG_AA, (tokens.name, foreground, background, ratio)
         assert contrast_ratio(tokens.accent_text, tokens.accent) >= WCAG_AA
+        assert contrast_failures(tokens) == []
 
 
 def test_contrast_of_black_on_white_is_21() -> None:
@@ -102,6 +107,7 @@ def test_the_stylesheet_covers_every_common_control() -> None:
         'QLabel[chip="loss"]',
         'QLabel[role="kpi"]',
         'QPushButton[variant="ghost"]',
+        'QPushButton[variant="primary"]',
     ):
         assert selector in qss, selector
 
