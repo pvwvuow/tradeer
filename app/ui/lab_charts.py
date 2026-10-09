@@ -264,10 +264,7 @@ class BarChart(Chart):
             gap = min(6.0, slot.width() * 0.2)
             width = max(slot.width() - gap, 1.0)
             bar = QRectF(slot.left() + gap / 2, min(top, zero_y), width, abs(zero_y - top))
-            if self.signed:
-                color = t.profit if value >= 0 else t.loss
-            else:
-                color = t.text
+            color = (t.profit if value >= 0 else t.loss) if self.signed else t.text
             painter.fillRect(bar, QColor(color))
             if index < len(self.labels):
                 painter.setPen(QColor(t.text_secondary))
