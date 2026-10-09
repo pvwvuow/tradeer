@@ -28,7 +28,9 @@ def test_title_bar_colors_follow_the_theme() -> None:
     light = dict(title_bar_attributes(LIGHT))
     assert dark[DWMWA_USE_IMMERSIVE_DARK_MODE] == 1
     assert light[DWMWA_USE_IMMERSIVE_DARK_MODE] == 0
-    assert dark[DWMWA_CAPTION_COLOR] == colorref(DARK.surface)
+    # No Curve v2: the header is the page color, and so is the title bar above it.
+    assert dark[DWMWA_CAPTION_COLOR] == colorref(DARK.bg)
+    assert light[DWMWA_CAPTION_COLOR] == colorref(LIGHT.bg)
 
 
 def test_title_bar_is_left_alone_off_windows(qtbot: QtBot) -> None:

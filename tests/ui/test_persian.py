@@ -1,4 +1,4 @@
-"""Persian and right to left (spec A, F1, G3 phase 16; the UI v2 frame of 0.32)."""
+"""Persian and right to left (spec A, F1, G3 phase 16; the frame of 0.32 and No Curve v2)."""
 
 from pathlib import Path
 
@@ -54,7 +54,7 @@ def test_the_persian_frame_follows_the_design(qtbot: QtBot, tmp_path: Path) -> N
     assert window.nav_buttons["ai_lab"].text() == f"09   {SHELL_FA['AI Lab']}"
     assert window.kill_switch.text() == SHELL_FA["Stop trading"]
     assert window.search_button.text() == SHELL_FA["Search"]
-    assert window.page_crumb.text() == "TRADE / 01"
+    assert window.view_caption.text() == "ADVANCED VIEW"  # English in the design too
     header = window.dashboard_page.findChildren(PageHeader)[0]
     assert header.title.text() == PAGE_HEADS_FA["dashboard"][0]
     assert header.crumb.text() == "TRADE / 01"

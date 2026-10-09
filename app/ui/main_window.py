@@ -17,6 +17,11 @@ show an icon or an arrow get a name for screen readers.
 
 7 October 2026 polish: the Windows title bar takes the theme's colors, a page fades in when
 it opens, and everything clickable shows a hand cursor.
+
+0.34 (No Curve v2, 20b): the header follows the design: 20 px sides, the brand, the
+"ADVANCED VIEW" caption 18 px after it (none in the Simple view), and the controls 14 px
+apart with a 36 px theme button. The page's own place ("TRADE / 01") is shown once, above
+its title. The app's extras (Search, FA · EN, Settings) stay in the header cluster.
 """
 
 from __future__ import annotations
@@ -81,12 +86,17 @@ from app.ui.pages import PageHeader, PlaceholderPage, decorate_page, styled_labe
 from app.ui.positions_page import KILL_TEXT, PositionsPage, TradingContext
 from app.ui.risk_page import RiskContext, RiskPage
 from app.ui.shell import (
+    CLUSTER_GAP,
     FOOTER_HEIGHT,
     FRAME_FA,
+    HEADER_GAP,
+    HEADER_MARGIN,
+    ICON_BUTTON_SIZE,
     PAGE_HEADS_FA,
     SIDEBAR_WIDTH,
     TEXT_FAMILY,
     TOP_BAR_HEIGHT,
+    VIEW_CAPTION,
     DayOpens,
     GroupRule,
     KbdButton,
@@ -362,7 +372,7 @@ class MainWindow(QMainWindow):
             fade_in(page)
         self._crash_state["page"] = page_id
         simple = self.prefs.view_mode is ViewMode.SIMPLE
-        self.page_crumb.setText("SIMPLE VIEW" if simple else page_crumb(page_id))
+        self.view_caption.setVisible(not simple)  # "ADVANCED VIEW"; the Simple header has none
         button = self._nav_buttons.get(page_id)
         if button is not None:
             button.setChecked(True)
@@ -617,16 +627,16 @@ class MainWindow(QMainWindow):
         bar.setObjectName("TopBar")
         bar.setFixedHeight(TOP_BAR_HEIGHT)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(18, 0, 18, 0)
+        layout.setContentsMargins(HEADER_MARGIN, 0, HEADER_MARGIN, 0)
         layout.setSpacing(0)
         self.logo = LogoMark()
         layout.addWidget(self.logo)
         layout.addSpacing(10)
         layout.addWidget(styled_label(BRAND, "brand"))
-        layout.addSpacing(16)
-        self.page_crumb = styled_label("", "crumb")
-        self.page_crumb.setObjectName("PageCrumb")
-        layout.addWidget(self.page_crumb)
+        layout.addSpacing(HEADER_GAP)
+        self.view_caption = styled_label(VIEW_CAPTION, "crumb")
+        self.view_caption.setObjectName("ViewCaption")
+        layout.addWidget(self.view_caption)
         layout.addStretch(1)
         self.connection_chip = chip("\u25cf MT5 \u00b7 NOT CONNECTED", "neutral")
         self.connection_chip.setObjectName("ConnectionChip")
@@ -660,7 +670,7 @@ class MainWindow(QMainWindow):
         ]
         for index, widget in enumerate(cluster):
             if index:
-                layout.addSpacing(10)
+                layout.addSpacing(CLUSTER_GAP)
             layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
         return bar
 
@@ -715,7 +725,7 @@ class MainWindow(QMainWindow):
             button.setIcon(glyph_icon(glyph, tokens.text_secondary))
             button.setIconSize(QSize(ICON_SIZE - 1, ICON_SIZE - 1))
         if icons_available():
-            self.theme_button.setFixedSize(34, 34)
+            self.theme_button.setFixedSize(ICON_BUTTON_SIZE, ICON_BUTTON_SIZE)
 
     def _set_mode(self, text: str) -> None:
         self.mode_badge.setText(text)

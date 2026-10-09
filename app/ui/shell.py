@@ -1,4 +1,4 @@
-"""The window frame of UI v2, drawn like the owner's design of 9 October 2026 (docs/UI_V2.md).
+"""The window frame, drawn like the owner's No Curve v2 design (docs/NOCURVE_V2.md, 20b).
 
 The pieces the design draws around every page are small painted widgets, so they look the
 same as the mockup on every PC: the logo (a square with three bars), the live ticker strip,
@@ -7,6 +7,11 @@ show a keyboard hint ("Ctrl K") and the status lights.
 
 With Persian chosen the whole frame is Persian and runs right to left, as in the design.
 English stays the source text, so a missing word falls back to English instead of breaking.
+
+0.34 (No Curve v2): the sizes are the design's own: sidebar 232 px with 38 px rows, group
+rules of 38 px, captions 11 px, tags with a 1 px strong outline, segments 32 px with 14 px
+sides, a 36 px theme button, and the ticker moves one full set of quotes every 48 s (the
+design's `tick 48s linear infinite`). Its leading cap says LIVE or OFFLINE, never SAMPLE.
 """
 
 from __future__ import annotations
@@ -30,16 +35,23 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QPushButton, QWidget
 
 from app.ui.i18n import FONT_DIR, load_persian_font
-from app.ui.theme import DARK, NUMBER_FONT, ThemeTokens, number_family
+from app.ui.theme import DEFAULT, NUMBER_FONT, ThemeTokens, chip_edge, number_family
 
-TICK_MS = 40  # the ticker moves one pixel every 40 ms, like the design's 48 s loop
+TICK_MS = 40  # the ticker repaints every 40 ms
+TICK_CYCLE_MS = 48_000  # one full set of quotes goes by in 48 s, like the design
 TICKER_HEIGHT = 30
 TOP_BAR_HEIGHT = 52
 FOOTER_HEIGHT = 32
-SIDEBAR_WIDTH = 228
-NAV_HEIGHT = 36
+SIDEBAR_WIDTH = 232
+NAV_HEIGHT = 38
+GROUP_RULE_HEIGHT = 38  # `padding: 18px 12px 6px` around an 11 px caption
 LOGO_SIZE = 28
-CAPTION_PT = 8.6  # 11.5 px: the design's `cap` (group names, page numbers, crumbs)
+ICON_BUTTON_SIZE = 36  # the design's `.ib`
+HEADER_MARGIN = 20  # `padding: 0 20px`
+HEADER_GAP = 18  # between the brand, the view caption and the controls
+CLUSTER_GAP = 14  # between the controls at the far end of the header
+VIEW_CAPTION = "ADVANCED VIEW"  # the design writes it in English in both languages
+CAPTION_PT = 8.25  # 11 px: the design's `cap` (group names, page numbers, crumbs)
 SMALL_PT = 8.25  # 11 px: tags and keyboard hints
 
 # The words of the frame (top bar, sidebar, status bar) in Persian, keyed by the English.
@@ -179,8 +191,8 @@ def frame_qss(tokens: ThemeTokens, rtl: bool = False) -> str:
     start, end = ("right", "left") if rtl else ("left", "right")
     tags = "\n".join(
         f'QLabel[chip="{tone}"] {{ color: {tone_color(t, tone)}; background-color: '
-        f"transparent; border: 1px solid {tone_color(t, tone)}; border-radius: 3px; "
-        f"font-size: {SMALL_PT:g}pt; font-weight: 400; padding: 2px 7px; }}"
+        f"transparent; border: 1px solid {chip_edge(t, tone)}; border-radius: 3px; "
+        f"font-size: {SMALL_PT:g}pt; font-weight: 400; padding: 1px 7px; }}"
         for tone in ("neutral", "profit", "loss", "warning")
     )
     return f"""
@@ -210,7 +222,7 @@ QLabel[role="title"] {{
 }}
 QLabel[role="subtitle"] {{
     color: {t.text_secondary};
-    font-size: 10.1pt;
+    font-size: 9.75pt;
 }}
 {tags}
 QLabel[chip="accent"] {{
@@ -219,8 +231,8 @@ QLabel[chip="accent"] {{
     border: 1px solid {t.accent};
     border-radius: 3px;
     font-size: {SMALL_PT:g}pt;
-    font-weight: 500;
-    padding: 2px 7px;
+    font-weight: 400;
+    padding: 1px 7px;
 }}
 QPushButton[painted="true"] {{
     min-height: 0px;
@@ -237,7 +249,7 @@ QFrame#Segmented QPushButton {{
     color: {t.text_secondary};
     border: none;
     border-radius: 0px;
-    padding: 0px 13px;
+    padding: 0px 14px;
     min-height: 30px;
     max-height: 30px;
     font-size: 9.75pt;
@@ -276,10 +288,15 @@ QPushButton#Language {{
 QPushButton#ThemeButton {{
     padding: 0px;
     border: 1px solid transparent;
+    border-radius: 6px;
+    min-height: 0px;
 }}
 QPushButton#ThemeButton:hover {{
     background-color: {t.hover};
     border-color: {t.hover};
+}}
+QPushButton#ThemeButton:focus {{
+    border: 1px solid {t.accent};
 }}
 QStatusBar {{
     background-color: {t.surface};
@@ -320,6 +337,14 @@ def price_text(price: float) -> str:
     if price >= 50:
         return f"{price:.2f}"
     return f"{price:.4f}"
+
+
+def ticker_symbol(symbol: str) -> str:
+    """A symbol as the design writes it: EURUSD as EUR/USD, XAUUSD.m as XAU/USD.m."""
+    head, tail = symbol[:6], symbol[6:]
+    if len(head) == 6 and head.isalpha() and head.isupper() and (not tail or tail[0] in ".-_"):
+        return f"{head[:3]}/{head[3:]}{tail}"
+    return symbol
 
 
 def tone_color(tokens: ThemeTokens, tone: str) -> str:
@@ -392,7 +417,7 @@ class Painted(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.tokens: ThemeTokens = DARK
+        self.tokens: ThemeTokens = DEFAULT
 
     def apply_tokens(self, tokens: ThemeTokens) -> None:
         self.tokens = tokens
@@ -416,8 +441,8 @@ class LogoMark(Painted):
         painter.drawRoundedRect(QRectF(0.75, 0.75, LOGO_SIZE - 1.5, LOGO_SIZE - 1.5), 4, 4)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(color)
-        bottom = LOGO_SIZE - 6.0
-        for left, height in ((8.0, 7.0), (12.5, 14.0), (17.0, 10.0)):
+        bottom = LOGO_SIZE - 6.5  # 1.5 px edge + 5 px padding
+        for left, height in ((6.5, 7.0), (12.5, 14.0), (18.5, 10.0)):
             painter.drawRect(QRectF(left, bottom - height, 3.0, height))
         painter.end()
 
@@ -450,7 +475,7 @@ class GroupRule(Painted):
     def __init__(self, name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.name = name.upper()
-        self.setFixedHeight(40)
+        self.setFixedHeight(GROUP_RULE_HEIGHT)
         self.setAccessibleName(name)
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 (Qt name)
@@ -484,7 +509,7 @@ class NavButton(QPushButton):
 
     def __init__(self, number: int, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.tokens: ThemeTokens = DARK
+        self.tokens: ThemeTokens = DEFAULT
         self.number = f"{number:02d}"
         self.title = title
         self.badge = ""
@@ -604,7 +629,7 @@ class KbdButton(QPushButton):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(text, parent)
-        self.tokens: ThemeTokens = DARK
+        self.tokens: ThemeTokens = DEFAULT
         self.kbd = kbd
         self.variant = variant
         self.point_size = point_size
@@ -715,6 +740,9 @@ class TickerStrip(Painted):
         self.offset = 0.0
         self.font_ = QFont(NUMBER_FONT)
         self.font_.setPointSizeF(9.0)
+        self.symbol_font = QFont(self.font_)
+        self.symbol_font.setWeight(QFont.Weight.Medium)
+        self.cycle = 1200  # the width of one set of quotes, measured when painted
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.step)
         self.timer.start(TICK_MS)
@@ -726,12 +754,13 @@ class TickerStrip(Painted):
 
     def step(self) -> None:
         if self.live and self.isVisible():
-            self.offset += 1.0
+            self.offset += self.cycle * TICK_MS / TICK_CYCLE_MS
             self.update()
 
     def item_width(self, item: TickerItem, metrics: QFontMetrics) -> int:
-        parts = [item.symbol, item.price, item.change_text()]
-        widths = [metrics.horizontalAdvance(part) for part in parts if part]
+        symbol = QFontMetrics(self.symbol_font).horizontalAdvance(ticker_symbol(item.symbol))
+        parts = [item.price, item.change_text()]
+        widths = [symbol, *(metrics.horizontalAdvance(part) for part in parts if part)]
         return sum(widths) + 8 * (len(widths) - 1) + 44
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 (Qt name)
@@ -747,12 +776,9 @@ class TickerStrip(Painted):
         middle = self.height() / 2
         cap_base = int(middle + (cap_metrics.ascent() - cap_metrics.descent()) / 2)
         label = "LIVE" if self.live else "OFFLINE"
-        badge = 14 + 6 + 6 + cap_metrics.horizontalAdvance(label) + 14
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(t.profit if self.live else t.text_secondary))
-        painter.drawEllipse(QRectF(14, middle - 3, 6, 6))
+        badge = 14 + cap_metrics.horizontalAdvance(label) + 14
         painter.setPen(QColor(t.text_secondary))
-        painter.drawText(26, cap_base, label)
+        painter.drawText(14, cap_base, label)
         painter.setPen(QColor(t.border))
         painter.drawLine(badge, 0, badge, self.height())
         painter.setFont(self.font_)
@@ -765,6 +791,7 @@ class TickerStrip(Painted):
             return
         widths = [self.item_width(item, metrics) for item in self.items]
         total = sum(widths)
+        self.cycle = max(total, 1)
         painter.setClipRect(badge + 1, 0, self.width() - badge, self.height())
         x = badge - (self.offset % total if total else 0)
         while x < self.width():
@@ -787,9 +814,12 @@ class TickerStrip(Painted):
         painter.setPen(QColor(t.border))
         painter.drawLine(int(x), 0, int(x), self.height())
         left = int(x) + 22
+        symbol = ticker_symbol(item.symbol)
         painter.setPen(QColor(t.text))
-        painter.drawText(left, baseline, item.symbol)
-        left += metrics.horizontalAdvance(item.symbol) + 8
+        painter.setFont(self.symbol_font)
+        painter.drawText(left, baseline, symbol)
+        left += QFontMetrics(self.symbol_font).horizontalAdvance(symbol) + 8
+        painter.setFont(self.font_)
         painter.drawText(left, baseline, item.price if self.live else "\u2014")
         left += metrics.horizontalAdvance(item.price) + 8
         change = item.change_text()

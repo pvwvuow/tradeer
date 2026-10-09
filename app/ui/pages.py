@@ -1,6 +1,10 @@
 """Page building blocks: page headers, cards, empty states and the placeholder page.
 
 Placeholder pages are honest: no sample data, no trading.
+
+0.34 (No Curve v2): the header is the design's title row: the "TRADE / 01" caption, the
+26 px title 4 px under it, the 13 px summary 4 px under that, and the page's own controls at
+the far end, aligned to the bottom of the title.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from PySide6.QtWidgets import QBoxLayout, QFrame, QHBoxLayout, QLabel, QVBoxLayo
 from app.ui.navigation import PageSpec, page_by_id
 
 PAGE_MARGIN = 28
+TITLE_GAP = 4  # `margin: 4px 0 0` on the title and on the summary
 NO_DATA_NOTE = "This page is an empty shell. It never shows sample or simulated data."
 
 
@@ -33,7 +38,7 @@ def card_frame() -> tuple[QFrame, QVBoxLayout]:
 class PageHeader(QWidget):
     """The title row of a page: a small group label, the title and a one-line summary.
 
-    Buttons that act on the whole page go on the right with `add_action`.
+    Buttons that act on the whole page go on the far end with `add_action`.
     """
 
     def __init__(
@@ -46,10 +51,10 @@ class PageHeader(QWidget):
         super().__init__(parent)
         self.setObjectName("PageHeader")
         row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 4)
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(12)
         text = QVBoxLayout()
-        text.setSpacing(2)
+        text.setSpacing(TITLE_GAP)
         self.crumb = styled_label(crumb.upper(), "crumb")
         self.crumb.setVisible(bool(crumb))
         self.title = styled_label(title, "title")
@@ -60,7 +65,7 @@ class PageHeader(QWidget):
         text.addWidget(self.subtitle)
         row.addLayout(text, 1)
         self.action_row = QHBoxLayout()
-        self.action_row.setSpacing(8)
+        self.action_row.setSpacing(10)
         row.addLayout(self.action_row)
 
     def add_action(self, widget: QWidget) -> None:
