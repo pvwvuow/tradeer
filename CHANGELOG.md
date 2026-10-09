@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.0](https://github.com/pvwvuow/tradeer/compare/v0.31.1...v0.32.0) (2026-10-09)
+
+
+### Features
+
+* **ui:** Dashboard exactly like the UI v2 design (19d) ([#106](https://github.com/pvwvuow/tradeer/issues/106)) ([3577e17](https://github.com/pvwvuow/tradeer/commit/3577e17d44ed2411b247764b8083b9b053c86d5d))
+* **ui:** UI v2 frame drawn exactly like the design (19c) ([#101](https://github.com/pvwvuow/tradeer/issues/101)) ([08daafb](https://github.com/pvwvuow/tradeer/commit/08daafbfedd45dd2b46dffb844181fdad5a61c00))
+
 ## [0.31.1](https://github.com/pvwvuow/tradeer/compare/v0.31.0...v0.31.1) (2026-10-09)
 
 
