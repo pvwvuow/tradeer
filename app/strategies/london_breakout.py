@@ -5,6 +5,11 @@ open (08:00) a buy stop and a sell stop go 0.1 ATR beyond the range (one cancels
 so one trade per symbol per day); SL on the opposite side of the range, capped at 1.5 ATR;
 TP 1.5R; both orders are cancelled at 11:00 if not triggered.
 
+`entry_mode = "close"` (1.1.0, after the false breaks of 8 October 2026): no resting stop
+orders. Between the open and the cancel time the strategy waits for M15 closes beyond the
+range plus the buffer (`confirm_bars` in a row) and enters at market on the first such break
+of the day only; a close that is more than `max_chase_atr` past the range is skipped.
+
 The times use London time by default (summer time included); `clock` switches them to the
 broker's server time or UTC. "D1-normalized ATR" is ATR(14) of the daily bars scaled to the
 length of the range: ATR(D1) x sqrt(range hours / 24) (ADR 52).
@@ -13,6 +18,7 @@ length of the range: ATR(D1) x sqrt(range hours / 24) (ADR 52).
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -31,6 +37,27 @@ HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 def minutes_of(text: str) -> int:
     hours, minutes = text.split(":")
     return int(hours) * 60 + int(minutes)
+
+
+def first_break(closes: Sequence[float], up: float, down: float, need: int) -> tuple[int, int]:
+    """Index and side (+1 up, -1 down) of the first `need` closes in a row beyond the range.
+
+    (-1, 0) when there is none yet.
+    """
+    above = below = 0
+    for index, close in enumerate(closes):
+        above = above + 1 if close > up else 0
+        below = below + 1 if close < down else 0
+        if above >= need:
+            return index, 1
+        if below >= need:
+            return index, -1
+    return -1, 0
+
+
+def clock_text(seconds: float) -> str:
+    minutes = int(seconds % DAY) // 60
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
 class LondonBreakoutParams(BaseModel):
@@ -54,6 +81,22 @@ class LondonBreakoutParams(BaseModel):
     )
     max_sl_atr: float = Field(default=1.5, gt=0, le=10, description="Maximum stop distance in ATR")
     reward_r: float = Field(default=1.5, gt=0, le=10, description="Take profit in R")
+    entry_mode: Literal["stop", "close"] = Field(
+        default="stop",
+        description="Entry: stop orders at the open, or market after an M15 close beyond",
+    )
+    confirm_bars: int = Field(
+        default=1,
+        ge=1,
+        le=8,
+        description="Close entry: M15 closes beyond the range in a row",
+    )
+    max_chase_atr: float = Field(
+        default=0.5,
+        gt=0,
+        le=5,
+        description="Close entry: skip a close this far past the range, ATR",
+    )
 
     @model_validator(mode="after")
     def _times_in_order(self) -> LondonBreakoutParams:
@@ -68,12 +111,13 @@ class LondonBreakoutParams(BaseModel):
 
 class LondonBreakout(Strategy):
     name: ClassVar[str] = "london_breakout"
-    version: ClassVar[str] = "1.0.0"
+    version: ClassVar[str] = "1.1.0"
     title: ClassVar[str] = "London breakout"
     description: ClassVar[str] = (
         "Places a buy stop and a sell stop beyond the Asia range at the London open when the "
         "range is 0.5 to 1.5 ATR wide. SL at the other side (max 1.5 ATR), TP 1.5R, cancelled "
-        "at 11:00, one trade per symbol per day."
+        "at 11:00, one trade per symbol per day. Entry 'close' waits for an M15 close beyond "
+        "the range and enters at market on the first break only."
     )
     params_model: ClassVar[type[BaseModel]] = LondonBreakoutParams
     entry_timeframe: ClassVar[str] = "M15"
@@ -147,6 +191,12 @@ class LondonBreakout(Strategy):
         if now_minutes < opening:
             state = SetupState.FORMING if width.passed else SetupState.NONE
             return self.result(ctx, state, conditions, note="waiting for the London open")
+        if cfg.entry_mode == "close":
+            if not width.passed:
+                return self.result(ctx, SetupState.NONE, conditions, note="range")
+            opens_at = float(midnight + opening * 60)
+            cancels_at = float(midnight + cancel * 60)
+            return self._confirmed(ctx, conditions, high, low, atr, opens_at, cancels_at)
         is_open_bar = now_minutes < opening + seconds // 60
         at_open = Condition(
             "London open bar",
@@ -168,6 +218,121 @@ class LondonBreakout(Strategy):
                 signals.append(signal)
         state = SetupState.READY if signals else SetupState.NONE
         return self.result(ctx, state, conditions, signals, note="stop orders at the open")
+
+    def _confirmed(
+        self,
+        ctx: MarketContext,
+        conditions: list[Condition],
+        high: float,
+        low: float,
+        atr: float,
+        opens_at: float,
+        cancels_at: float,
+    ) -> Evaluation:
+        """Entry 'close': market order on the day's first confirmed close beyond the range."""
+        cfg = self.cfg
+        offset = self.offset(ctx, ctx.close_time)
+        in_time = ctx.close_time <= cancels_at
+        conditions.append(
+            Condition(
+                "before the cancel time",
+                in_time,
+                value=clock_text(ctx.close_time + offset),
+                threshold=cfg.cancel_time,
+                detail="a break is traded only between the London open and the cancel time",
+            ),
+        )
+        if not in_time:
+            return self.result(ctx, SetupState.NONE, conditions, note="after the cancel time")
+        m15 = ctx.entry
+        after = m15.time >= opens_at
+        closes = [float(value) for value in m15.close[after]]
+        times = [float(value) for value in m15.time[after]]
+        up = high + cfg.buffer_atr * atr
+        down = low - cfg.buffer_atr * atr
+        index, sign = first_break(closes, up, down, cfg.confirm_bars)
+        digits = ctx.digits
+        last = closes[-1] if closes else m15.last_close
+        beyond = Condition(
+            "M15 close beyond the range",
+            sign != 0,
+            value=round(last, digits),
+            threshold=f"above {up:.{digits}f} or below {down:.{digits}f}",
+            detail=f"{cfg.confirm_bars} close(s) in a row; no order before the confirmation",
+        )
+        conditions.append(beyond)
+        if sign == 0:
+            return self.result(
+                ctx,
+                SetupState.FORMING,
+                conditions,
+                note="waiting for an M15 close beyond the range",
+            )
+        seconds = TF_SECONDS[self.entry_timeframe]
+        confirmed_at = times[index] + seconds
+        first = index == len(closes) - 1
+        conditions.append(
+            Condition(
+                "first break of the day",
+                first,
+                value=clock_text(confirmed_at + offset),
+                detail="only the first confirmed break is traded, later ones are false-break risk",
+            ),
+        )
+        if not first:
+            return self.result(ctx, SetupState.NONE, conditions, note="today's break is done")
+        direction = Direction.LONG if sign > 0 else Direction.SHORT
+        edge = high if sign > 0 else low
+        chase = (last - edge) * sign / atr
+        near = chase <= cfg.max_chase_atr
+        conditions.append(
+            Condition(
+                "close not too far past the range",
+                near,
+                value=round(chase, 2),
+                threshold=cfg.max_chase_atr,
+                detail="ATR past the range edge; a long candle leaves a poor entry",
+            ),
+        )
+        if not near:
+            return self.result(ctx, SetupState.NONE, conditions, note="the break ran too far")
+        opposite = low if sign > 0 else high
+        distance = (last - opposite) * sign
+        capped = distance > cfg.max_sl_atr * atr
+        if capped:
+            distance = cfg.max_sl_atr * atr
+        sl = last - sign * distance
+        tp = last + sign * cfg.reward_r * distance
+        day = ctx.close_time - ctx.close_time % DAY
+        side = "buy" if sign > 0 else "sell"
+        stop_text = f", SL capped at {cfg.max_sl_atr:g} ATR" if capped else ", SL at the other side"
+        reason = (
+            f"Asia range {low:.{digits}f} to {high:.{digits}f} ({(high - low) / atr:.2f} ATR); "
+            f"{side} at market after {cfg.confirm_bars} M15 close(s) beyond{stop_text}"
+        )
+        signal = self.make_signal(
+            ctx,
+            direction,
+            OrderType.MARKET,
+            entry=last,
+            sl=sl,
+            tp=tp,
+            reason=reason,
+            expires_at=min(self.bars_later(ctx, 1), cancels_at),
+            features={
+                "range_atr": round((high - low) / atr, 3),
+                "stop_atr": round(distance / atr, 3),
+                "chase_atr": round(chase, 3),
+                "oco_group": f"{ctx.symbol}:{self.name}:{day}",
+            },
+        )
+        return self.result(
+            ctx,
+            SetupState.READY,
+            conditions,
+            [signal],
+            note="confirmed break at market",
+        )
 
     def _order(
         self,
