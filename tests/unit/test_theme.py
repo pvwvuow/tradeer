@@ -102,10 +102,9 @@ def test_words_meet_wcag_aa_and_results_the_design_minimum() -> None:
 
 def test_font_sizes_are_the_designs_pixels_in_points() -> None:
     assert px(16) == 12
-    assert FONT_SMALL == px(11) == 8.25
-    assert FONT_BODY == px(14) == 10.5
-    assert FONT_TITLE == px(26)
-    assert FONT_KPI == px(27)
+    assert px(11) == 8.25 and px(14) == 10.5
+    sizes = (FONT_SMALL, FONT_BODY, FONT_TITLE, FONT_KPI)
+    assert (px(11), px(14), px(26), px(27)) == sizes
 
 
 def test_contrast_of_black_on_white_is_21() -> None:
