@@ -18,6 +18,17 @@ function Invoke-Step([string]$Name, [scriptblock]$Command) {
     Write-Host "::endgroup::"
 }
 
+# The git blob id of a file (the SHA-1 GitHub lists for every file of a commit).
+function Get-GitBlobSha([string]$Path) {
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $header = [System.Text.Encoding]::ASCII.GetBytes("blob $($bytes.Length)`0")
+    $all = [byte[]]::new($header.Length + $bytes.Length)
+    [System.Array]::Copy($header, 0, $all, 0, $header.Length)
+    [System.Array]::Copy($bytes, 0, $all, $header.Length, $bytes.Length)
+    $hash = [System.Security.Cryptography.SHA1]::HashData($all)
+    return ([System.Convert]::ToHexString($hash)).ToLowerInvariant()
+}
+
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
 Set-Location $root
 
@@ -26,6 +37,13 @@ Set-Location $root
 $fontCommit = "6f9713a50c628d79f60259319d05fa0a239a9a7f"
 $fontSha256 = "696249a2c74b39ffdef55de4df2809c5b639d3ff80d618d8160a095d2fd49dca"
 $fontDir = Join-Path $root "app/ui/fonts"
+# The number face of UI v2 (IBM Plex Mono, SIL Open Font License) from the same commit,
+# each file checked by its git blob id.
+$plexFiles = [ordered]@{
+    "IBMPlexMono-Regular.ttf"  = "651ae32e923ab0ee2bea67c86ca9c3ef587073f4"
+    "IBMPlexMono-Medium.ttf"   = "b04ffc0f2fe16002867b64e975a8ca29794d0d69"
+    "IBMPlexMono-SemiBold.ttf" = "1a8a602b1c5c65c7a2b0a95f28c80c2b404f05a6"
+}
 
 if (-not $SkipInstall) { Invoke-Step "Install" { python -m pip install -e ".[dev]" } }
 Invoke-Step "Persian font" {
@@ -37,6 +55,18 @@ Invoke-Step "Persian font" {
     $hash = (Get-FileHash -LiteralPath $font -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($hash -ne $fontSha256) { throw "Vazirmatn font has SHA-256 $hash, expected $fontSha256" }
     Write-Host "Vazirmatn.ttf $((Get-Item -LiteralPath $font).Length) bytes, SHA-256 ok"
+}
+Invoke-Step "Number font" {
+    $base = "https://raw.githubusercontent.com/google/fonts/$fontCommit/ofl/ibmplexmono"
+    foreach ($name in $plexFiles.Keys) {
+        $file = Join-Path $fontDir $name
+        Invoke-WebRequest -Uri "$base/$name" -OutFile $file
+        $sha = Get-GitBlobSha $file
+        $expected = $plexFiles[$name]
+        if ($sha -ne $expected) { throw "$name has git id $sha, expected $expected" }
+        Write-Host "$name $((Get-Item -LiteralPath $file).Length) bytes, git id ok"
+    }
+    Invoke-WebRequest -Uri "$base/OFL.txt" -OutFile (Join-Path $fontDir "OFL-IBMPlexMono.txt")
 }
 Invoke-Step "Source self-check" { python -m app --self-check }
 Invoke-Step "PyInstaller" {
@@ -61,6 +91,8 @@ Invoke-Step "PyInstaller" {
 
 $bundledFont = Join-Path $root "dist/MT5TradingWorkstation/_internal/app/ui/fonts/Vazirmatn.ttf"
 if (-not (Test-Path -LiteralPath $bundledFont)) { throw "The Persian font is missing from the build" }
+$bundledPlex = Join-Path $root "dist/MT5TradingWorkstation/_internal/app/ui/fonts/IBMPlexMono-Regular.ttf"
+if (-not (Test-Path -LiteralPath $bundledPlex)) { throw "The number font is missing from the build" }
 
 $exe = Join-Path $root "dist/MT5TradingWorkstation/MT5TradingWorkstation.exe"
 $report = Join-Path $root "dist/self-check.txt"
