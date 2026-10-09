@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/pvwvuow/tradeer/compare/v0.32.0...v0.33.0) (2026-10-09)
+
+
+### Features
+
+* **ui:** No Curve v2 tokens and fonts, light theme by default (Phase 20a) ([#107](https://github.com/pvwvuow/tradeer/issues/107)) ([c20c964](https://github.com/pvwvuow/tradeer/commit/c20c96408d553f0558f08fb388d7210012352da3))
+
 ## [0.32.0](https://github.com/pvwvuow/tradeer/compare/v0.31.1...v0.32.0) (2026-10-09)
 
 
