@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/pvwvuow/tradeer/compare/v0.30.0...v0.31.0) (2026-10-09)
+
+
+### Features
+
+* **ui:** Workstation UI v2 look (19a): ink and cream theme, numbered sidebar ([#99](https://github.com/pvwvuow/tradeer/issues/99)) ([8f93635](https://github.com/pvwvuow/tradeer/commit/8f9363553db37395f618da615479c693c3db4c6e))
+
 ## [0.30.0](https://github.com/pvwvuow/tradeer/compare/v0.29.0...v0.30.0) (2026-10-08)
 
 
