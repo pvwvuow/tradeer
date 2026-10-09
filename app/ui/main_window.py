@@ -10,6 +10,9 @@ show an icon or an arrow get a name for screen readers.
 
 7 October 2026 polish: the Windows title bar takes the theme's colors, a page fades in when
 it opens, and everything clickable shows a hand cursor.
+
+0.31 (UI v2, docs/UI_V2.md): the sidebar numbers the pages 01 to 14 like the sections of a
+manual, without icons, and the current page is drawn inverted (cream on ink).
 """
 
 from __future__ import annotations
@@ -77,7 +80,6 @@ from app.ui.signals_page import SignalsContext, SignalsPage
 from app.ui.strategies_page import StrategiesPage
 from app.ui.style import (
     ICON_SIZE,
-    PAGE_GLYPHS,
     Glyph,
     chip,
     glyph_icon,
@@ -572,20 +574,22 @@ class MainWindow(QMainWindow):
         layout.setSpacing(2)
         self._nav_group = QButtonGroup(self)
         self._nav_group.setExclusive(True)
+        number = 0
         for group in ADVANCED_GROUPS:
             layout.addWidget(styled_label(group.upper(), "section"))
             for spec in pages_in_group(group):
-                button = QPushButton(spec.title)
+                number += 1
+                button = QPushButton(nav_text(number, spec.title))
                 button.setObjectName(f"nav_{spec.page_id}")
                 button.setProperty("nav", True)
                 button.setCheckable(True)
-                button.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+                button.setAccessibleName(spec.title)
                 button.setToolTip(spec.summary)
                 button.clicked.connect(self._nav_slot(spec.page_id))
                 self._nav_group.addButton(button)
                 self._nav_buttons[spec.page_id] = button
                 layout.addWidget(button)
-            layout.addSpacing(6)
+            layout.addSpacing(10)
         layout.addStretch(1)
         hint = styled_label("Ctrl+K opens the command palette", "status", wrap=True)
         hint.setObjectName("SidebarHint")
@@ -593,10 +597,7 @@ class MainWindow(QMainWindow):
         return sidebar
 
     def _apply_icons(self, tokens: ThemeTokens) -> None:
-        """Redraw the icon-font icons in the theme's colors (they are pixmaps, not text)."""
-        for page_id, button in self._nav_buttons.items():
-            glyph = PAGE_GLYPHS.get(page_id, "")
-            button.setIcon(glyph_icon(glyph, tokens.text_secondary, tokens.accent))
+        """Redraw the top bar's icon-font icons in the theme's colors (pixmaps, not text)."""
         for button, glyph in (
             (self.search_button, Glyph.SEARCH),
             (self.view_button, Glyph.SWITCH),
@@ -747,6 +748,11 @@ def _ghost_button(text: str, name: str) -> QPushButton:
     button.setObjectName(name)
     button.setProperty("variant", "ghost")
     return button
+
+
+def nav_text(number: int, title: str) -> str:
+    """A sidebar entry, e.g. "01   Dashboard" (UI v2 numbers the pages 01 to 14)."""
+    return f"{number:02d}   {title}"
 
 
 def page_crumb(page_id: str) -> str:

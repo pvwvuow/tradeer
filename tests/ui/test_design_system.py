@@ -20,9 +20,9 @@ from app.core.ui_prefs import UiPrefs, ViewMode
 from app.mt5.connection import ConnectionState, ConnectionStatus
 from app.mt5.models import AccountKind, AccountSnapshot, MarginMode
 from app.ui.dashboard_page import limit_tone
-from app.ui.main_window import MainWindow, connection_chip, mode_tone, page_crumb
+from app.ui.main_window import MainWindow, connection_chip, mode_tone, nav_text, page_crumb
 from app.ui.pages import PageHeader, empty_state, page_header_for
-from app.ui.style import chip, icons_available, set_chip, style_plots, style_tables
+from app.ui.style import chip, set_chip, style_plots, style_tables
 from app.ui.tables import make_table
 from app.ui.theme import DARK, LIGHT, build_qss
 
@@ -140,10 +140,19 @@ def test_main_window_top_bar_follows_the_page_mode_and_connection(
     window.set_connection_status(status)
     assert window.connection_chip.property("chip") == "profit"
     assert window.connection_chip.toolTip() == status.status_bar_text()
-    for button in window.nav_buttons.values():
-        assert button.icon().isNull() is not icons_available()
     window.toggle_view_mode()
     assert not window.search_button.isVisible()
+
+
+def test_the_sidebar_numbers_its_pages_without_icons(qtbot: QtBot, tmp_path: Path) -> None:
+    window = MainWindow(UiPrefs(view_mode=ViewMode.ADVANCED, onboarded=True), tmp_path)
+    qtbot.addWidget(window)
+    buttons = list(window.nav_buttons.values())
+    for number, button in enumerate(buttons, start=1):
+        assert button.icon().isNull(), button.objectName()
+        assert button.text() == nav_text(number, button.accessibleName())
+    assert nav_text(1, "Dashboard") == "01   Dashboard"
+    assert buttons[0].text().startswith("01") and buttons[-1].text()[:2] == f"{len(buttons):02d}"
 
 
 def test_charts_and_tables_follow_the_theme(qtbot: QtBot, tmp_path: Path) -> None:
