@@ -1005,7 +1005,7 @@ class HomePage(QWidget):
         self.bridge.signals.connect(self.show_signals, Qt.ConnectionType.QueuedConnection)
         self.bridge.trading.connect(self.show_trading, Qt.ConnectionType.QueuedConnection)
         self.bridge.risk.connect(self.show_risk, Qt.ConnectionType.QueuedConnection)
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)  # the first-start panel or the proposal, then the aside
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self._build_welcome(), 1)
@@ -1013,8 +1013,10 @@ class HomePage(QWidget):
         self.scroll_area.setObjectName("HomeScroll")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setWidget(self._build_content())
+        self.scroll_area.setWidget(self._build_main())
         layout.addWidget(self.scroll_area, 1)
+        layout.addWidget(hairline(vertical=True))
+        layout.addWidget(self._build_aside())  # the stop button stays on screen, even first
         self.toast = Toast(self)
         if signals is not None:
             signals.pipeline.add_listener(self.bridge.signals.emit)
@@ -1062,16 +1064,6 @@ class HomePage(QWidget):
         outer.addStretch(1)
         self.welcome_area.setVisible(False)
         return self.welcome_area
-
-    def _build_content(self) -> QWidget:
-        content = QWidget()
-        row = QHBoxLayout(content)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
-        row.addWidget(self._build_main(), 1)
-        row.addWidget(hairline(vertical=True))
-        row.addWidget(self._build_aside())
-        return content
 
     def _build_main(self) -> QWidget:
         main = QWidget()
