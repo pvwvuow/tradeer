@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.0](https://github.com/pvwvuow/tradeer/compare/v0.33.0...v0.34.0) (2026-10-09)
+
+
+### Features
+
+* **ui:** No Curve v2 frame (Phase 20b) ([#109](https://github.com/pvwvuow/tradeer/issues/109)) ([8c72ab8](https://github.com/pvwvuow/tradeer/commit/8c72ab839afecb190dd5a9c3afd014b7a7b8ba77))
+
 ## [0.33.0](https://github.com/pvwvuow/tradeer/compare/v0.32.0...v0.33.0) (2026-10-09)
 
 
