@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/pvwvuow/tradeer/compare/v0.31.0...v0.31.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* one bet per currency + London breakout close-confirmed entry (1.1.0) ([#102](https://github.com/pvwvuow/tradeer/issues/102)) ([1bcd81b](https://github.com/pvwvuow/tradeer/commit/1bcd81b4575713d85073f001c9a304c0516000b1))
+
 ## [0.31.0](https://github.com/pvwvuow/tradeer/compare/v0.30.0...v0.31.0) (2026-10-09)
 
 
