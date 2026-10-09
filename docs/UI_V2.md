@@ -4,6 +4,8 @@ The owner's own design (ClickUp artifact "MT5 Workstation UI v2", 9 October 2026
 mockup, brought to the PySide6 app in phases. The mockup is the reference; this file maps it
 to Qt and tracks what is built.
 
+Status: 19a (the look) in 0.31.0; 19b to 19e next.
+
 ## The look
 
 | Design | Qt |
