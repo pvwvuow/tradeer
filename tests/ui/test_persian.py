@@ -7,6 +7,7 @@ from PySide6.QtGui import QFont
 from pytestqt.qtbot import QtBot
 
 from app.core.ui_prefs import Language, UiPrefs, ViewMode, load_prefs
+from app.ui.home_page import WORDS_FA
 from app.ui.i18n import PERSIAN_FAMILIES, RESTART_TEXT, persian_font
 from app.ui.i18n_fa import PERSIAN
 from app.ui.main_window import LANGUAGE_TEXT, MainWindow
@@ -33,7 +34,8 @@ def test_persian_home_runs_right_to_left(qtbot: QtBot, tmp_path: Path) -> None:
     assert window.statusBar().layoutDirection() == RTL  # the UI v2 frame is Persian
     home = window.home
     assert home.empty_title.text() == PERSIAN["No trade suggestions right now"]
-    assert home.stop_button.text() == PERSIAN["Stop trading now"]
+    assert home.stop_button.text() == WORDS_FA["Close everything now"]  # the design's words
+    assert home.data_tag.text == WORDS_FA["WAITING FOR DATA"]
     not_connected = "Not connected to MetaTrader 5, so the app is not watching the market."
     assert home.state_line.text() == PERSIAN[not_connected]
     assert home.balance_title.text() == PERSIAN["PRACTICE BALANCE"]
@@ -78,7 +80,7 @@ def test_the_language_is_saved_for_the_next_start(qtbot: QtBot, tmp_path: Path) 
     window.notify_language = notes.append
     assert window.layoutDirection() == LTR
     assert window.language_button.text() == LANGUAGE_TEXT
-    assert window.home.stop_button.text() == "Stop trading now"
+    assert window.home.stop_button.text() == "Close everything now"
     assert window.toggle_language() is Language.FA
     assert load_prefs(tmp_path).language is Language.FA
     assert notes == [RESTART_TEXT] and window.language_button.text() == LANGUAGE_TEXT
