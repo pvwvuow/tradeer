@@ -173,7 +173,7 @@ def section(layout: QVBoxLayout, title: str, tag: str = "") -> None:
     layout.addLayout(row)
 
 
-def field(layout: QVBoxLayout, label: str, widget: QWidget) -> None:
+def panel_field(layout: QVBoxLayout, label: str, widget: QWidget) -> None:
     layout.addWidget(lab_label(label, "label"))
     layout.addWidget(widget)
 
@@ -711,10 +711,7 @@ class UsagePanel(QWidget):
 
     def refresh(self, now: float | None = None) -> None:
         moment = time.time() if now is None else now
-        if self.store is None:
-            summary = None
-        else:
-            summary = self.store.summary(moment, self.fa)
+        summary = None if self.store is None else self.store.summary(moment, self.fa)
         cap = self.cap()
         if summary is None:
             for label in (self.input_value, self.output_value):
