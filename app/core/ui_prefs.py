@@ -1,5 +1,10 @@
 """Persisted UI preferences (theme, language, Simple/Advanced view, first-run screen), per
-profile."""
+profile.
+
+0.33 (No Curve v2): the design opens in the light theme, so the default theme is light. A
+preferences file written before 0.33 (no `look`, or an older one) is moved to the light
+theme once; the owner can switch back to dark and that choice is kept from then on.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 PREFS_FILE_NAME = "ui_prefs.json"
+LOOK = 2  # 1: the 0.13 to 0.32 looks; 2: No Curve v2 (light theme by default)
 
 
 class ThemeName(StrEnum):
@@ -30,16 +36,26 @@ class Language(StrEnum):
 class UiPrefs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    theme: ThemeName = ThemeName.DARK
+    theme: ThemeName = ThemeName.LIGHT
     view_mode: ViewMode = ViewMode.SIMPLE
     onboarded: bool = False  # the first-run "practice money" screen was answered (spec F0)
     language: Language = Language.EN  # used from the next start of the app
+    look: int = LOOK  # the design the theme choice was made in (see `migrate`)
+
+
+def migrate(prefs: UiPrefs) -> UiPrefs:
+    """Preferences from an older look start once in the new design's light theme."""
+    if prefs.look >= LOOK:
+        return prefs
+    return prefs.model_copy(update={"theme": ThemeName.LIGHT, "look": LOOK})
 
 
 def load_prefs(directory: Path) -> UiPrefs:
     try:
         raw = json.loads((directory / PREFS_FILE_NAME).read_text(encoding="utf-8"))
-        return UiPrefs.model_validate(raw)
+        if isinstance(raw, dict) and "look" not in raw:
+            raw = {**raw, "look": 1}  # written before 0.33
+        return migrate(UiPrefs.model_validate(raw))
     except (OSError, ValueError):
         # Missing, unreadable, corrupt or invalid (pydantic errors are ValueErrors).
         return UiPrefs()

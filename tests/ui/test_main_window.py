@@ -62,10 +62,10 @@ def test_advanced_view_has_grouped_sidebar_and_navigation(qtbot: QtBot, tmp_path
 
 def test_theme_switch_regenerates_and_persists(qtbot: QtBot, tmp_path: Path) -> None:
     window = make_window(qtbot, tmp_path)
-    assert DARK.bg in window.styleSheet()
+    assert LIGHT.bg in window.styleSheet()  # No Curve v2 opens in the light theme
     qtbot.mouseClick(window.theme_button, Qt.MouseButton.LeftButton)
-    assert LIGHT.bg in window.styleSheet()
-    assert load_prefs(tmp_path).theme is ThemeName.LIGHT
+    assert DARK.bg in window.styleSheet()
+    assert load_prefs(tmp_path).theme is ThemeName.DARK
 
 
 def test_command_palette_filters_and_navigates(qtbot: QtBot, tmp_path: Path) -> None:
@@ -146,7 +146,7 @@ def test_crash_state_is_plain_data_that_follows_the_ui(qtbot: QtBot, tmp_path: P
     assert window.crash_state() == {
         "page": "dashboard",
         "view_mode": "advanced",
-        "theme": "light",
+        "theme": "dark",
         "operating_mode": "paper",
         "mt5": "disconnected",
     }

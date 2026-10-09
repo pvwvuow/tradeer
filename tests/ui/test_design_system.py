@@ -162,8 +162,8 @@ def test_charts_and_tables_follow_the_theme(qtbot: QtBot, tmp_path: Path) -> Non
     qtbot.addWidget(window)
     assert style_plots(window, LIGHT) >= 3
     assert style_tables(window) >= 3
-    window.toggle_theme()
-    assert LIGHT.card in window.styleSheet()
+    window.toggle_theme()  # the light default to dark
+    assert DARK.bg in window.styleSheet()
 
 
 def test_every_advanced_page_gets_the_full_header(qtbot: QtBot, tmp_path: Path) -> None:
