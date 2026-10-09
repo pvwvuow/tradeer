@@ -1,8 +1,15 @@
 """Main window: Simple/Advanced views, grouped sidebar, status bar and command palette.
 
-With Persian chosen (spec A, F1) the window runs right to left in the Vazirmatn font, and
-the Simple view (Home and the top bar) is shown in Persian; the Advanced pages and the
-status bar stay English, left to right.
+0.32 (UI v2, docs/UI_V2.md): the frame is drawn like the owner's design of 9 October 2026.
+The top bar carries the logo, "MT5 Workstation", the crumb ("TRADE / 01"), the MT5 tag
+("MT5 · DEMO · CONNECTED"), the mode tag, Search with its Ctrl K hint, the Simple /
+Advanced segment, FA · EN and the theme switch; a LIVE ticker strip runs under it in the
+Advanced view; the sidebar numbers the pages 01 to 14 under TRADE, ANALYZE and SYSTEM; and
+the status bar ends with the coral Stop trading button and its Ctrl Shift K hint.
+
+With Persian chosen (spec A, F1) the whole frame and the page headers are Persian and run
+right to left, in the Vazirmatn font, like the design. The bodies of the Advanced pages
+stay English (left to right) until each page gets its own UI v2 layout.
 
 Keyboard (spec F1): Tab reaches every control and shows a focus ring, Ctrl+, opens Settings,
 Ctrl+K the command palette (Advanced view) and Ctrl+Shift+K the kill switch. Buttons that only
@@ -10,9 +17,6 @@ show an icon or an arrow get a name for screen readers.
 
 7 October 2026 polish: the Windows title bar takes the theme's colors, a page fades in when
 it opens, and everything clickable shows a hand cursor.
-
-0.31 (UI v2, docs/UI_V2.md): the sidebar numbers the pages 01 to 14 like the sections of a
-manual, without icons, and the current page is drawn inverted (cream on ink).
 """
 
 from __future__ import annotations
@@ -59,7 +63,7 @@ from app.ui.dashboard_page import DashboardContext, DashboardPage
 from app.ui.data_page import DataPage
 from app.ui.health_page import HealthContext, HealthPage
 from app.ui.home_page import HomePage
-from app.ui.i18n import LANGUAGE_BUTTON, RESTART_TEXT, Translator, persian_font, translate_widgets
+from app.ui.i18n import RESTART_TEXT, Translator, persian_font, translate_widgets
 from app.ui.journal_page import JournalContext, JournalPage
 from app.ui.logs_page import LogsPage
 from app.ui.market_page import MarketContext, MarketPage
@@ -73,9 +77,30 @@ from app.ui.navigation import (
     pages_in_group,
 )
 from app.ui.notifications_page import NotificationsContext, NotificationsPage
-from app.ui.pages import PlaceholderPage, decorate_page, styled_label
+from app.ui.pages import PageHeader, PlaceholderPage, decorate_page, styled_label
 from app.ui.positions_page import KILL_TEXT, PositionsPage, TradingContext
 from app.ui.risk_page import RiskContext, RiskPage
+from app.ui.shell import (
+    FOOTER_HEIGHT,
+    FRAME_FA,
+    PAGE_HEADS_FA,
+    SIDEBAR_WIDTH,
+    TEXT_FAMILY,
+    TOP_BAR_HEIGHT,
+    DayOpens,
+    GroupRule,
+    KbdButton,
+    Led,
+    LogoMark,
+    NavButton,
+    Segmented,
+    Themed,
+    TickerStrip,
+    frame_qss,
+    load_frame_fonts,
+    persian_digits,
+    shell_text,
+)
 from app.ui.signals_page import SignalsContext, SignalsPage
 from app.ui.strategies_page import StrategiesPage
 from app.ui.style import (
@@ -95,10 +120,15 @@ from app.ui.theme import ThemeTokens, build_qss, tokens_for
 from app.ui.updates_page import UpdateBanner, UpdatesContext, UpdatesPage
 from app.ui.window_chrome import style_title_bar
 
-SIDEBAR_WIDTH = 224
 KILL_SHORTCUT = "Ctrl+Shift+K"
 SETTINGS_SHORTCUT = "Ctrl+,"
 LANGUAGE_TITLE = "Language / \u0632\u0628\u0627\u0646"
+LANGUAGE_TEXT = "FA \u00b7 EN"
+BRAND = "MT5 Workstation"
+POWER_GLYPH = "\ue7e8"
+PAGE_NUMBERS: dict[str, int] = {
+    spec.page_id: number for number, spec in enumerate(ADVANCED_PAGES, start=1)
+}
 
 
 class MainWindow(QMainWindow):
@@ -128,7 +158,8 @@ class MainWindow(QMainWindow):
         self.log_controls = log_controls
         self._prefs_dir = prefs_dir
         self._page_index: dict[str, int] = {}
-        self._nav_buttons: dict[str, QPushButton] = {}
+        self._nav_buttons: dict[str, NavButton] = {}
+        self._group_rules: list[GroupRule] = []
         self._palette: CommandPalette | None = None
         self._crash_dialog: CrashDialog | None = None
         self.page_motion = True  # pages fade in when they open
@@ -141,14 +172,22 @@ class MainWindow(QMainWindow):
             "mt5": ConnectionState.DISCONNECTED.value,
         }
         self.setWindowTitle(f"MT5 Trading Workstation {__version__}")
-        self.setFont(ui_font(self.font()))
+        load_frame_fonts()
+        font = ui_font(self.font())
+        font.setFamilies([TEXT_FAMILY, *font.families()])
+        self.setFont(font)
         self.translator = Translator(prefs.language)
+        self.frame_translator = Translator(prefs.language, FRAME_FA)
+        self.persian = self.translator.right_to_left
         self.notify_language: Callable[[str], None] = self._show_language_note
-        if self.translator.right_to_left:
+        if self.persian:
             self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
             self.setFont(persian_font(self.font()))
         self.resize(1360, 860)
         self.setMinimumSize(1024, 640)
+        self._connected = False
+        self._day_opens = DayOpens()
+        self._prices: Callable[[], dict[str, float]] | None = None
         root = QWidget()
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -160,6 +199,9 @@ class MainWindow(QMainWindow):
             updates.restart = self.restart_to_update
         self.update_banner = UpdateBanner(updates, self.show_updates)
         root_layout.addWidget(self.update_banner)
+        self.ticker = TickerStrip()
+        self.ticker.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        root_layout.addWidget(self.ticker)
         body = QWidget()
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
@@ -196,7 +238,6 @@ class MainWindow(QMainWindow):
         self.trading = trading
         if trading is not None:
             self.signals_page.mode_text = lambda: trading.settings.mode.label
-        self._connected = False
         self.settings_tabs: QTabWidget | None = None
         for spec in ADVANCED_PAGES:
             if spec.page_id == "dashboard":
@@ -241,7 +282,8 @@ class MainWindow(QMainWindow):
             else:
                 self._add_page(spec.page_id, PlaceholderPage(spec))
         self._build_status_bar()
-        if self.translator.right_to_left:
+        self._dress_page_headers()
+        if self.persian:
             self._keep_english_left_to_right()
         style_tables(self)
         name_controls(self)
@@ -252,6 +294,16 @@ class MainWindow(QMainWindow):
         if market is not None:
             watch = market.watch
             self.home.quote = lambda symbol: watch.snapshot.quotes.get(symbol)
+
+            def prices() -> dict[str, float]:
+                found: dict[str, float] = {}
+                for symbol, quote in watch.snapshot.quotes.items():
+                    bid = getattr(quote, "bid", None)
+                    if isinstance(bid, int | float):
+                        found[symbol] = float(bid)
+                return found
+
+            self._prices = prices
         self.home.show_welcome(not prefs.onboarded)
         if connection is not None and self.connection_page is not None:
             self.connection_page.bridge.status.connect(self.set_connection_status)
@@ -278,7 +330,15 @@ class MainWindow(QMainWindow):
 
     @property
     def nav_buttons(self) -> dict[str, QPushButton]:
-        return dict(self._nav_buttons)
+        found: dict[str, QPushButton] = {}
+        found.update(self._nav_buttons)
+        return found
+
+    @property
+    def view_button(self) -> QPushButton:
+        """The segment that switches to the other view (Advanced while Simple is shown)."""
+        simple = self.prefs.view_mode is ViewMode.SIMPLE
+        return self.view_segment.buttons[1 if simple else 0]
 
     def current_page_id(self) -> str:
         current = self.pages.currentIndex()
@@ -299,7 +359,8 @@ class MainWindow(QMainWindow):
         if changed and self.page_motion and page is not None:
             fade_in(page)
         self._crash_state["page"] = page_id
-        self.page_crumb.setText(page_crumb(page_id))
+        simple = self.prefs.view_mode is ViewMode.SIMPLE
+        self.page_crumb.setText("SIMPLE VIEW" if simple else page_crumb(page_id))
         button = self._nav_buttons.get(page_id)
         if button is not None:
             button.setChecked(True)
@@ -309,9 +370,10 @@ class MainWindow(QMainWindow):
         self._crash_state["view_mode"] = mode.value
         advanced = mode is ViewMode.ADVANCED
         self.sidebar.setVisible(advanced)
+        self.ticker.setVisible(advanced)
         self._shortcut.setEnabled(advanced)
         self.search_button.setVisible(advanced)
-        self.view_button.setText("Switch to Simple" if advanced else "Switch to Advanced")
+        self.view_segment.choose(1 if advanced else 0)
         self.settings_button.setVisible(not advanced)
         self.settings_button.setText("Settings")
         # Simple view: the plain status line and Stop button on Home, the full bar on request.
@@ -357,7 +419,7 @@ class MainWindow(QMainWindow):
         chosen = Language.EN if self.prefs.language is Language.FA else Language.FA
         self.prefs = self.prefs.model_copy(update={"language": chosen})
         self._persist()
-        self.language_button.setText(LANGUAGE_BUTTON[chosen])
+        self.language_button.setToolTip(f"{LANGUAGE_TITLE}: {chosen.value.upper()}")
         self.notify_language(RESTART_TEXT)
         return chosen
 
@@ -403,13 +465,14 @@ class MainWindow(QMainWindow):
         self.prefs = self.prefs.model_copy(update={"theme": theme})
         self._crash_state["theme"] = theme.value
         tokens = tokens_for(theme)
-        self.setStyleSheet(build_qss(tokens))
+        self.setStyleSheet(build_qss(tokens) + frame_qss(tokens, self.persian))
         style_title_bar(self, tokens)
         if self.logs_page is not None:
             self.logs_page.apply_tokens(tokens)
         self.market_page.apply_tokens(tokens)
         self.home.apply_tokens(tokens)
         style_plots(self, tokens)
+        self._apply_frame_tokens(tokens)
         self._apply_icons(tokens)
         next_theme = "light" if theme is ThemeName.DARK else "dark"
         self.theme_button.setToolTip(f"Switch to the {next_theme} theme")
@@ -453,10 +516,11 @@ class MainWindow(QMainWindow):
         if not isinstance(status, ConnectionStatus):
             return
         self._crash_state["mt5"] = status.state.value
-        self.connection_label.setText(f"\u25cf {status.status_bar_text()}")
         text, tone = connection_chip(status)
         set_chip(self.connection_chip, text, tone)
         self.connection_chip.setToolTip(status.status_bar_text())
+        self.connection_label.setText(footer_connection(status, self.persian))
+        self.connection_led.set_tone(tone)
         self._connected = status.connected
         badge = "ANALYSIS-ONLY" if status.analysis_only else self.operating_mode_label().upper()
         self._set_mode(badge)
@@ -477,8 +541,20 @@ class MainWindow(QMainWindow):
         self._crash_state["operating_mode"] = snapshot.mode.value
         if not self.mode_badge.text().startswith("ANALYSIS-ONLY"):
             self._set_mode(snapshot.mode.label.upper())
-        self.bot_state_label.setText(bot_state_text(snapshot, self._connected))
+        self.bot_state_label.setText(self._foot(bot_state_text(snapshot, self._connected)))
         self._retranslate()
+
+    def set_nav_badge(self, page_id: str, text: str, tone: str = "warning") -> None:
+        """A small count next to a sidebar page, e.g. the signals waiting for approval."""
+        button = self._nav_buttons.get(page_id)
+        if button is not None:
+            button.set_badge(text, tone)
+
+    def set_nav_dot(self, page_id: str, tone: str) -> None:
+        """A status light next to a sidebar page ("" hides it), e.g. Health in amber."""
+        button = self._nav_buttons.get(page_id)
+        if button is not None:
+            button.set_dot(tone)
 
     def ask_kill(self) -> bool:
         """The kill switch from the status bar or Ctrl+Shift+K, always with a confirmation."""
@@ -489,15 +565,16 @@ class MainWindow(QMainWindow):
         moment = time.time() if now is None else now
         change, seconds = next_change(moment)
         upcoming = f" \u00b7 {change} in {duration_text(seconds)}" if change else ""
-        self.session_clock_label.setText(f"{session_label(moment)}{upcoming}")
+        self.session_clock_label.setText(self._foot(f"{session_label(moment)}{upcoming}"))
         self.news_label.setText(self.market_page.next_news_text(moment))
+        self._update_ticker(moment)
         self.home.tick()
         self._retranslate()
 
     def set_sync_status(self, status: object) -> None:
         """Slot: show the cloud sync state in the status bar."""
         if isinstance(status, SyncStatus):
-            self.sync_label.setText(status.status_bar_text())
+            self.sync_label.setText(self._foot(status.status_bar_text()))
             self.sync_label.setToolTip(status.message)
 
     def trigger_crash_test(self) -> None:
@@ -520,92 +597,118 @@ class MainWindow(QMainWindow):
         self._palette.open()
         return self._palette
 
+    def _word(self, english: str) -> str:
+        return shell_text(english, self.persian)
+
+    def _foot(self, text: str) -> str:
+        """A status bar text in the chosen language (Persian counts in Persian digits)."""
+        translated = self.frame_translator.text(text)
+        return persian_digits(translated) if self.persian else translated
+
     def _build_top_bar(self) -> QFrame:
         bar = QFrame()
         bar.setObjectName("TopBar")
+        bar.setFixedHeight(TOP_BAR_HEIGHT)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(8)
-        logo = styled_label("M5", "logo")
-        logo.setObjectName("Logo")
-        logo.setFixedSize(QSize(30, 30))
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(logo)
-        layout.addWidget(styled_label("MT5 Trading Workstation", "brand"))
+        layout.setContentsMargins(18, 0, 18, 0)
+        layout.setSpacing(0)
+        self.logo = LogoMark()
+        layout.addWidget(self.logo)
+        layout.addSpacing(10)
+        layout.addWidget(styled_label(BRAND, "brand"))
         layout.addSpacing(16)
         self.page_crumb = styled_label("", "crumb")
         self.page_crumb.setObjectName("PageCrumb")
         layout.addWidget(self.page_crumb)
         layout.addStretch(1)
-        self.connection_chip = chip("MT5 not connected", "neutral")
+        self.connection_chip = chip("\u25cf MT5 \u00b7 NOT CONNECTED", "neutral")
         self.connection_chip.setObjectName("ConnectionChip")
         self.mode_chip = chip(self.defaults.mode.label.upper(), mode_tone(self.defaults.mode.label))
         self.mode_chip.setObjectName("ModeChip")
         self.mode_chip.setToolTip("Operating mode")
-        layout.addWidget(self.connection_chip)
-        layout.addWidget(self.mode_chip)
-        layout.addSpacing(8)
-        self.search_button = _ghost_button("Search   Ctrl+K", "SearchButton")
+        self.search_button = KbdButton(self._word("Search"), "Ctrl K")
+        self.search_button.setObjectName("SearchButton")
         self.search_button.setToolTip("Command palette: every page and action")
         self.search_button.clicked.connect(self.open_command_palette)
-        self.view_button = _ghost_button("", "ViewModeButton")
-        self.view_button.clicked.connect(self.toggle_view_mode)
+        self.view_segment = Segmented([self._word("Simple"), self._word("Advanced")])
+        self.view_segment.setObjectName("Segmented")
+        self.view_segment.setToolTip("Simple or Advanced view")
+        self.view_segment.group.idClicked.connect(self._segment_clicked)
+        self.language_button = _ghost_button(LANGUAGE_TEXT, "Language")
+        self.language_button.setToolTip(LANGUAGE_TITLE)
+        self.language_button.clicked.connect(self.toggle_language)
         self.theme_button = _ghost_button("", "ThemeButton")
         self.theme_button.clicked.connect(self.toggle_theme)
         self.settings_button = _ghost_button("Settings", "SimpleSettingsButton")
         self.settings_button.setToolTip(f"Settings ({SETTINGS_SHORTCUT})")
         self.settings_button.clicked.connect(self.toggle_simple_settings)
-        self.language_button = _ghost_button(LANGUAGE_BUTTON[self.prefs.language], "Language")
-        self.language_button.setToolTip(LANGUAGE_TITLE)
-        self.language_button.clicked.connect(self.toggle_language)
-        layout.addWidget(self.search_button)
-        layout.addWidget(self.settings_button)
-        layout.addWidget(self.view_button)
-        layout.addWidget(self.theme_button)
-        layout.addWidget(self.language_button)
+        cluster: list[QWidget] = [
+            self.connection_chip,
+            self.mode_chip,
+            self.search_button,
+            self.view_segment,
+            self.language_button,
+            self.theme_button,
+            self.settings_button,
+        ]
+        for index, widget in enumerate(cluster):
+            if index:
+                layout.addSpacing(10)
+            layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
         return bar
 
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
         sidebar.setFixedWidth(SIDEBAR_WIDTH)
+        sidebar.setAccessibleName(self._word("Pages"))
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(12, 8, 12, 12)
-        layout.setSpacing(2)
+        layout.setContentsMargins(10, 6, 10, 12)
+        layout.setSpacing(0)
         self._nav_group = QButtonGroup(self)
         self._nav_group.setExclusive(True)
-        number = 0
         for group in ADVANCED_GROUPS:
-            layout.addWidget(styled_label(group.upper(), "section"))
+            rule = GroupRule(group)
+            self._group_rules.append(rule)
+            layout.addWidget(rule)
             for spec in pages_in_group(group):
-                number += 1
-                button = QPushButton(nav_text(number, spec.title))
+                button = NavButton(PAGE_NUMBERS[spec.page_id], self._word(spec.title))
                 button.setObjectName(f"nav_{spec.page_id}")
-                button.setProperty("nav", True)
-                button.setCheckable(True)
-                button.setAccessibleName(spec.title)
-                button.setToolTip(spec.summary)
+                head = PAGE_HEADS_FA.get(spec.page_id)
+                button.setToolTip(head[1] if self.persian and head else spec.summary)
                 button.clicked.connect(self._nav_slot(spec.page_id))
                 self._nav_group.addButton(button)
                 self._nav_buttons[spec.page_id] = button
                 layout.addWidget(button)
-            layout.addSpacing(10)
         layout.addStretch(1)
-        hint = styled_label("Ctrl+K opens the command palette", "status", wrap=True)
-        hint.setObjectName("SidebarHint")
-        layout.addWidget(hint)
         return sidebar
 
+    def _apply_frame_tokens(self, tokens: ThemeTokens) -> None:
+        """Give the painted frame pieces the theme's colors."""
+        painted: list[Themed] = [
+            self.logo,
+            self.ticker,
+            self.search_button,
+            self.kill_switch,
+            self.connection_led,
+            *self._group_rules,
+            *self._nav_buttons.values(),
+        ]
+        for widget in painted:
+            widget.apply_tokens(tokens)
+
     def _apply_icons(self, tokens: ThemeTokens) -> None:
-        """Redraw the top bar's icon-font icons in the theme's colors (pixmaps, not text)."""
+        """Redraw the frame's icon-font icons in the theme's colors (pixmaps, not text)."""
+        self.search_button.set_glyph(glyph_icon(Glyph.SEARCH, tokens.text_secondary))
+        self.kill_switch.set_glyph(glyph_icon(POWER_GLYPH, tokens.loss))
         for button, glyph in (
-            (self.search_button, Glyph.SEARCH),
-            (self.view_button, Glyph.SWITCH),
             (self.theme_button, Glyph.THEME),
             (self.settings_button, Glyph.SETTINGS),
         ):
             button.setIcon(glyph_icon(glyph, tokens.text_secondary))
-            button.setIconSize(QSize(ICON_SIZE - 2, ICON_SIZE - 2))
+            button.setIconSize(QSize(ICON_SIZE - 1, ICON_SIZE - 1))
+        if icons_available():
+            self.theme_button.setFixedSize(34, 34)
 
     def _set_mode(self, text: str) -> None:
         self.mode_badge.setText(text)
@@ -614,39 +717,89 @@ class MainWindow(QMainWindow):
     def _build_status_bar(self) -> None:
         bar = QStatusBar()
         bar.setSizeGripEnabled(False)
-        self.connection_label = styled_label("● MT5: not connected", "status")
-        self.mode_badge = styled_label(self.defaults.mode.label.upper(), "badge")
-        self.bot_state_label = styled_label("Bot: stopped", "status")
-        self.kill_switch = QPushButton("Stop trading")
+        bar.setFixedHeight(FOOTER_HEIGHT)
+        connection = QWidget()
+        row = QHBoxLayout(connection)
+        row.setContentsMargins(7, 0, 0, 0)
+        row.setSpacing(0)
+        self.connection_led = Led(6)
+        self.connection_label = styled_label(self._connection_text(), "foot")
+        row.addWidget(self.connection_led, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.connection_label)
+        self.mode_badge = styled_label(self.defaults.mode.label.upper(), "foot_num")
+        self.mode_badge.setObjectName("ModeBadge")
+        self.bot_state_label = styled_label(self._foot("Bot: stopped"), "foot")
+        self.kill_switch = KbdButton(
+            self._word("Stop trading"),
+            "Ctrl Shift K",
+            "danger",
+            point_size=9.0,
+            height=24,
+        )
         self.kill_switch.setObjectName("KillSwitch")
         self.kill_switch.setProperty("variant", "danger")
         self.kill_switch.setEnabled(self.trading is not None)
         tip = f"Kill switch ({KILL_SHORTCUT}): {KILL_TEXT.splitlines()[0]}"
         self.kill_switch.setToolTip(tip if self.trading is not None else "Nothing is running.")
         self.kill_switch.clicked.connect(self.ask_kill)
-        self.sync_label = styled_label("Cloud: off", "status")
+        self.sync_label = styled_label(self._foot("Cloud: off"), "foot")
         self.sync_label.setObjectName("SyncLabel")
-        self.session_clock_label = styled_label("", "status")
+        self.session_clock_label = styled_label("", "foot")
         self.session_clock_label.setObjectName("SessionClock")
-        self.news_label = styled_label("", "status")
+        self.news_label = styled_label("", "foot")
         self.news_label.setObjectName("NextNews")
-        bar.addWidget(self.connection_label)
+        bar.addWidget(connection)
         bar.addWidget(self.mode_badge)
         bar.addWidget(self.bot_state_label)
         bar.addWidget(self.sync_label)
         bar.addWidget(self.session_clock_label)
         bar.addWidget(self.news_label)
-        bar.addPermanentWidget(styled_label(f"v{__version__}", "status"))
+        bar.addPermanentWidget(styled_label(f"v{__version__}", "foot_num"))
         bar.addPermanentWidget(self.kill_switch)
         self.setStatusBar(bar)
 
+    def _connection_text(self) -> str:
+        return footer_connection(ConnectionStatus(), self.persian)
+
+    def _dress_page_headers(self) -> None:
+        """Every page header shows its place ("SYSTEM / 11"); Persian headers in Persian."""
+        for page_id, index in self._page_index.items():
+            page = self.pages.widget(index)
+            if page_id == SIMPLE_HOME.page_id or page is None:
+                continue
+            spec = page_by_id(page_id)
+            persian = PAGE_HEADS_FA.get(page_id) if self.persian else None
+            for header in page.findChildren(PageHeader):
+                if header.title.text() != spec.title:
+                    continue
+                header.crumb.setText(page_crumb(page_id))
+                header.crumb.setVisible(True)
+                if persian is not None:
+                    header.title.setText(persian[0])
+                    header.subtitle.setText(persian[1])
+                    header.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
     def _keep_english_left_to_right(self) -> None:
-        """The Advanced pages, Settings and the status bar stay English: left to right."""
+        """The bodies of the Advanced pages and Settings stay English: left to right."""
         for page_id, index in self._page_index.items():
             page = self.pages.widget(index)
             if page_id != SIMPLE_HOME.page_id and page is not None:
                 page.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        self.statusBar().setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+                for header in page.findChildren(PageHeader):
+                    if header.crumb.text() == page_crumb(page_id):
+                        header.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+    def _update_ticker(self, now: float) -> None:
+        if self._prices is None:
+            self.ticker.set_items([], False)
+            return
+        items = self._day_opens.items(self._prices(), now)
+        self.ticker.set_items(items, self._connected)
+
+    def _segment_clicked(self, index: int) -> None:
+        mode = ViewMode.SIMPLE if index == 0 else ViewMode.ADVANCED
+        if mode is not self.prefs.view_mode:
+            self.set_view_mode(mode)
 
     def _retranslate(self) -> None:
         translate_widgets(self.translator, self.top_bar)
@@ -751,20 +904,20 @@ def _ghost_button(text: str, name: str) -> QPushButton:
 
 
 def nav_text(number: int, title: str) -> str:
-    """A sidebar entry, e.g. "01   Dashboard" (UI v2 numbers the pages 01 to 14)."""
+    """A sidebar entry's text, e.g. "01   Dashboard" (UI v2 numbers the pages 01 to 14)."""
     return f"{number:02d}   {title}"
 
 
 def page_crumb(page_id: str) -> str:
-    """The top bar's location text, e.g. "TRADE / DASHBOARD"."""
+    """Where a page sits, as the design writes it: its group and number, "TRADE / 01"."""
     spec = page_by_id(page_id)
     if spec.group == "Simple":
         return ""
-    return f"{spec.group} / {spec.title}".upper()
+    return f"{spec.group.upper()} / {PAGE_NUMBERS[page_id]:02d}"
 
 
 def mode_tone(mode: str) -> str:
-    """Chip tone of an operating mode: real orders stand out in red, watching in amber."""
+    """Tag tone of an operating mode: watching in amber, real orders in coral, else ink."""
     key = mode.strip().lower()
     if key.startswith("analysis"):
         return "warning"
@@ -774,17 +927,34 @@ def mode_tone(mode: str) -> str:
 
 
 def connection_chip(status: ConnectionStatus) -> tuple[str, str]:
-    """The top bar's short MT5 text and its tone."""
+    """The top bar's MT5 tag as the design writes it, e.g. "MT5 · DEMO · CONNECTED"."""
     account = status.account
+    dot = "\u25cf MT5 \u00b7 "
     if status.connected and account is not None:
         if account.kind is AccountKind.REAL:
-            return f"REAL \u00b7 {account.login}", "loss"
-        kind = "Demo" if account.kind is AccountKind.DEMO else account.kind.value.title()
-        return f"{kind} \u00b7 {account.login}", "profit"
+            return f"{dot}REAL \u00b7 CONNECTED", "loss"
+        return f"{dot}{account.kind.value.upper()} \u00b7 CONNECTED", "profit"
     if status.connected:
-        return "MT5 connected", "profit"
-    if status.state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING):
-        return "MT5 connecting", "warning"
+        return f"{dot}CONNECTED", "profit"
+    if status.state is ConnectionState.CONNECTING:
+        return f"{dot}CONNECTING\u2026", "warning"
+    if status.state is ConnectionState.RECONNECTING:
+        return f"{dot}RECONNECTING\u2026", "warning"
     if status.state is ConnectionState.FAILED:
-        return "MT5 failed", "loss"
-    return "MT5 not connected", "neutral"
+        return f"{dot}FAILED", "loss"
+    return f"{dot}NOT CONNECTED", "neutral"
+
+
+def footer_connection(status: ConnectionStatus, persian: bool) -> str:
+    """The status bar's MT5 text: "MT5 وصل · دمو" in Persian, the full English otherwise."""
+    if not persian:
+        return status.status_bar_text()
+    account = status.account
+    if status.connected:
+        real = account is not None and account.kind is AccountKind.REAL
+        return "MT5 وصل \u00b7 " + ("حساب واقعی" if real else "دمو")
+    if status.state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING):
+        return "در حال اتصال\u2026"
+    if status.state is ConnectionState.FAILED:
+        return "اتصال به MT5 ناموفق بود"
+    return "MT5 وصل نیست"
