@@ -10,6 +10,9 @@ readable text get a name for screen readers (`name_controls`).
 
 7 October 2026: charts draw smooth (antialiased) lines without pyqtgraph's small "A" button,
 and buttons, drop-downs and tabs show a hand cursor (`hand_cursors`), like modern apps.
+
+0.31 (UI v2): the stylesheet names one number face (IBM Plex Mono); `ui_font` registers
+Cascadia Mono and Consolas as Qt substitutes, so PCs without Plex still get a monospaced face.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.ui.theme import CHIP_TONES, DARK, ThemeTokens
+from app.ui.theme import CHIP_TONES, DARK, NUMBER_FONT, NUMBER_FONTS, ThemeTokens
 from app.ui.wheel_guard import calm_tree, install_wheel_guard
 
 ICON_FAMILIES: tuple[str, ...] = ("Segoe Fluent Icons", "Segoe MDL2 Assets")
@@ -113,7 +116,17 @@ def ui_font(base: QFont) -> QFont:
     font = QFont(base)
     font.setFamilies(list(UI_FAMILIES))
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    register_number_font()
     return font
+
+
+def register_number_font() -> list[str]:
+    """Let Qt draw the number face with Cascadia Mono or Consolas where Plex is missing."""
+    fallbacks = list(NUMBER_FONTS[1:])
+    if QFont.substitutes(NUMBER_FONT) != fallbacks:
+        QFont.removeSubstitutions(NUMBER_FONT)
+        QFont.insertSubstitutions(NUMBER_FONT, fallbacks)
+    return QFont.substitutes(NUMBER_FONT)
 
 
 def pixel_ratio() -> float:

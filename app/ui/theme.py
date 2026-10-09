@@ -41,7 +41,7 @@ FONT_SECTION = 11
 FONT_TITLE = 18
 FONT_KPI = 18
 NUMBER_FONT = "IBM Plex Mono"  # the design's face; Windows falls back to the next ones
-NUMBER_FONTS: tuple[str, ...] = (NUMBER_FONT, "Cascadia Mono", "Consolas")
+NUMBER_FONTS: tuple[str, ...] = (NUMBER_FONT, "Cascadia Mono", "Consolas")  # substitutions
 AA_TEXT = 4.5  # WCAG 2.1 AA, normal text
 AA_NON_TEXT = 3.0  # WCAG 2.1 AA, control borders and the focus ring
 TEXT_COLORS = ("text", "text_secondary", "accent", "profit", "loss", "warning")
@@ -54,8 +54,13 @@ BLACK = "#000000"
 
 
 def number_family() -> str:
-    """The QSS font-family list of the number face, e.g. `"IBM Plex Mono", "Consolas"`."""
-    return ", ".join(f'"{name}"' for name in NUMBER_FONTS)
+    """The QSS font-family of the number face: one name, quoted.
+
+    The fallbacks are not listed in the stylesheet (a list of families that are all missing
+    is the suspect of an aborted Linux offscreen test run); `app.ui.style.ui_font` registers
+    them as Qt font substitutions instead.
+    """
+    return f'"{NUMBER_FONT}"'
 
 
 @dataclass(frozen=True)
