@@ -27,6 +27,7 @@ advice only, and this page never sends real orders.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import re
 import threading
@@ -127,9 +128,9 @@ from app.ui.lab_inspector import (
     Inspector,
     PromptsPanel,
     UsagePanel,
-    field as panel_field,
     inspector_words,
     panel,
+    panel_field,
     section,
 )
 from app.ui.lab_parts import (
@@ -1333,10 +1334,8 @@ class AiLabPage(QWidget):
     def ignore(self) -> None:
         """Ignore the suggestion: nothing changes; its experiment says so."""
         if self.experiment is not None and self.experiments is not None and self.activated is None:
-            try:
+            with contextlib.suppress(OSError):
                 self.experiments.update(self.experiment.number, ignored=True)
-            except OSError:
-                pass
             self._refresh_open("experiments")
         self.chat.remove_card(self.activate_card)
         self._say(self.word("Ignored: nothing changed."))
