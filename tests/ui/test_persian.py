@@ -28,7 +28,8 @@ def test_persian_home_runs_right_to_left(qtbot: QtBot, tmp_path: Path) -> None:
     prefs = UiPrefs(language=Language.FA, onboarded=True)
     window = make_window(qtbot, tmp_path, prefs)
     assert window.layoutDirection() == RTL and window.home.layoutDirection() == RTL
-    assert window.dashboard_page.layoutDirection() == LTR  # page bodies stay English
+    assert window.dashboard_page.layoutDirection() == RTL  # the UI v2 Dashboard is Persian
+    assert window.market_page.layoutDirection() == LTR  # pages not redrawn yet stay English
     assert window.statusBar().layoutDirection() == RTL  # the UI v2 frame is Persian
     home = window.home
     assert home.empty_title.text() == PERSIAN["No trade suggestions right now"]
