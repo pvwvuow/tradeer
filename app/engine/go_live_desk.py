@@ -176,3 +176,78 @@ class GoLiveDesk:
         if not self.real():
             where = "demo account: Auto needs no approval here"
         return f"Go-Live ({where}). " + "; ".join(parts) + "."
+
+    def checklist(self) -> GoLiveChecklist:
+        """The Dashboard's Go-Live checklist: the seven gate checks, then the approval.
+
+        A check is done only when it passed for every strategy that is on; its detail gives
+        each strategy's line. The approval is done when every strategy that is on has an
+        approval of its current settings on this account.
+        """
+        enabled = list(self.strategies.settings.enabled())
+        real = self.real()
+        block = self.auto_check()
+        if not enabled:
+            return GoLiveChecklist(real=real, auto_block=block, note="No strategy is on.")
+        reports = [self.report(name) for name in enabled]
+        items: list[ChecklistItem] = []
+        for first in reports[0].checks:
+            found = [
+                (report.strategy, check)
+                for report in reports
+                for check in report.checks
+                if check.key == first.key
+            ]
+            lines = [f"{name}: {check.line}" for name, check in found]
+            passed = all(check.passed for _, check in found)
+            items.append(ChecklistItem(first.key, first.name, passed, "\n".join(lines)))
+        state = self.gate.state
+        approved: list[str] = []
+        lines = []
+        for report in reports:
+            approval = state.approval_for(report.strategy, self.account_id)
+            if approval is not None and approval.params_hash == report.params_hash:
+                approved.append(report.strategy)
+            lines.append(f"{report.strategy}: {self.approval_text(report.strategy)}")
+        everyone = len(approved) == len(reports)
+        items.append(ChecklistItem(APPROVAL, "Approval", everyone, "\n".join(lines)))
+        return GoLiveChecklist(tuple(items), real=real, auto_block=block)
+
+
+APPROVAL = "approval"
+
+
+@dataclass(frozen=True)
+class ChecklistItem:
+    """One line of the Go-Live checklist over every strategy that is on."""
+
+    key: str
+    name: str
+    passed: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class GoLiveChecklist:
+    items: tuple[ChecklistItem, ...] = ()
+    real: bool = True
+    auto_block: str = ""  # why Auto may not be switched on now, "" when it may
+    note: str = ""  # why there is no list, e.g. "No strategy is on."
+
+    @property
+    def done(self) -> int:
+        return sum(1 for item in self.items if item.passed)
+
+    @property
+    def total(self) -> int:
+        return len(self.items)
+
+    @property
+    def passed(self) -> bool:
+        return bool(self.items) and self.done == self.total
+
+    @property
+    def checks_passed(self) -> bool:
+        """Every gate check passed (the approval may follow)."""
+        checks = [item for item in self.items if item.key != APPROVAL]
+        return bool(checks) and all(item.passed for item in checks)
