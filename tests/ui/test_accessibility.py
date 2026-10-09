@@ -9,7 +9,7 @@ from pytestqt.qtbot import QtBot
 
 from app.core.ui_prefs import ThemeName, UiPrefs, ViewMode
 from app.ui.analytics_page import EXCURSION_KEY, AnalyticsPage
-from app.ui.dashboard_page import DOWN, UP, DashboardPage
+from app.ui.dashboard_page import MINUS, DashboardPage, money
 from app.ui.main_window import KILL_SHORTCUT, SETTINGS_SHORTCUT, MainWindow
 from app.ui.style import (
     GLYPH_NAMES,
@@ -86,17 +86,17 @@ def test_charts_take_the_theme_colors(qtbot: QtBot, tmp_path: Path) -> None:
     assert chart_tokens() is DARK
 
 
-def test_results_carry_an_arrow_and_wins_a_shape(qtbot: QtBot) -> None:
+def test_results_carry_a_sign_and_wins_a_shape(qtbot: QtBot) -> None:
     page = DashboardPage(None)
     qtbot.addWidget(page)
     page.timer.stop()
     kpi = page.kpis["Today"]
-    kpi.set_text("+5.00", 5.0)
-    assert kpi.value.text() == f"{UP} +5.00" and kpi.value.property("role") == "kpi_profit"
-    kpi.set_text("-2.00", -2.0)
-    assert kpi.value.text() == f"{DOWN} -2.00" and kpi.value.property("role") == "kpi_loss"
-    kpi.set_text("0.00", 0.0)
-    assert kpi.value.text() == "0.00" and kpi.value.property("role") == "kpi"
+    kpi.set_text(money(5.0), 5.0)
+    assert kpi.value.text() == "+$5.00" and kpi.value.property("tone") == "profit"
+    kpi.set_text(money(-2.0), -2.0)
+    assert kpi.value.text() == f"{MINUS}$2.00" and kpi.value.property("tone") == "loss"
+    kpi.set_text(money(0.0), 0.0)
+    assert kpi.value.text() == "$0.00" and kpi.value.property("tone") == ""
     analytics = AnalyticsPage(None)
     qtbot.addWidget(analytics)
     assert analytics.excursion_plot.getPlotItem().titleLabel.text == EXCURSION_KEY

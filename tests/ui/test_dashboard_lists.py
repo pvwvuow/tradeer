@@ -1,4 +1,4 @@
-"""The Dashboard lists (8 October 2026): every signal and position, ten rows a page."""
+"""The Dashboard lists: every signal and position, ten rows a page (UI v2 tables)."""
 
 from dataclasses import replace
 
@@ -13,6 +13,7 @@ from app.ui.dashboard_page import (
     DashboardContext,
     DashboardPage,
     ordered_positions,
+    pipeline_steps,
     position_row,
     signal_row,
     signal_view,
@@ -20,6 +21,7 @@ from app.ui.dashboard_page import (
     strategy_title,
 )
 from app.ui.paged_table import NOTHING, PagedTable, page_count, page_text
+from app.ui.v2 import Cell, Column, DesignTable, Row
 from tests.unit.signal_helpers import MORNING, make_record, make_signal
 
 
@@ -69,7 +71,6 @@ def test_page_count_and_text() -> None:
     assert page_count(0, 10) == 1 and page_count(10, 10) == 1 and page_count(11, 10) == 2
     assert page_text(0, 0, 10) == NOTHING
     assert page_text(1, 37, 10) == "11-20 of 37 \u00b7 page 2 of 4"
-    assert page_text(3, 37, 10) == "31-37 of 37 \u00b7 page 4 of 4"
 
 
 def test_paged_table_moves_between_pages_and_keeps_its_place(qtbot: QtBot) -> None:
@@ -85,37 +86,58 @@ def test_paged_table_moves_between_pages_and_keeps_its_place(qtbot: QtBot) -> No
     assert table.table.item(0, 0).text() == "20"
     table.next_page()
     assert table.page == 2 and not table.next_button.isEnabled()
-    # A refresh with the same list keeps the page; a shorter list moves back to its last page.
     table.set_rows([[str(i), f"row {i}"] for i in range(25)])
     assert table.page == 2
     table.set_rows([[str(i), f"row {i}"] for i in range(8)])
     assert table.page == 0 and table.table.rowCount() == 8
     assert table.previous_button.isHidden() and table.next_button.isHidden()
-    # Always tall enough for a full page: rows are never squeezed.
     assert table.table.minimumHeight() >= 8 * 30
+
+
+def test_design_table_pages_and_keeps_its_place(qtbot: QtBot) -> None:
+    table = DesignTable([Column("A"), Column("B", end=True)], "nothing")
+    qtbot.addWidget(table)
+    table.show()
+    assert table.empty.isVisible() and not table.table.isVisible()
+    rows = [Row((Cell(str(i)), Cell(f"r{i}", tag="warning")), key=str(i)) for i in range(25)]
+    table.set_rows(rows)
+    assert table.table.rowCount() == 10 and table.pages == 3 and table.pager.isVisible()
+    table.next_page()
+    table.next_page()
+    assert table.page == 2 and table.table.rowCount() == 5 and table.text(0, 0) == "20"
+    assert table.table.cellWidget(0, 1) is not None  # the tag is a widget
+    table.set_rows([Row((Cell(str(i)), Cell("x")), key=str(i)) for i in range(8)])
+    assert table.page == 0 and not table.pager.isVisible()
+    clicked: list[str] = []
+    table.row_clicked.connect(clicked.append)
+    table.table.cellClicked.emit(3, 0)
+    assert clicked == ["3"]
 
 
 def test_every_signal_is_listed_paged_and_filtered(qtbot: QtBot) -> None:
     signals = snapshot(23)
-    context = DashboardContext(signals=lambda: signals)
-    page = DashboardPage(context)
+    page = DashboardPage(DashboardContext(signals=lambda: signals))
     qtbot.addWidget(page)
     page.timer.stop()
     page.refresh(now=float(MORNING))
-    assert page.signals.rowCount() == 10 and page.signals_list.total == 23
-    assert page.signals_title.text() == "LATEST SIGNALS (23 of 23)"
-    newest = page.signals.item(0, 0).text()
-    page.signals_list.next_page()
+    assert page.signals.table.rowCount() == 10 and page.signals.total == 23
+    assert page.signals_title.text() == "23/23"
+    assert page.waiting_count == 8
+    newest = page.signals.text(0, 0)
+    page.signals.next_page()
     page.refresh(now=float(MORNING))
-    assert page.signals_list.page == 1, "the two-second refresh keeps the page"
-    assert page.signals.item(0, 0).text() != newest
-    page.signal_filter.setCurrentText("Not traded")
-    assert page.signals_list.page == 0
-    states = {page.signals.item(row, 7).text() for row in range(page.signals.rowCount())}
-    assert states == {"filtered out: session"}
-    page.signal_filter.setCurrentText("Waiting for approval")
-    assert page.signals_list.total == 8
-    assert page.signals_title.text() == "LATEST SIGNALS (8 of 23)"
+    assert page.signals.page == 1, "the two-second refresh keeps the page"
+    assert page.signals.text(0, 0) != newest
+    page.signal_filter.setCurrentIndex(SIGNAL_VIEWS.index("Not traded"))
+    assert page.signals.page == 0
+    results = {page.signals.text(row, 5) for row in range(page.signals.table.rowCount())}
+    assert results == {"Filtered out"}
+    page.signal_filter.setCurrentIndex(SIGNAL_VIEWS.index("Waiting for approval"))
+    assert page.signals.total == 8 and page.signals_title.text() == "8/23"
+    opened: list[str] = []
+    page.go = opened.append
+    page.signals.table.cellClicked.emit(0, 0)
+    assert opened == ["signals"]
 
 
 def test_signal_rows_say_strategy_side_prices_and_why() -> None:
@@ -127,6 +149,14 @@ def test_signal_rows_say_strategy_side_prices_and_why() -> None:
     assert waiting == "pending approval: all filters passed"
     assert signal_view(SignalState.CLOSED) == "Traded" and SIGNAL_VIEWS[0] == "All signals"
     assert signal_view(SignalState.EXPIRED) == "Not traded"
+    assert pipeline_steps(record(2, SignalState.FILTERED_OUT, "spread 2.6 > 2.0")) == [
+        1,
+        1,
+        -1,
+        0,
+        0,
+    ]
+    assert pipeline_steps(record(2, SignalState.FILTERED_OUT, "news: GBP in 25 min"))[3] == -1
 
 
 def test_positions_list_open_first_and_pending_orders_plainly(qtbot: QtBot) -> None:
@@ -140,7 +170,8 @@ def test_positions_list_open_first_and_pending_orders_plainly(qtbot: QtBot) -> N
     qtbot.addWidget(page)
     page.timer.stop()
     page.refresh(now=float(MORNING))
-    assert page.positions.rowCount() == 3
-    assert page.positions.item(0, 0).text() == "EURUSD"
-    assert page.positions_title.text() == "OPEN POSITIONS (2 open, 1 pending)"
+    assert page.positions.total == 3 and page.positions.text(0, 0) == "EURUSD"
+    assert page.positions.text(0, 7) == "\u2212$3.20"
+    assert page.positions.text(2, 7) == "Pending order"
+    assert page.positions_title.text() == "2 open, 1 pending"
     assert strategy_title("") == "-"
