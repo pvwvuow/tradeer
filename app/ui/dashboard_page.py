@@ -531,6 +531,7 @@ class DashboardPage(QWidget):
         self.equity_chart = EquityChart()
         self.equity_chart.setObjectName("DashboardEquity")
         self.equity_chart.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.equity_chart.setVisible(False)  # shown once there are two closed trades
         self.equity_empty = empty_box(self.t(NO_CURVE))
         column.addWidget(self.equity_chart)
         column.addWidget(self.equity_empty)
@@ -538,7 +539,7 @@ class DashboardPage(QWidget):
     def _build_positions(self, column: QVBoxLayout) -> None:
         self.positions_title = v2_label("", "cap")
         section = Section(self.t("Open positions"), Tag("SL ON SERVER"))
-        section.actions.addWidget(self.positions_title)
+        section.add(self.positions_title)
         every = v2_button(self.t("All"))
         every.clicked.connect(lambda: self.go("positions"))
         section.add(every)
@@ -706,7 +707,7 @@ class DashboardPage(QWidget):
         except Exception as error:
             text = f"Go-Live readiness could not be read: {type(error).__name__}"
         self.go_live_banner.setToolTip(text)
-        shown = self.t(GO_LIVE_NOTE) if self.persian else f"{GO_LIVE_NOTE} {text}"
+        shown = self.t(GO_LIVE_NOTE) if self.persian else text
         self.go_live_banner.set_text(shown)
 
     def _show_account(
