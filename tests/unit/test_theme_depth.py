@@ -1,4 +1,4 @@
-"""The 0.24 look (6 October 2026): the depth shades and the drawn controls stay readable."""
+"""The depth shades and the drawn controls stay readable (0.24 look; flat since 0.31)."""
 
 from app.ui.theme import AA_TEXT, DARK, LIGHT, build_qss, contrast_ratio, mix, shades
 
@@ -28,9 +28,13 @@ def test_inputs_have_drawn_arrows_and_check_marks() -> None:
         "QCheckBox::indicator:checked",
         "QRadioButton::indicator:checked",
         "QTableView::item:hover",
-        "qlineargradient",
     ):
         assert selector in qss, selector
+
+
+def test_the_0_31_look_is_flat() -> None:
+    for tokens in (DARK, LIGHT):
+        assert "qlineargradient" not in build_qss(tokens), tokens.name
 
 
 def test_only_properties_qt_knows() -> None:
