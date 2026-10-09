@@ -240,7 +240,7 @@ class MainWindow(QMainWindow):
         self.dashboard_page.go = self.show_page
         self.analytics_page = AnalyticsPage(analytics)
         self.journal_page = JournalPage(journal)
-        self.ai_lab_page = AiLabPage(ai_lab_context(analytics, backtest))
+        self.ai_lab_page = AiLabPage(ai_lab_context(analytics, backtest), persian=self.persian)
         self.health_page = HealthPage(health)
         self.notifications_page = (
             NotificationsPage(notifications) if notifications is not None else None
@@ -295,6 +295,7 @@ class MainWindow(QMainWindow):
                 self._add_page(spec.page_id, PlaceholderPage(spec))
         self._build_status_bar()
         self._dress_page_headers()
+        self.ai_lab_page.dress_header()
         if self.persian:
             self._keep_english_left_to_right()
         style_tables(self)
@@ -484,6 +485,7 @@ class MainWindow(QMainWindow):
             self.logs_page.apply_tokens(tokens)
         self.market_page.apply_tokens(tokens)
         self.dashboard_page.apply_tokens(tokens)
+        self.ai_lab_page.apply_tokens(tokens)
         self.home.apply_tokens(tokens)
         style_plots(self, tokens)
         self._apply_frame_tokens(tokens)
