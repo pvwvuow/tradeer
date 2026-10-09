@@ -95,11 +95,12 @@ def test_connection_chip_and_mode_tone() -> None:
     account = demo_account()
     connected = ConnectionStatus(ConnectionState.CONNECTED, "Connected", account)
     text, tone = connection_chip(connected)
-    assert text == "Demo \u00b7 5012345" and tone == "profit"
+    assert text == "\u25cf MT5 \u00b7 DEMO \u00b7 CONNECTED" and tone == "profit"
+    assert str(account.login) not in text  # the tag never shows the login
     real_account = replace(account, kind=AccountKind.REAL)
     real = ConnectionStatus(ConnectionState.CONNECTED, "ok", real_account)
-    assert connection_chip(real) == (f"REAL \u00b7 {account.login}", "loss")
-    assert connection_chip(ConnectionStatus()) == ("MT5 not connected", "neutral")
+    assert connection_chip(real) == ("\u25cf MT5 \u00b7 REAL \u00b7 CONNECTED", "loss")
+    assert connection_chip(ConnectionStatus()) == ("\u25cf MT5 \u00b7 NOT CONNECTED", "neutral")
     assert connection_chip(ConnectionStatus(ConnectionState.FAILED))[1] == "loss"
     assert connection_chip(ConnectionStatus(ConnectionState.RECONNECTING))[1] == "warning"
     assert mode_tone("PAPER") == "accent"
@@ -131,15 +132,16 @@ def test_main_window_top_bar_follows_the_page_mode_and_connection(
     window = MainWindow(UiPrefs(view_mode=ViewMode.ADVANCED, onboarded=True), tmp_path)
     qtbot.addWidget(window)
     window.show()
-    assert window.page_crumb.text() == page_crumb("dashboard") == "TRADE / DASHBOARD"
+    assert window.page_crumb.text() == page_crumb("dashboard") == "TRADE / 01"
     window.show_page("risk")
-    assert window.page_crumb.text() == "SYSTEM / RISK"
+    assert window.page_crumb.text() == "SYSTEM / 11"
     assert window.mode_chip.text() == "PAPER" and window.mode_chip.property("chip") == "accent"
     assert window.search_button.isVisible()
     status = ConnectionStatus(ConnectionState.CONNECTED, "Connected", demo_account())
     window.set_connection_status(status)
     assert window.connection_chip.property("chip") == "profit"
     assert window.connection_chip.toolTip() == status.status_bar_text()
+    assert window.connection_led.tone == "profit"
     window.toggle_view_mode()
     assert not window.search_button.isVisible()
 
@@ -172,3 +174,4 @@ def test_every_advanced_page_gets_the_full_header(qtbot: QtBot, tmp_path: Path) 
         headers = window.pages.currentWidget().findChildren(PageHeader)
         assert len(headers) == 1, page_id
         assert headers[0].subtitle.text(), page_id
+        assert headers[0].crumb.text() == page_crumb(page_id), page_id
