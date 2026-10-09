@@ -280,11 +280,31 @@ class RunSummary:
             max_drawdown_percent=metrics.max_drawdown.depth_percent,
         )
 
+    def numbers(self) -> dict[str, float | None]:
+        """The metrics as plain numbers (the experiments file keeps them)."""
+        return {
+            "trades": float(self.trades),
+            "win_rate": self.win_rate,
+            "net_profit": self.net_profit,
+            "expectancy_r": self.expectancy_r,
+            "profit_factor": self.profit_factor,
+            "max_drawdown_percent": self.max_drawdown_percent,
+        }
+
 
 @dataclass(frozen=True)
 class Verdict:
     better: bool
     lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Check:
+    """One rule of the verdict, as the comparison card shows it."""
+
+    key: str  # "trades", "expectancy" or "drawdown"
+    ok: bool
+    value: str  # e.g. "151", "0.18 < 0.21", "6.40% <= 8.25%"
 
 
 def _number(value: float | None, digits: int = 2, suffix: str = "") -> str:
@@ -313,6 +333,35 @@ def summary_rows(current: RunSummary, proposed: RunSummary) -> list[list[str]]:
     ]
 
 
+def _improved(current: RunSummary, proposed: RunSummary) -> bool:
+    new_r, now_r = proposed.expectancy_r, current.expectancy_r
+    return new_r is not None and (new_r > now_r if now_r is not None else new_r > 0)
+
+
+def drawdown_limit(current: RunSummary) -> float:
+    """The deepest drawdown the suggestion may have and still count as better."""
+    return current.max_drawdown_percent * DRAWDOWN_SLACK + 1.0
+
+
+def comparison_checks(
+    current: RunSummary,
+    proposed: RunSummary,
+    minimum_trades: int = MIN_TRADES,
+) -> list[Check]:
+    """The three rules of `compare_runs`, each with its numbers: all pass = better."""
+    improved = _improved(current, proposed)
+    sign = ">" if improved else "<="
+    expectancy = f"{_number(proposed.expectancy_r, 3)} {sign} {_number(current.expectancy_r, 3)}"
+    limit = drawdown_limit(current)
+    deeper = proposed.max_drawdown_percent > limit
+    drawdown = f"{proposed.max_drawdown_percent:.2f}% {'>' if deeper else '<='} {limit:.2f}%"
+    return [
+        Check("trades", proposed.trades >= minimum_trades, str(proposed.trades)),
+        Check("expectancy", improved, expectancy),
+        Check("drawdown", not deeper, drawdown),
+    ]
+
+
 def compare_runs(
     current: RunSummary,
     proposed: RunSummary,
@@ -328,13 +377,13 @@ def compare_runs(
             f"(at least {minimum_trades}).",
         )
     new_r, now_r = proposed.expectancy_r, current.expectancy_r
-    improved = new_r is not None and (new_r > now_r if now_r is not None else new_r > 0)
+    improved = _improved(current, proposed)
     word = "higher" if improved else "not higher"
     lines.append(
         f"Expectancy {_number(new_r, 3)} R per trade vs {_number(now_r, 3)} R now: {word}.",
     )
     better = better and improved
-    limit = current.max_drawdown_percent * DRAWDOWN_SLACK + 1.0
+    limit = drawdown_limit(current)
     deeper = proposed.max_drawdown_percent > limit
     lines.append(
         f"Max drawdown {proposed.max_drawdown_percent:.2f}% vs "
