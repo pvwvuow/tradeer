@@ -57,6 +57,7 @@ from app.engine.signal_pipeline import SignalsSnapshot
 from app.mt5.models import Quote
 from app.risk.risk_manager import RiskSnapshot
 from app.strategies.registry import STRATEGIES
+from app.ui.navigation import page_by_id
 from app.ui.pages import PageHeader
 from app.ui.shell import Segmented, ticker_symbol
 from app.ui.tables import number, signed
@@ -64,8 +65,8 @@ from app.ui.theme import DARK, ThemeTokens
 from app.ui.v2 import (
     Banner,
     Cell,
-    Checklist,
     CheckLine,
+    Checklist,
     Column,
     DesignTable,
     EquityChart,
@@ -570,7 +571,8 @@ class DashboardPage(QWidget):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(32, 28, 32, 40)
         layout.setSpacing(26)
-        self.header = PageHeader("Dashboard", "", "TRADE")
+        self.header = PageHeader("Dashboard", page_by_id("dashboard").summary, "TRADE")
+        self.header.subtitle.setVisible(False)  # the design has no line under the title
         self.mode_segment = ModeSegment(
             [MODE_WORDS[mode] for mode in MODES],
             MODES.index(OperatingMode.AUTO),
@@ -894,8 +896,7 @@ class DashboardPage(QWidget):
             self._show_auto_lock()
             return
         lines = [
-            CheckLine(self.t(name), state, detail)
-            for name, state, detail in checklist_lines(found)
+            CheckLine(self.t(name), state, detail) for name, state, detail in checklist_lines(found)
         ]
         self.go_live_list.set_lines(lines)
         self.go_live_list.setVisible(bool(lines))
