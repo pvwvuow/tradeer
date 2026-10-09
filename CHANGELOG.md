@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/pvwvuow/tradeer/compare/v0.34.0...v0.35.0) (2026-10-09)
+
+
+### Features
+
+* **ui:** Dashboard exactly like No Curve v2 (Phase 20c) ([#111](https://github.com/pvwvuow/tradeer/issues/111)) ([f9dd248](https://github.com/pvwvuow/tradeer/commit/f9dd248fd6a096ecb3a34de9ca6f42bf84c24ef9))
+
 ## [0.34.0](https://github.com/pvwvuow/tradeer/compare/v0.33.0...v0.34.0) (2026-10-09)
 
 
