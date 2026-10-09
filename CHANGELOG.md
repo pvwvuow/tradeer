@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/pvwvuow/tradeer/compare/v0.36.0...v0.37.0) (2026-10-09)
+
+
+### Features
+
+* **ui:** AI Lab exactly like No Curve v2 (Phase 20e) ([#115](https://github.com/pvwvuow/tradeer/issues/115)) ([2cb118a](https://github.com/pvwvuow/tradeer/commit/2cb118a8d57565007d13997098160aea1c0a54ea))
+
 ## [0.36.0](https://github.com/pvwvuow/tradeer/compare/v0.35.0...v0.36.0) (2026-10-09)
 
 
