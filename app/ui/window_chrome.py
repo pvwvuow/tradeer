@@ -5,6 +5,8 @@ Windows 10 (20H1 and newer) the title bar follows the theme's dark or light mode
 Windows 11 it also takes the top bar's color, the theme's text color and a round corner, so
 the window reads as one surface. Elsewhere (Linux CI, the offscreen test platform) nothing
 happens. A Windows build that does not know an attribute just ignores it.
+
+0.34 (No Curve v2): the design's header is drawn in the page color, so the title bar is too.
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ def title_bar_attributes(tokens: ThemeTokens) -> list[tuple[int, int]]:
     return [
         (DWMWA_USE_IMMERSIVE_DARK_MODE, 1 if tokens.dark else 0),
         (DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND),
-        (DWMWA_CAPTION_COLOR, colorref(tokens.surface)),
+        (DWMWA_CAPTION_COLOR, colorref(tokens.bg)),
         (DWMWA_TEXT_COLOR, colorref(tokens.text)),
         (DWMWA_BORDER_COLOR, colorref(tokens.border)),
     ]
