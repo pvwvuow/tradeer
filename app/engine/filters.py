@@ -5,7 +5,9 @@ probability that needs more history). Any `False` filters the signal out.
 
 8 October 2026: a channel breakout sold EURUSD on top of the London breakout's open sell,
 doubling the risk on one idea. Since then one symbol and side holds one trade at a time,
-whichever strategy found it first.
+whichever strategy found it first. The same morning EURUSD and GBPUSD were sold a minute
+apart (both long USD); since 0.31.1 one currency and direction holds one trade at a time
+across symbols (`one_bet_per_currency`).
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from app.mt5.models import SymbolTradeMode
 from app.observability.decision_trace import TraceStep
 
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
+SAME_BET = "one bet per currency and direction (all symbols)"
 _DEFAULTS = TradingDefaults()
 
 
@@ -105,6 +108,10 @@ class FilterSettings(BaseModel):
         le=240,
         description="News blackout before and after",
     )
+    one_bet_per_currency: bool = Field(
+        default=True,
+        description="One trade per currency and direction (EURUSD sell + GBPUSD sell = one)",
+    )
 
 
 @dataclass(frozen=True)
@@ -130,6 +137,9 @@ class FilterInput:
     # Other strategies' trades on this symbol and side (open, sent or waiting to be sent)
     same_side: int = 0
     same_side_of: str = ""
+    # Trades on other symbols that bet the same way on a currency (any strategy)
+    same_bet: int = 0
+    same_bet_of: str = ""
 
 
 def _minutes(text: str) -> int:
@@ -232,6 +242,19 @@ def run_filters(data: FilterInput, settings: FilterSettings) -> list[TraceStep]:
         data.same_side,
         0,
         f"already a {side} by {data.same_side_of}" if data.same_side else f"no other {side}",
+    )
+    if not settings.one_bet_per_currency:
+        bet_text = "this check is off"
+    elif data.same_bet:
+        bet_text = f"same bet as {data.same_bet_of}"
+    else:
+        bet_text = "no other trade bets the same way on these currencies"
+    add(
+        SAME_BET,
+        not settings.one_bet_per_currency or data.same_bet == 0,
+        data.same_bet,
+        0,
+        bet_text,
     )
     waited = data.bars_since_loss
     add(
