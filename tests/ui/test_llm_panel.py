@@ -1,5 +1,5 @@
 """The AI Lab's optional "Ask AI" card (spec C13): off until saved on, the key only in the
-credential store, the answer only in step 2, failures without the key."""
+credential store, the answer only in step 2, failures without the key, never the account."""
 
 import json
 from collections.abc import Mapping
@@ -134,24 +134,28 @@ def test_the_answer_goes_to_step_two_and_is_checked(qtbot: QtBot, tmp_path: Path
     body = transport.bodies[0].decode("utf-8")
     assert KEY not in body and "87654321" not in body
     assert "Strategy parameters" in body and "Why do I lose?" in body
-    assert page.answer.toPlainText() == ANSWER
+    assert page.answer_text == ANSWER
     assert page.suggestion is not None and page.suggestion.valid
     assert page.diff.rowCount() == 1 and page.verdict is None
+    assert panel.sent_chars > 0
     text = panel.status.text()
     assert "test-model" in text and "1200 in + 300 out tokens" in text
     assert "valid suggestion" in text and "Advice only" in text
     assert any("AI answer from test-model" in line for line in rig.logs)
 
 
-def test_the_account_number_is_sent_only_when_ticked(qtbot: QtBot, tmp_path: Path) -> None:
+def test_the_account_number_is_never_sent(qtbot: QtBot, tmp_path: Path) -> None:
     transport = Transport()
     page, _rig = page_with_llm(qtbot, tmp_path, transport)
     panel = page.llm_panel
+    assert not panel.login.isEnabled() and not panel.login.isChecked()
     panel.login.setChecked(True)
     assert turn_on(panel)
     assert panel.ask_ai() is True
     qtbot.waitUntil(lambda: not panel.asking, timeout=10_000)
-    assert "Account number: 87654321" in transport.bodies[0].decode("utf-8")
+    body = transport.bodies[0].decode("utf-8")
+    assert "Account number" not in body and "87654321" not in body
+    assert panel.sent_chars > 0
 
 
 def test_a_failure_is_shown_without_the_key(qtbot: QtBot, tmp_path: Path) -> None:
@@ -164,7 +168,7 @@ def test_a_failure_is_shown_without_the_key(qtbot: QtBot, tmp_path: Path) -> Non
     assert panel.status.text().startswith("The AI request failed: HTTP 401")
     assert KEY not in panel.status.text()
     assert all(KEY not in line for line in rig.logs)
-    assert page.answer.toPlainText() == "" and panel.ask_button.isEnabled()
+    assert page.answer_text == "" and panel.ask_button.isEnabled()
 
 
 def test_the_main_window_has_the_card(qtbot: QtBot, tmp_path: Path) -> None:

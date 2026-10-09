@@ -12,6 +12,11 @@ question that shows the model, the latency, whether JSON works and what a desk c
 Phase 18a (docs/AI_LAB_AGENT.md section 9): every setting lives in the AI Lab settings
 window (the gear on the page); the card itself keeps one status line, the question and
 Ask AI. `make_client` gives the AI Lab chat (18b) its client from the saved settings.
+
+Phase 20e (docs/NOCURVE_V2.md): the card sits in the Settings panel of the AI Lab's
+inspector, and the account number is never sent (the old "Send the account number" box
+stays off and locked, whatever an old profile saved). `sent_chars` is the size of the last
+summary sent, for the Ask AI card in the chat.
 """
 
 from __future__ import annotations
@@ -82,6 +87,7 @@ NOTE = (
 NO_CONTEXT = "The AI connection needs the local database and the settings."
 SETTINGS_TITLE = "AI Lab settings"
 SETTINGS_TIP = "Provider, model, API key, prices, reasoning and Test connection"
+NO_ACCOUNT = "The account number is never sent to the AI."
 Job = Callable[[], None]
 
 
@@ -151,16 +157,15 @@ class LlmPanel(QWidget):
         self.llm: LlmContext | None = None
         self.ai_source: AiSettingsSource | None = None
         self.start_job: Callable[[Job], None] = _start_thread
+        self.sent_chars = 0
         self._asking = False
         self.bridge = _Bridge()
         self.bridge.answered.connect(self.show_answer, Qt.ConnectionType.QueuedConnection)
         self.bridge.failed.connect(self.show_failure, Qt.ConnectionType.QueuedConnection)
         self.bridge.tested.connect(self.show_test, Qt.ConnectionType.QueuedConnection)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        card, layout = card_frame()
-        outer.addWidget(card)
-        layout.addWidget(styled_label("Or ask your own AI from here (optional)", "heading"))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         self.summary = styled_label(NO_CONTEXT, "muted", wrap=True)
         self.summary.setObjectName("AiLlmSummary")
         layout.addWidget(self.summary)
@@ -175,13 +180,9 @@ class LlmPanel(QWidget):
         self.settings_button.setObjectName("AiLlmOpenSettings")
         self.settings_button.setToolTip(SETTINGS_TIP)
         self.settings_button.clicked.connect(self.open_settings)
-        self._row(
-            layout,
-            styled_label("Question", "muted"),
-            self.question,
-            self.ask_button,
-            self.settings_button,
-        )
+        layout.addWidget(styled_label("Question", "muted"))
+        layout.addWidget(self.question)
+        self._row(layout, self.ask_button, self.settings_button)
         self.status = styled_label(NO_CONTEXT, "muted", wrap=True)
         self.status.setObjectName("AiLlmStatus")
         layout.addWidget(self.status)
@@ -227,6 +228,9 @@ class LlmPanel(QWidget):
         self.output_price = _price_box("AiLlmOutputPrice")
         self.login = QCheckBox("Send the account number")
         self.login.setObjectName("AiLlmLogin")
+        self.login.setChecked(False)
+        self.login.setEnabled(False)
+        self.login.setToolTip(NO_ACCOUNT)
         self._row(
             layout,
             styled_label("API key", "muted"),
@@ -358,7 +362,7 @@ class LlmPanel(QWidget):
         self.input_price.setValue(settings.input_price)
         self.output_price.setValue(settings.output_price)
         self.cached_price.setValue(ai.cached_input_price)
-        self.login.setChecked(settings.include_login)
+        self.login.setChecked(False)  # never sent, whatever an old profile saved
         _select(self.preset, matching_preset(settings.base_url))
         _select(self.style_box, ai.api_style)
         _select(self.reasoning, ai.reasoning_effort)
@@ -405,7 +409,7 @@ class LlmPanel(QWidget):
             model=self.model.text().strip() or DEFAULT_MODEL,
             input_price=self.input_price.value(),
             output_price=self.output_price.value(),
-            include_login=self.login.isChecked(),
+            include_login=False,
         )
         try:
             found = LlmSettings.model_validate(values)
@@ -563,12 +567,12 @@ class LlmPanel(QWidget):
             if data is None:
                 self._say(NO_CONTEXT)
                 return False
-            login = llm.login() if settings.include_login else None
-            summary = compact_summary(data, now, login=login, secrets=(key,))
+            summary = compact_summary(data, now, login=None, secrets=(key,))
         except Exception as error:
             self._say(f"The summary failed: {type(error).__name__}: {error}")
             return False
         messages = build_messages(summary, self.question.text())
+        self.sent_chars = len(summary)
         transport = llm.transport
         self._asking = True
         self._say(f"Asking {settings.model}: only the summary is sent...")
