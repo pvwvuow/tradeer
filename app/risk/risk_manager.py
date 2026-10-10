@@ -15,7 +15,7 @@ import math
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -29,6 +29,7 @@ from app.domain.sizing import (
     size_position,
 )
 from app.mt5.models import SymbolSpec
+from app.risk.budget import Budget, budget_of, capped_percent, small_budget_reason
 from app.risk.limits import (
     AccountPicture,
     Candidate,
@@ -299,17 +300,25 @@ class RiskManager:
         loss = self._broker.loss_per_lot(symbol, signal.direction, signal.entry, signal.sl)
         commission, source = self._commission(account, symbol, settings)
         capital = picture.capital(settings)
+        budget = budget_of(signal.features)  # a channel's own budget (docs/SIGNAL_DESK.md 3.4)
+        percent = capped_percent(settings.risk_per_trade_percent, budget, capital)
         sizing = size_position(
             SizingInput(
                 capital=capital,
                 capital_basis=settings.capital_basis,
-                risk_percent=settings.risk_per_trade_percent * risk_share(signal),
+                risk_percent=percent * risk_share(signal),
                 loss_per_lot=loss if loss is not None else math.nan,
                 commission_per_lot=commission,
                 volume=volume_rules(spec),
                 currency=picture.currency,
             ),
         )
+        if budget is not None:  # the decision trace says where the smaller risk came from
+            line = (
+                f"channel budget: {budget.money:,.2f} {picture.currency} per trade "
+                f"({budget.percent:g}% of its {budget.equity:,.2f}) = {percent:.4g}% of the account"
+            )
+            sizing = replace(sizing, lines=(line, *sizing.lines))
         margin: float | None = None
         if sizing.ok:
             volume = sizing.volume
@@ -331,7 +340,14 @@ class RiskManager:
         if not sizing.ok:
             checks = [check for check in checks if check.name != "margin"]
         blocked = failed(checks)
-        reasons = ([sizing.reason] if not sizing.ok else []) + [check.name for check in blocked]
+        why = sizing.reason
+        if not sizing.ok and budget is not None and spec is not None and loss is not None:
+            cost = max(0.0, commission) if math.isfinite(commission) else 0.0
+            smallest = spec.volume_min * (loss + cost)
+            share = risk_share(signal)
+            limit = Budget(budget.money * share, budget.equity, budget.percent)
+            why = small_budget_reason(limit, smallest, spec.volume_min, picture.currency) or why
+        reasons = ([why] if not sizing.ok else []) + [check.name for check in blocked]
         ok = sizing.ok and not blocked
         decision = RiskDecision(
             ok=ok,
