@@ -11,6 +11,10 @@ Shift+Enter starts a new line. The page can take a message first (`intercept`): 
 AI answer, "Export for AI" or "Compare the suggestion" run the manual loop as cards in the
 transcript (`add_card`). Persian runs right to left. Nothing here changes a setting or
 trades.
+
+0.44.2 (`app.ui.lab_soft`): softer shapes, the welcome's suggestions as a grid of 2 by 2
+tiles, the AI's mark in front of every answer, the steps as a timeline and a short fade for
+every new message and card.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QFocusEvent, QFont, QFontMetrics, QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -42,7 +47,6 @@ from app.ui.lab_parts import (
     RTL,
     TYPING_MS,
     ComposerBox,
-    FlowBox,
     LabIcon,
     SendButton,
     Skeleton,
@@ -51,6 +55,7 @@ from app.ui.lab_parts import (
     lab_label,
     lab_words,
 )
+from app.ui.lab_soft import TILE_WIDTH, AiMark, fade_in, soft_qss
 from app.ui.theme import DEFAULT, ThemeTokens, px
 from app.ui.v2 import Tag
 
@@ -59,8 +64,9 @@ ClientFactory = Callable[[], AiClient | str]
 Intercept = Callable[[str], bool]
 TEXT_FONT = "Vazirmatn"  # the design's face for words (bundled by scripts/ci/build.ps1)
 BUBBLE_WIDTH = 520
-BUBBLE_PADDING = 16 * 2 + 2 + 12  # the bubble's padding, border and a little air
+BUBBLE_PADDING = 18 * 2 + 2 + 12  # the bubble's padding, border and a little air
 ARROW_SIZE = 30
+STEP_DOT = "\u25cf"
 SUGGESTIONS = (
     "Build the report for the AI",
     "Compare the suggestion",
@@ -102,9 +108,10 @@ FA_DIGITS = str.maketrans("0123456789", "".join(chr(0x06F0 + digit) for digit in
 
 def chat_qss(tokens: ThemeTokens) -> str:
     """The chat's and the inspector's rules, after `lab_qss`: the word face, the rounded
-    question bubble, the arrows of the quick prompts, the search field and the list rows."""
+    question bubble, the arrows of the quick prompts, the search field and the list rows,
+    then the softer shapes (`soft_qss`)."""
     t = tokens
-    return f"""
+    rules = f"""
 QLabel, QPushButton, QPlainTextEdit, QLineEdit {{
     font-family: "{TEXT_FONT}";
 }}
@@ -156,6 +163,7 @@ QFrame[lab="item"] QLabel {{
     background: transparent;
 }}
 """
+    return rules + soft_qss(tokens)
 
 
 def _start_thread(job: Job) -> None:
@@ -241,6 +249,41 @@ def bubble(text: str) -> QWidget:
     return row
 
 
+class TileGrid(QWidget):
+    """The welcome's suggestions as tiles, two side by side (one below the other when the
+    column is narrow)."""
+
+    def __init__(self, spacing: int = 10) -> None:
+        super().__init__()
+        self.setObjectName("AiChatTiles")
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setHorizontalSpacing(spacing)
+        self.grid.setVerticalSpacing(spacing)
+        self.items: list[QWidget] = []
+        self.columns = 2
+
+    def add(self, widget: QWidget) -> None:
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.items.append(widget)
+        self._place()
+
+    def _place(self) -> None:
+        for item in self.items:
+            self.grid.removeWidget(item)
+        for index, item in enumerate(self.items):
+            self.grid.addWidget(item, index // self.columns, index % self.columns)
+        for column in range(2):
+            self.grid.setColumnStretch(column, 1 if column < self.columns else 0)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt name)
+        super().resizeEvent(event)
+        columns = 2 if self.width() >= TILE_WIDTH * 3 // 2 else 1
+        if columns != self.columns:
+            self.columns = columns
+            self._place()
+
+
 class TurnView(QFrame):
     """One question: the bubble, the folded steps, the loading bars, the answer, the cost."""
 
@@ -275,10 +318,16 @@ class TurnView(QFrame):
         self.skeleton = Skeleton(340)
         layout.addWidget(self.skeleton)
         self.skeleton.start()
+        answer_row = QHBoxLayout()
+        answer_row.setSpacing(12)
+        self.mark = AiMark()
+        self.mark.hide()
         self.answer = _text("", "answer", markdown=True)
         self.answer.setObjectName("AiChatAnswer")
         self.answer.hide()
-        layout.addWidget(self.answer)
+        answer_row.addWidget(self.mark, 0, Qt.AlignmentFlag.AlignTop)
+        answer_row.addWidget(self.answer, 1)
+        layout.addLayout(answer_row)
         self.cost = _text("", "note")
         self.cost.setObjectName("AiChatCost")
         self.cost.setLayoutDirection(LTR)
@@ -292,7 +341,7 @@ class TurnView(QFrame):
         self.steps.setVisible(shown and bool(self.steps.text()))
 
     def add_step(self, step: Step) -> None:
-        self.lines.append(step.line())
+        self.lines.append(f"{STEP_DOT}  {step.line()}")
         self.steps.setText("\n".join(self.lines))
         if not self.done:
             self.meta.setText(f"{chat_words(self.fa)('Working...')} \u00b7 {step.title}")
@@ -315,6 +364,7 @@ class TurnView(QFrame):
         self.answer.setText(text)
         direction(self.answer, text)
         self.answer.show()
+        self.mark.show()
         self.cost.setText(turn.cost_line())
         self.cost.show()
 
@@ -483,7 +533,7 @@ class ChatPanel(QWidget):
         word = self.word
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(12)
+        outer.setSpacing(14)
         self.transcript = QScrollArea()
         self.transcript.setObjectName("AiChatTranscript")
         self.transcript.setWidgetResizable(True)
@@ -493,11 +543,11 @@ class ChatPanel(QWidget):
         body = QWidget()
         body.setObjectName("AiChatBody")
         holder = QVBoxLayout(body)
-        holder.setContentsMargins(0, 6, 0, 24)
+        holder.setContentsMargins(0, 10, 0, 28)
         column = QWidget()
         self.messages = QVBoxLayout(column)
         self.messages.setContentsMargins(0, 0, 0, 0)
-        self.messages.setSpacing(28)
+        self.messages.setSpacing(32)
         self.messages.addStretch(1)  # the column sits at the bottom, as in the design
         self.welcome = self._build_welcome()
         self.messages.addWidget(self.welcome)
@@ -557,16 +607,16 @@ class ChatPanel(QWidget):
         layout.addWidget(lab_label(word("What shall we look at?"), "welcome", wrap=True))
         sub = "From charts and tables to the comparison of an AI suggestion. Pick one or write."
         layout.addWidget(lab_label(word(sub), "sub", wrap=True))
-        self.suggestions = FlowBox(10)
+        self.suggestions = TileGrid(10)
         self.suggestion_buttons: list[QPushButton] = []
         for text in SUGGESTIONS:
             label = word(text)
-            button = lab_button(label, "sg")
+            button = lab_button(label, "tile")
             button.setObjectName("AiChatSuggestion")
             button.clicked.connect(lambda _checked=False, value=label: self.set_text(value))
             self.suggestions.add(button)
             self.suggestion_buttons.append(button)
-        layout.addSpacing(8)
+        layout.addSpacing(12)
         layout.addWidget(self.suggestions)
         return box
 
@@ -575,7 +625,7 @@ class ChatPanel(QWidget):
         self.composer = ComposerBox()
         self.composer.setObjectName("AiChatComposer")
         box = QVBoxLayout(self.composer)
-        box.setContentsMargins(14, 14, 14, 10)
+        box.setContentsMargins(16, 14, 14, 10)
         box.setSpacing(6)
         self.input = ChatInput()
         self.input.setObjectName("AiChatInput")
@@ -673,10 +723,13 @@ class ChatPanel(QWidget):
         return started
 
     def _append(self, widget: QWidget) -> None:
-        if self.messages.indexOf(widget) >= 0:
+        moved = self.messages.indexOf(widget) >= 0
+        if moved:
             self.messages.removeWidget(widget)
         self.messages.addWidget(widget)
         widget.show()
+        if not moved:
+            fade_in(widget, self.tokens, self.composer.motion)
         self._show_welcome(False)
         self._scroll_down()
 
