@@ -10,7 +10,12 @@ instruction to the app or the AI.
 
 0.44.0: a half signal ("gold buy now", then "SL 4180 TP 4205"; "wait, I will complete it";
 an edit of the first message) waits in the channel's draft and goes on only when it is
-whole (`app.channels.drafts`); `noted` tells the chat.
+whole (`app.channels.drafts`); `noted` tells the chat. A message the parser cannot read
+(three prices and a symbol, but no whole signal) goes once to the AI with the channel's last
+messages (`app.channels.reading`, at most 40 a day); its answer counts only when the checks
+pass, and then goes the normal way. A result claim ("+120 pips today") is never a signal.
+0.44.1: a message with a picture and no whole signal in its text goes to the AI with the
+picture; the card then says the numbers came from a picture.
 
 Phase 21d2 and 21e: every parsed signal is saved (`tg_signals`) and followed as a shadow
 trade in a worker thread every 10 minutes; the same signal from a second channel within 15
@@ -34,6 +39,7 @@ from typing import Protocol
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
+from app.ai.transport import AiCallError, AiClient, Message, plain_text
 from app.analysis.bars import Bars
 from app.backtest.service import BacktestRequest
 from app.channels.chat_settings import Change, read_change
@@ -48,6 +54,19 @@ from app.channels.policy import (
     route,
 )
 from app.channels.reader import ChannelReader
+from app.channels.reading import (
+    CLAIM_REASON,
+    CONTEXT_MESSAGES,
+    READ_TOKENS,
+    SCHEMA,
+    ReadCap,
+    ReadResult,
+    canonical,
+    is_claim,
+    parse_reply,
+    read_messages,
+    unclear,
+)
 from app.channels.shadow_follow import BarSource, follow_signals
 from app.channels.stats import Card, duplicate_of
 from app.channels.updates import LINK_SECONDS, Earlier, Update, UpdateKind, link, read_update
@@ -68,6 +87,8 @@ KEEP_SEEN = 50
 DRAFT_CHECK_MS = 60 * 1000  # incomplete drafts are expired this often (0.44.0)
 SHADOW_MS = 10 * 60 * 1000  # the shadow results are brought up to date this often
 FIRST_SHADOW_MS = 60 * 1000
+READING = "; the AI reads it now"
+KEEP_ASKED = 500
 WAITING = frozenset({SignalState.PENDING_APPROVAL})
 ON_THEIR_WAY = frozenset({SignalState.SENT, SignalState.FILLED, SignalState.MANAGED})
 
@@ -148,6 +169,17 @@ class Seen:
     reason: str
 
 
+@dataclass(frozen=True)
+class Reading:
+    """The AI's reading of one unclear message, from the worker thread."""
+
+    channel_id: int
+    message: ChannelMessage
+    texts: tuple[str, ...]  # what the AI saw: the earlier messages, then this one
+    outcome: ReadResult | str  # the reading, or why it failed
+    picture: bool = False  # the AI read the message's picture too
+
+
 @dataclass
 class ChannelCounts:
     cards: int = 0
@@ -160,6 +192,7 @@ class ChannelFeed(QObject):
     edited = Signal(object)  # an edited ChannelMessage, from the reader thread (0.44.0)
     noted = Signal(str, str)  # a channel's title and a line for the chat (drafts, 0.44.0)
     followed = Signal(int)  # shadow legs brought up to date (the worker thread)
+    read_done = Signal(object)  # a Reading, from the AI's worker thread
 
     def __init__(
         self,
@@ -170,6 +203,7 @@ class ChannelFeed(QObject):
         bars: BarSource | None = None,
         log: Log = _quiet,
         utc_now: Callable[[], float] = time.time,
+        ai: Callable[[], AiClient | str] | None = None,
     ) -> None:
         super().__init__(desk)
         self.desk = desk
@@ -187,6 +221,10 @@ class ChannelFeed(QObject):
         self._next = desk.page.chat.intercept
         desk.page.chat.intercept = self.intercept
         self.drafts = Drafts()  # half signals waiting for their rest (0.44.0)
+        self.ai = ai if ai is not None else self._page_ai
+        self.reads = ReadCap()
+        self.asked: set[tuple[int, int]] = set()  # (channel, message) read by the AI
+        self.read_done.connect(self.show_read, Qt.ConnectionType.QueuedConnection)
         self.arrived.connect(self.handle, Qt.ConnectionType.QueuedConnection)
         self.edited.connect(self.handle_edit, Qt.ConnectionType.QueuedConnection)
         self.draft_timer = QTimer(self)
@@ -235,12 +273,20 @@ class ChannelFeed(QObject):
                 message.reply_to,
             )
             if step.action in ("open", "wait"):
-                return self._waiting(source, message, step, symbols, policy.aliases)
+                extra = ""
+                odd = bool(message.photo) or unclear(step.text, symbols, policy.aliases)
+                if odd and self.ask_ai(source, message, step.text, message.photo):
+                    extra = READING
+                return self._waiting(source, message, step, symbols, policy.aliases, extra)
             text = step.text
             if step.draft is not None:
                 count = len(step.draft.texts)
                 self.noted.emit(source.title, f"{count} messages joined into one signal")
         kind = classify(text, symbols, policy.aliases, reply=message.reply_to is not None)
+        if kind is Kind.NOISE and not joined:
+            early = self._unclear(source, message, text, symbols, policy.aliases)
+            if early is not None:
+                return early
         if kind is Kind.UPDATE:
             self.follow_up(source, message, symbols, policy.aliases)
         symbol = self._symbol(text, symbols, policy.aliases)
@@ -313,8 +359,9 @@ class ChannelFeed(QObject):
         step: Step,
         symbols: tuple[str, ...],
         aliases: dict[str, str],
+        extra: str = "",
     ) -> Route:
-        found = Route(Action.SKIP, step.reason())
+        found = Route(Action.SKIP, step.reason() + extra)
         self.log("INFO", f"Telegram channel {source.title}: {found.reason}")
         self._remember(source, message, found)
         if step.draft is not None and worth_telling(step.draft, symbols, aliases):
@@ -362,10 +409,153 @@ class ChannelFeed(QObject):
             title = source.title if source is not None else str(draft.channel_id)
             aliases = self.repository.policy(draft.channel_id).aliases
             reason = expired_reason(draft, symbols, aliases)
+            telling = worth_telling(draft, symbols, aliases)
+            last_id = draft.message_ids[-1]
+            last = ChannelMessage(draft.channel_id, last_id, draft.started, draft.text)
+            on = source is not None and source.enabled
+            if telling and on and source is not None and self.ask_ai(source, last, draft.text):
+                reason = reason.replace(", nothing done", ": the AI reads it once more")
             self.log("INFO", f"Telegram channel {title}: {reason}")
-            if worth_telling(draft, symbols, aliases):
+            if telling:
                 self.noted.emit(title, reason)
         return gone
+
+    # The AI reads unclear messages (docs/AI_LAB_V3.md section 1) ----------------------------
+    def _unclear(
+        self,
+        source: ChannelSource,
+        message: ChannelMessage,
+        text: str,
+        symbols: tuple[str, ...],
+        aliases: dict[str, str],
+    ) -> Route | None:
+        """A result claim, or an unclear message the AI reads (None: plain noise)."""
+        if is_claim(text):
+            found = Route(Action.SKIP, CLAIM_REASON)
+        elif message.photo and self.ask_ai(source, message, text, message.photo):
+            found = Route(Action.SKIP, "a picture: the AI reads it")
+        elif unclear(text, symbols, aliases) and self.ask_ai(source, message, text):
+            found = Route(Action.SKIP, "an unclear message: the AI reads it")
+        else:
+            return None
+        self.counts.setdefault(source.channel_id, ChannelCounts()).skipped += 1
+        self.log("INFO", f"Telegram channel {source.title}: {found.reason}")
+        self._remember(source, message, found)
+        return found
+
+    def _page_ai(self) -> AiClient | str:
+        found: object = self.desk.page.llm_panel.make_client()
+        return found if isinstance(found, AiClient | str) else "no AI connection"
+
+    def ask_ai(
+        self,
+        source: ChannelSource,
+        message: ChannelMessage,
+        text: str,
+        picture: bytes = b"",
+    ) -> bool:
+        """Ask the AI once to read a message (and its picture), in a worker thread (True
+        when it was asked)."""
+        key = (source.channel_id, message.message_id)
+        if key in self.asked:
+            return False
+        client = self.ai()
+        if isinstance(client, str) or not self.reads.take(self.now()):
+            return False
+        if len(self.asked) >= KEEP_ASKED:
+            self.asked.clear()
+        self.asked.add(key)
+        earlier = self._earlier(source.channel_id, message.message_id)
+        messages = read_messages(text, earlier, self.desk.symbols(), picture)
+        threading.Thread(
+            target=self._read_work,
+            args=(client, source.channel_id, message, (*earlier, text), messages, bool(picture)),
+            name="channel-ai-read",
+            daemon=True,
+        ).start()
+        return True
+
+    def _earlier(self, channel_id: int, message_id: int) -> list[str]:
+        """The channel's last messages before this one, oldest first (the AI's context)."""
+        try:
+            rows = self.repository.messages(channel_id, CONTEXT_MESSAGES + 1)
+        except Exception:
+            return []
+        found = [
+            row.edited_text or row.text
+            for row in rows
+            if row.message_id != message_id and not row.deleted
+        ]
+        return list(reversed(found[:CONTEXT_MESSAGES]))
+
+    def _read_work(
+        self,
+        client: AiClient,
+        channel_id: int,
+        message: ChannelMessage,
+        texts: tuple[str, ...],
+        messages: Sequence[Message],
+        picture: bool = False,
+    ) -> None:
+        outcome: ReadResult | str
+        try:
+            answer = client.complete(messages, schema=SCHEMA, max_tokens=READ_TOKENS)
+            found = parse_reply(answer.json_text or answer.text)
+            outcome = found if found is not None else "the AI's answer could not be read"
+        except AiCallError as error:
+            outcome = plain_text(error, client.settings.base_url)
+        except Exception as error:
+            outcome = f"{type(error).__name__}: {error}"
+        with contextlib.suppress(RuntimeError):  # the window may be closing
+            self.read_done.emit(Reading(channel_id, message, texts, outcome, picture))
+
+    def show_read(self, reading: object) -> Route | None:
+        """Slot (UI thread): the AI's reading, checked before it counts (`canonical`)."""
+        if not isinstance(reading, Reading):
+            return None
+        source = self.repository.source(reading.channel_id)
+        if source is None or not source.enabled:
+            return None
+        message, outcome = reading.message, reading.outcome
+        if isinstance(outcome, str):
+            what = "a picture (does the model read images?)" if reading.picture else "a message"
+            why = f"the AI could not read {what}: {outcome}"
+            self.log("WARNING", f"Telegram channel {source.title}: {why}")
+            if reading.picture:
+                self.noted.emit(source.title, why)
+            return None
+        aliases = self.repository.policy(source.channel_id).aliases
+        symbols = self.desk.symbols()
+        text, problem = canonical(
+            outcome,
+            reading.texts,
+            symbols,
+            aliases,
+            picture=reading.picture,
+        )
+        if not text:
+            found = Route(Action.SKIP, problem)
+            self.log("INFO", f"Telegram channel {source.title}: {problem}")
+            self._remember(source, message, found)
+            if outcome.kind in ("signal", "part"):
+                self.noted.emit(source.title, problem)
+            return found
+        draft = self.drafts.get(source.channel_id, self.now())
+        if draft is not None and message.message_id in draft.message_ids:
+            self.drafts.drop(source.channel_id)
+        if reading.picture:
+            line = f"the AI read the picture as: {text} (check the numbers on the card)"
+        else:
+            line = f"the AI read the message as: {text}"
+        self.noted.emit(source.title, line)
+        whole = ChannelMessage(
+            message.channel_id,
+            message.message_id,
+            message.date,
+            text,
+            reply_to=message.reply_to,
+        )
+        return self.handle(whole, joined=True)
 
     def _symbol(self, text: str, symbols: tuple[str, ...], aliases: dict[str, str]) -> str:
         parsed = self.desk.parse_text(text, aliases)
