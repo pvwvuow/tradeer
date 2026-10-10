@@ -3,12 +3,13 @@
 A pasted signal becomes one card: the symbol, the side and the order kind, the entry, the
 stop loss with its distance in ATR, every target with its R, the lots and the money at risk
 from the risk manager, the checks (Why? shows them and the decision trace) and when it
-expires, and the full check (phase 21b): the same geometry's base rate on 2 years of M15
-history and how pasted signals did so far, each with its sample count. Nothing is sent
-until you press and hold Hold to send (1.2 s, 2 s when the order would be real); then every
-leg goes to the pipeline's approval queue and the execution engine checks the price, the
-spread and the limits again before it sends. The card only shows: the desk submits,
-approves, skips and runs the full check.
+expires, the context now (the trend, the structure, the spread, the next high-impact news
+and the bot's open trades on the same currencies) and the full check (phase 21b): the same
+geometry's base rate on 2 years of M15 history and how pasted signals did so far, each with
+its sample count. Nothing is sent until you press and hold Hold to send (1.2 s, 2 s when
+the order would be real); then every leg goes to the pipeline's approval queue and the
+execution engine checks the price, the spread and the limits again before it sends. The card
+only shows: the desk submits, approves, skips and runs the full check.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ QUICK_NOTE = (
     "Checked: the price, the stops, the filters and the risk limits. The full check's numbers "
     "come from the app's own history. Nothing is sent until you hold the button."
 )
+CONTEXT_HEAD = "Context now:"
 NO_HISTORY = "The full check needs the price history: connect to MT5."
 FULL_HEAD = "Same geometry on {days} days of M15 history (a base rate, not a forecast):"
 FULL_RATE = "TP{number} ({atr:.1f} ATR): {rate:.0f}% of {count} similar trades hit it first"
@@ -95,6 +97,7 @@ ORDER_FA: dict[str, str] = {
     ),
     "Skipped: nothing was sent.": "رد شد: چیزی ارسال نشد.",
     "Full check": "بررسی کامل",
+    CONTEXT_HEAD: "وضعیت الان:",
     "Checking the same geometry in the history...": "در حال بررسی همین هندسه در تاریخچه...",
     "Full check failed: {why}": "بررسی کامل نشد: {why}",
     NO_HISTORY: "بررسی کامل تاریخچه‌ی قیمت را لازم دارد: به MT5 وصل شوید.",
@@ -415,6 +418,11 @@ class OrderCard(LabCard):
         self.why.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.why.hide()
         lines.addWidget(self.why)
+        self.context_label = lab_label("", "note", wrap=True)
+        self.context_label.setObjectName("AiOrderContext")
+        self.context_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.context_label.hide()
+        lines.addWidget(self.context_label)
         self.full_label = lab_label("", "note", wrap=True)
         self.full_label.setObjectName("AiOrderFull")
         self.full_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -482,6 +490,12 @@ class OrderCard(LabCard):
             self.legs = tuple(legs)
         self.block = block
         self.refresh(currency=currency, note=note, now=now)
+
+    def show_context(self, lines: Sequence[str]) -> None:
+        """What the app sees around the signal now (`app.engine.desk_context`)."""
+        text = "\n".join([self.word(CONTEXT_HEAD), *lines]) if lines else ""
+        self.context_label.setText(text)
+        self.context_label.setVisible(bool(text))
 
     def full_running(self) -> None:
         self.full_state = "running"
