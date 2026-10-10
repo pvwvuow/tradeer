@@ -1,6 +1,6 @@
 """The Signal desk's requests and results (docs/SIGNAL_DESK.md 2.3 to 2.6).
 
-The AI Lab (and later a channel) hands the pipeline a `DeskRequest`: the parsed signal and
+The AI Lab (and a Telegram channel) hands the pipeline a `DeskRequest`: the parsed signal and
 where it came from. In the analysis thread the pipeline plans it against the live price,
 sizes it, splits it into one leg per target and runs every leg through the normal path; the
 `DeskResult` says what happened, in words the card can show. Pure helpers only: no I/O.
@@ -9,8 +9,8 @@ sizes it, splits it into one leg per target and runs every leg through the norma
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 
 from app.signals.legs import split
 from app.signals.parse import ParsedSignal
@@ -21,15 +21,19 @@ MARKET_MINUTES = 15  # a market signal is stale after this: the card asks for a 
 PENDING_MINUTES = 480  # a pending order waits at most 8 hours
 KEEP_RESULTS = 20  # the newest desk results the AI Lab can show
 REASON_CHARACTERS = 200
+MANUAL = "manual_signal"  # app.strategies.manual_signal.NAME
 
 
 @dataclass(frozen=True)
 class DeskRequest:
     id: str
     parsed: ParsedSignal
-    source: str = "pasted"  # "pasted", later "channel:<id>"
+    source: str = "pasted"  # "pasted", or a channel's "channel:<magic>"
     market_minutes: int = MARKET_MINUTES
     pending_minutes: int = PENDING_MINUTES
+    strategy: str = MANUAL  # a channel's signals are booked to "channel:<magic>"
+    features: Mapping[str, float | str] = field(default_factory=dict)  # a channel's budget
+    max_open: int = 0  # the source's open trades at most (legs of one signal = one), 0 = any
 
 
 @dataclass(frozen=True)
@@ -42,8 +46,34 @@ class DeskResult:
     at: float = 0.0
 
 
-def new_request(parsed: ParsedSignal, now: float, source: str = "pasted") -> DeskRequest:
-    return DeskRequest(stable_id("desk", source, parsed.text, f"{now:.3f}"), parsed, source)
+def new_request(
+    parsed: ParsedSignal,
+    now: float,
+    source: str = "pasted",
+    *,
+    strategy: str = MANUAL,
+    features: Mapping[str, float | str] | None = None,
+    max_open: int = 0,
+    market_minutes: int = MARKET_MINUTES,
+    pending_minutes: int = PENDING_MINUTES,
+) -> DeskRequest:
+    return DeskRequest(
+        stable_id("desk", source, parsed.text, f"{now:.3f}"),
+        parsed,
+        source,
+        market_minutes=market_minutes,
+        pending_minutes=pending_minutes,
+        strategy=strategy,
+        features=dict(features or {}),
+        max_open=max_open,
+    )
+
+
+def too_many_open(groups: int, max_open: int) -> str:
+    """Why a source may not open one more trade, "" when it may."""
+    if max_open <= 0 or groups < max_open:
+        return ""
+    return f"this channel already has {groups} open or waiting trade(s), its limit is {max_open}"
 
 
 def desk_reason(request: DeskRequest) -> str:
