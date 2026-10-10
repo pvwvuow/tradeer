@@ -27,7 +27,9 @@ BREAK_EVEN = re.compile(
     r"|\b(?:to|at)\s+be\b|(?<!\w)(ریسک\s*فری|سیو|نقطه\s*ورود)(?!\w)",
 )
 SL_HIT = re.compile(r"\b(?:sl|stop(?:ped)?)\s*(?:hit|out)\b|❌|🛑|(?<!\w)استاپ\s*خورد(?!\w)")
-TP_HIT = re.compile(r"\b(?:tp\s*\d?|target\s*\d?)\s*(?:hit|done|reached)\b|✅|🎯|💰|(?<!\w)خورد(?!\w)")
+TP_HIT = re.compile(
+    r"\b(?:tp\s*\d?|target\s*\d?)\s*(?:hit|done|reached)\b|✅|🎯|💰|(?<!\w)خورد(?!\w)",
+)
 NEW_WORDS = re.compile(r"\b(?:new|move|change|update)\b|(?<!\w)(جدید|ببرید|تغییر|جابجا)(?!\w)")
 
 
