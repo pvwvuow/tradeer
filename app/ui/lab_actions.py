@@ -5,7 +5,8 @@ Every proposal becomes a card under the answer with Hold to apply, like a channe
 card; nothing changes before the hold. The agent's tools run in its worker thread, so what
 needs the database (the channels) is read here in the UI thread when the question is asked,
 and the cards are made after the turn, in the UI thread too. A channel signal that made no
-order card (a Paper trial) shows one line in the chat, so you see it was read.
+order card (a Paper trial) shows one line in the chat, so you see it was read, and so does
+a half signal that waits for its rest (0.44.0).
 """
 
 from __future__ import annotations
@@ -90,6 +91,7 @@ class LabActions(QObject):
         self._noted: Seen | None = None
         if feed is not None:  # after the feed's own slot: one line for a signal without a card
             feed.arrived.connect(self.after_message, Qt.ConnectionType.QueuedConnection)
+            feed.noted.connect(self.note)
 
     def chat_tools(self) -> list[Tool]:
         return [*self._page_tools(), *self.tools()]
@@ -315,6 +317,14 @@ class LabActions(QObject):
             lines += self._channel_lines(repository, rows)
         except Exception as error:
             lines.append(f"The channel details could not be read: {type(error).__name__}")
+        drafts = self.feed.drafts.all() if self.feed is not None else []
+        if drafts:
+            titles = {source.channel_id: source.title for source, _policy in rows}
+            lines.append("\nHalf signals waiting for their rest (no card until complete):")
+            for draft in drafts:
+                name = titles.get(draft.channel_id, str(draft.channel_id))
+                joined = " / ".join(text.replace("\n", " ")[:80] for text in draft.texts)
+                lines.append(f"- {name} since {_when(draft.started)}: {joined}")
         seen = self.feed.seen[:LAST_SEEN] if self.feed is not None else []
         if seen:
             lines.append(f"\nThe last messages the app looked at ({OUTSIDE}):")
@@ -403,6 +413,14 @@ class LabActions(QObject):
         if page.persian:
             text = f"سیگنال خوانده شد، کارت سفارش ساخته نشد: {seen.reason}. «{seen.text}»"
         card = note_card("paste", seen.channel, text)
+        apply_tree(card, page.tokens)
+        page.chat.add_extra(card)
+        return card
+
+    def note(self, title: str, text: str) -> LabCard:
+        """Slot: a line of the channel feed (a half signal waits, joined, stayed incomplete)."""
+        page = self.page
+        card = note_card("paste", title, text)
         apply_tree(card, page.tokens)
         page.chat.add_extra(card)
         return card
