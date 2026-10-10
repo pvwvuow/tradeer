@@ -95,7 +95,7 @@ def test_the_chart_card_stands_where_the_answer_put_it(qtbot: QtBot, tmp_path: P
     view.copy_button.click()
     clipboard = QGuiApplication.clipboard()
     assert clipboard is not None and clipboard.text().startswith("Here are your numbers.")
-    assert not view.actions.isHidden() and not view.retry_button.isHidden()
+    assert not view.action_bar.isHidden() and not view.retry_button.isHidden()
     view.retry_button.click()
     qtbot.waitUntil(lambda: not chat.busy and len(chat.views) == 2, timeout=10_000)
     assert chat.views[-1].question.text() == "How am I doing overall?"

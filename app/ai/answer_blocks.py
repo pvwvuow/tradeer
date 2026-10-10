@@ -155,17 +155,7 @@ class AppChart:
 
 
 Block = (
-    Text
-    | Heading
-    | Rule
-    | Code
-    | Table
-    | Callout
-    | Metrics
-    | Chart
-    | Steps
-    | Progress
-    | AppChart
+    Text | Heading | Rule | Code | Table | Callout | Metrics | Chart | Steps | Progress | AppChart
 )
 
 
