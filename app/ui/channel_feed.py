@@ -8,6 +8,10 @@ its budget; in **Paper trial** it is only counted. Nothing here can send an orde
 card waits for your hold-to-confirm like a pasted one, and a channel's text is never an
 instruction to the app or the AI.
 
+0.44.0: a half signal ("gold buy now", then "SL 4180 TP 4205"; "wait, I will complete it";
+an edit of the first message) waits in the channel's draft and goes on only when it is
+whole (`app.channels.drafts`); `noted` tells the chat.
+
 Phase 21d2 and 21e: every parsed signal is saved (`tg_signals`) and followed as a shadow
 trade in a worker thread every 10 minutes; the same signal from a second channel within 15
 minutes joins the first card instead of making a new one; an update ("close now", "move SL
@@ -33,6 +37,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from app.analysis.bars import Bars
 from app.backtest.service import BacktestRequest
 from app.channels.chat_settings import Change, read_change
+from app.channels.drafts import Draft, Drafts, Step, edit, expired_reason, join, worth_telling
 from app.channels.folder import ChannelMessage, preview
 from app.channels.policy import (
     Action,
@@ -60,6 +65,7 @@ from app.ui.lab_desk import CardSource, LabDesk
 from app.ui.lab_parts import apply_tree
 
 KEEP_SEEN = 50
+DRAFT_CHECK_MS = 60 * 1000  # incomplete drafts are expired this often (0.44.0)
 SHADOW_MS = 10 * 60 * 1000  # the shadow results are brought up to date this often
 FIRST_SHADOW_MS = 60 * 1000
 WAITING = frozenset({SignalState.PENDING_APPROVAL})
@@ -151,6 +157,8 @@ class ChannelCounts:
 
 class ChannelFeed(QObject):
     arrived = Signal(object)  # a ChannelMessage, from the reader thread
+    edited = Signal(object)  # an edited ChannelMessage, from the reader thread (0.44.0)
+    noted = Signal(str, str)  # a channel's title and a line for the chat (drafts, 0.44.0)
     followed = Signal(int)  # shadow legs brought up to date (the worker thread)
 
     def __init__(
@@ -178,23 +186,35 @@ class ChannelFeed(QObject):
         self._shadow_lock = threading.Lock()
         self._next = desk.page.chat.intercept
         desk.page.chat.intercept = self.intercept
+        self.drafts = Drafts()  # half signals waiting for their rest (0.44.0)
         self.arrived.connect(self.handle, Qt.ConnectionType.QueuedConnection)
+        self.edited.connect(self.handle_edit, Qt.ConnectionType.QueuedConnection)
+        self.draft_timer = QTimer(self)
+        self.draft_timer.setInterval(DRAFT_CHECK_MS)
+        self.draft_timer.timeout.connect(self.expire_drafts)
         self.timer = QTimer(self)
         self.timer.setInterval(SHADOW_MS)
         self.timer.timeout.connect(self.follow_shadow)
 
     def attach(self, reader: ChannelReader) -> None:
         reader.add_message_listener(self._from_reader)
+        reader.add_edit_listener(self._edit_from_reader)
         self.timer.start()
+        self.draft_timer.start()
         QTimer.singleShot(FIRST_SHADOW_MS, self.follow_shadow)
 
     def _from_reader(self, message: ChannelMessage) -> None:
         with contextlib.suppress(RuntimeError):  # the window may be closing
             self.arrived.emit(message)
 
+    def _edit_from_reader(self, message: ChannelMessage) -> None:
+        with contextlib.suppress(RuntimeError):
+            self.edited.emit(message)
+
     # A message --------------------------------------------------------------------------
-    def handle(self, message: object) -> Route | None:
-        """Slot (UI thread): one stored message of an on channel."""
+    def handle(self, message: object, *, joined: bool = False) -> Route | None:
+        """Slot (UI thread): one stored message of an on channel. A half signal waits in the
+        channel's draft for its rest (0.44.0); `joined` is a completed draft's whole text."""
         if not isinstance(message, ChannelMessage):
             return None
         source = self.repository.source(message.channel_id)
@@ -202,10 +222,28 @@ class ChannelFeed(QObject):
             return None
         policy = self.repository.policy(source.channel_id)
         symbols = self.desk.symbols()
-        kind = classify(message.text, symbols, policy.aliases, reply=message.reply_to is not None)
+        text = message.text
+        if not joined:
+            step = join(
+                self.drafts,
+                source.channel_id,
+                message.message_id,
+                text,
+                self.now(),
+                symbols,
+                policy.aliases,
+                message.reply_to,
+            )
+            if step.action in ("open", "wait"):
+                return self._waiting(source, message, step, symbols, policy.aliases)
+            text = step.text
+            if step.draft is not None:
+                count = len(step.draft.texts)
+                self.noted.emit(source.title, f"{count} messages joined into one signal")
+        kind = classify(text, symbols, policy.aliases, reply=message.reply_to is not None)
         if kind is Kind.UPDATE:
             self.follow_up(source, message, symbols, policy.aliases)
-        symbol = self._symbol(message.text, symbols, policy.aliases)
+        symbol = self._symbol(text, symbols, policy.aliases)
         now = self.now()
         state = budget_state(policy, self.repository.money(source.magic, day_start(now)))
         found = route(policy, kind, symbol, state, symbols)
@@ -218,7 +256,7 @@ class ChannelFeed(QObject):
             self.log("WARNING", f"Telegram channel {source.title}: {found.reason}")
         counts = self.counts.setdefault(source.channel_id, ChannelCounts())
         request_id = ""
-        parsed = self.desk.parse_text(message.text, policy.aliases)
+        parsed = self.desk.parse_text(text, policy.aliases)
         if found.action is Action.CARD:
             twin = self._twin(source, symbol, parsed.direction, parsed.entry, now)
             if twin is not None:
@@ -239,7 +277,7 @@ class ChannelFeed(QObject):
                     market_minutes=policy.market_minutes,
                     pending_minutes=policy.pending_minutes,
                 )
-                card = self.desk.take(message.text, origin)
+                card = self.desk.take(text, origin)
                 request_id = card.request_id
                 found_entry = parsed.entry
                 self._remember_card(request_id, source, symbol, parsed.direction, found_entry, now)
@@ -266,6 +304,68 @@ class ChannelFeed(QObject):
             self.log("INFO", f"Telegram channel {source.title}: {found.reason}")
         self._remember(source, message, found)
         return found
+
+    # Half signals (docs/AI_LAB_V3.md section 1) -------------------------------------------
+    def _waiting(
+        self,
+        source: ChannelSource,
+        message: ChannelMessage,
+        step: Step,
+        symbols: tuple[str, ...],
+        aliases: dict[str, str],
+    ) -> Route:
+        found = Route(Action.SKIP, step.reason())
+        self.log("INFO", f"Telegram channel {source.title}: {found.reason}")
+        self._remember(source, message, found)
+        if step.draft is not None and worth_telling(step.draft, symbols, aliases):
+            self.noted.emit(source.title, found.reason)
+        return found
+
+    def handle_edit(self, message: object) -> Route | None:
+        """Slot (UI thread): an edited message; it counts when it is part of an open draft."""
+        if not isinstance(message, ChannelMessage):
+            return None
+        source = self.repository.source(message.channel_id)
+        if source is None or not source.enabled:
+            return None
+        policy = self.repository.policy(source.channel_id)
+        symbols = self.desk.symbols()
+        step = edit(
+            self.drafts,
+            source.channel_id,
+            message.message_id,
+            message.text,
+            self.now(),
+            symbols,
+            policy.aliases,
+        )
+        if step is None:
+            return None
+        if step.action != "complete":
+            return self._waiting(source, message, step, symbols, policy.aliases)
+        self.noted.emit(source.title, "the edited message completed the signal")
+        whole = ChannelMessage(
+            message.channel_id,
+            message.message_id,
+            message.date,
+            step.text,
+            reply_to=message.reply_to,
+        )
+        return self.handle(whole, joined=True)
+
+    def expire_drafts(self) -> list[Draft]:
+        """Timer (UI thread): drafts whose time is up, each told once with what was missing."""
+        gone = self.drafts.expired(self.now())
+        symbols = self.desk.symbols()
+        for draft in gone:
+            source = self.repository.source(draft.channel_id)
+            title = source.title if source is not None else str(draft.channel_id)
+            aliases = self.repository.policy(draft.channel_id).aliases
+            reason = expired_reason(draft, symbols, aliases)
+            self.log("INFO", f"Telegram channel {title}: {reason}")
+            if worth_telling(draft, symbols, aliases):
+                self.noted.emit(title, reason)
+        return gone
 
     def _symbol(self, text: str, symbols: tuple[str, ...], aliases: dict[str, str]) -> str:
         parsed = self.desk.parse_text(text, aliases)

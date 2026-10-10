@@ -132,6 +132,7 @@ class ChannelReader:
         self._lock = threading.Lock()
         self._listeners: list[Listener] = []
         self._readers: list[MessageListener] = []
+        self._editors: list[MessageListener] = []  # edits of stored messages (0.44.0)
         self._state = ReaderState(ReaderStatus.OFF)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -155,6 +156,12 @@ class ChannelReader:
         was stored (phase 21d: the channel feed turns signals into order cards)."""
         with self._lock:
             self._readers.append(listener)
+
+    def add_edit_listener(self, listener: MessageListener) -> None:
+        """Called in the reader thread with every edited message of an on channel, after the
+        edit was stored (a channel completes a half signal by editing it)."""
+        with self._lock:
+            self._editors.append(listener)
 
     def _set(self, status: ReaderStatus, message: str = "", **changes: Any) -> None:
         with self._lock:
@@ -373,8 +380,14 @@ class ChannelReader:
                     self._log("WARNING", f"Telegram message not handled: {type(error).__name__}")
 
     def _on_edit(self, message: ChannelMessage) -> None:
-        if self._wanted(message.channel_id):
-            self._repository.edit_message(message, self._now())
+        if self._wanted(message.channel_id) and self._repository.edit_message(message, self._now()):
+            with self._lock:
+                editors = list(self._editors)
+            for editor in editors:
+                try:
+                    editor(message)
+                except Exception as error:
+                    self._log("WARNING", f"Telegram edit not handled: {type(error).__name__}")
 
     def _on_delete(self, channel_id: int, message_ids: Sequence[int]) -> None:
         if self._wanted(channel_id):
