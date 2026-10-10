@@ -19,7 +19,7 @@ from app.storage.ids import stable_id
 
 MARKET_MINUTES = 15  # a market signal is stale after this: the card asks for a new one
 PENDING_MINUTES = 480  # a pending order waits at most 8 hours
-KEEP_RESULTS = 20
+KEEP_RESULTS = 20  # the newest desk results the AI Lab can show
 REASON_CHARACTERS = 200
 
 
