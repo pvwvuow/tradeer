@@ -15,7 +15,8 @@ whole (`app.channels.drafts`); `noted` tells the chat. A message the parser cann
 messages (`app.channels.reading`, at most 40 a day); its answer counts only when the checks
 pass, and then goes the normal way. A result claim ("+120 pips today") is never a signal.
 0.44.1: a message with a picture and no whole signal in its text goes to the AI with the
-picture; the card then says the numbers came from a picture.
+picture; the card then says the numbers came from a picture. A model that refuses pictures
+gets none for 6 hours (`PICTURE_PAUSE`), so the daily readings are not spent on it.
 
 Phase 21d2 and 21e: every parsed signal is saved (`tg_signals`) and followed as a shadow
 trade in a worker thread every 10 minutes; the same signal from a second channel within 15
@@ -89,6 +90,9 @@ SHADOW_MS = 10 * 60 * 1000  # the shadow results are brought up to date this oft
 FIRST_SHADOW_MS = 60 * 1000
 READING = "; the AI reads it now"
 KEEP_ASKED = 500
+PICTURE_PAUSE = 6 * 3600  # no pictures to a model that refused one
+PICTURE_PAUSED = "; pictures go to the AI again in 6 hours"
+REFUSED_CODES = frozenset({400, 413, 415, 422})  # a refused request, not a network problem
 WAITING = frozenset({SignalState.PENDING_APPROVAL})
 ON_THEIR_WAY = frozenset({SignalState.SENT, SignalState.FILLED, SignalState.MANAGED})
 
@@ -178,6 +182,7 @@ class Reading:
     texts: tuple[str, ...]  # what the AI saw: the earlier messages, then this one
     outcome: ReadResult | str  # the reading, or why it failed
     picture: bool = False  # the AI read the message's picture too
+    refused: bool = False  # the service refused the request with the picture
 
 
 @dataclass
@@ -224,6 +229,7 @@ class ChannelFeed(QObject):
         self.ai = ai if ai is not None else self._page_ai
         self.reads = ReadCap()
         self.asked: set[tuple[int, int]] = set()  # (channel, message) read by the AI
+        self.pictures_off_until = 0.0  # a model that refused a picture gets none until then
         self.read_done.connect(self.show_read, Qt.ConnectionType.QueuedConnection)
         self.arrived.connect(self.handle, Qt.ConnectionType.QueuedConnection)
         self.edited.connect(self.handle_edit, Qt.ConnectionType.QueuedConnection)
@@ -457,7 +463,7 @@ class ChannelFeed(QObject):
         """Ask the AI once to read a message (and its picture), in a worker thread (True
         when it was asked)."""
         key = (source.channel_id, message.message_id)
-        if key in self.asked:
+        if key in self.asked or (picture and self.now() < self.pictures_off_until):
             return False
         client = self.ai()
         if isinstance(client, str) or not self.reads.take(self.now()):
@@ -498,16 +504,19 @@ class ChannelFeed(QObject):
         picture: bool = False,
     ) -> None:
         outcome: ReadResult | str
+        refused = False
         try:
             answer = client.complete(messages, schema=SCHEMA, max_tokens=READ_TOKENS)
             found = parse_reply(answer.json_text or answer.text)
             outcome = found if found is not None else "the AI's answer could not be read"
         except AiCallError as error:
             outcome = plain_text(error, client.settings.base_url)
+            refused = picture and error.code in REFUSED_CODES
         except Exception as error:
             outcome = f"{type(error).__name__}: {error}"
+        reading = Reading(channel_id, message, texts, outcome, picture, refused)
         with contextlib.suppress(RuntimeError):  # the window may be closing
-            self.read_done.emit(Reading(channel_id, message, texts, outcome, picture))
+            self.read_done.emit(reading)
 
     def show_read(self, reading: object) -> Route | None:
         """Slot (UI thread): the AI's reading, checked before it counts (`canonical`)."""
@@ -520,6 +529,9 @@ class ChannelFeed(QObject):
         if isinstance(outcome, str):
             what = "a picture (does the model read images?)" if reading.picture else "a message"
             why = f"the AI could not read {what}: {outcome}"
+            if reading.refused:
+                self.pictures_off_until = self.now() + PICTURE_PAUSE
+                why += PICTURE_PAUSED
             self.log("WARNING", f"Telegram channel {source.title}: {why}")
             if reading.picture:
                 self.noted.emit(source.title, why)

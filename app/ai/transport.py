@@ -5,7 +5,8 @@ Structured output first (a JSON schema), then JSON mode, then plain text with th
 taken out of the answer; a parameter the service refuses (the temperature or the reasoning
 effort of some models) is dropped. What worked is remembered per base URL and model, so
 the next call goes straight to it. The key is only ever in the Authorization header and is
-masked in every error text.
+masked in every error text. A message with a picture (the Chat Completions form, text and
+image_url parts) is sent in the Responses form there (`responses_content`, 0.44.1).
 """
 
 from __future__ import annotations
@@ -162,6 +163,25 @@ def _strict_format(schema: Mapping[str, Any]) -> dict[str, Any]:
     return {"name": SCHEMA_NAME, "schema": dict(schema), "strict": True}
 
 
+def responses_content(content: object) -> object:
+    """A message's content in the Responses form: a text stays a text; the text and picture
+    parts of the Chat Completions form become input_text and input_image parts."""
+    if not isinstance(content, list):
+        return content
+    parts: list[object] = []
+    for part in content:
+        kind = part.get("type") if isinstance(part, Mapping) else None
+        if not isinstance(part, Mapping) or kind not in ("text", "image_url"):
+            parts.append(part)
+        elif kind == "text":
+            parts.append({"type": "input_text", "text": part.get("text", "")})
+        else:
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, Mapping) else image
+            parts.append({"type": "input_image", "image_url": url})
+    return parts
+
+
 def request_body(
     settings: Connection,
     options: CallOptions,
@@ -174,7 +194,7 @@ def request_body(
     turns = [{"role": item["role"], "content": item["content"]} for item in messages]
     body: dict[str, Any] = {"model": settings.model}
     if options.style is ApiStyle.RESPONSES:
-        body["input"] = turns
+        body["input"] = [{**turn, "content": responses_content(turn["content"])} for turn in turns]
         body["max_output_tokens"] = max_tokens
         if effort:
             body["reasoning"] = {"effort": effort}

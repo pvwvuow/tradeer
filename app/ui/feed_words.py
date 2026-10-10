@@ -42,13 +42,18 @@ LINES_FA: tuple[tuple[re.Pattern[str], str], ...] = tuple(
             r"^the stop loss or a target is on the wrong side for a (?P<side>buy|sell)$",
             "حد ضرر یا تارگت برای {side} در سمت اشتباه است",
         ),
-        (r"^the AI could not read a picture", "AI نتوانست عکس را بخواند (مدل شما عکس می‌خواند؟)"),
+        (
+            r"(?s)^the AI could not read a picture(?:.*(?P<pause>; pictures go to the AI again "
+            r"in 6 hours)$)?",
+            "AI نتوانست عکس را بخواند (مدل شما عکس می‌خواند؟){pause}",
+        ),
     )
 )
 REST_FA = {
     ", nothing done": "، کاری انجام نشد",
     ": the AI reads it once more": "؛ AI یک بار دیگر می‌خواندش",
     "; the AI reads it now": "؛ AI الان می‌خواندش",
+    "; pictures go to the AI again in 6 hours": "؛ تا 6 ساعت عکسی برای AI فرستاده نمی‌شود",
     "": "",
 }
 SIDES_FA = {"buy": "خرید", "sell": "فروش"}
@@ -67,7 +72,7 @@ def feed_line_fa(text: str) -> str:
         parts = {key: value or "" for key, value in found.groupdict().items()}
         if "missing" in parts:
             parts["missing"] = _missing(parts["missing"])
-        for key in ("ai", "rest"):
+        for key in ("ai", "rest", "pause"):
             if key in parts:
                 parts[key] = REST_FA.get(parts[key], parts[key])
         if "side" in parts:

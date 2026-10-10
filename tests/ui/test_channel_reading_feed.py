@@ -1,7 +1,8 @@
 """The AI reads an unclear channel message (0.44.0): a checked reading becomes one order card
 in a Live channel; a reading with a number the channel never wrote makes none; a result claim
 never goes to the AI; without an AI connection an unclear message is only noise. A picture
-goes to the AI with its message (0.44.1)."""
+goes to the AI with its message (0.44.1); a model that refuses a picture gets none for a
+while."""
 
 from __future__ import annotations
 
@@ -9,14 +10,16 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from pytestqt.qtbot import QtBot
 
+from app.ai.transport import AiCallError, FailureKind
 from app.channels.folder import ChannelMessage
 from app.channels.policy import Action
 from app.channels.reading import CLAIM_REASON
-from app.ui.channel_feed import ChannelFeed
+from app.ui.channel_feed import PICTURE_PAUSE, PICTURE_PAUSED, ChannelFeed
 from app.ui.signal_card import OrderCard
 from tests.ui.test_channel_feed import GOLD, LIVE, channel
 from tests.ui.test_signal_card import desk_page
@@ -46,6 +49,24 @@ class FakeAi:
         self.asked.append(messages)
         text = json.dumps(self.reply)
         return Answer(text, text)
+
+
+@dataclass
+class NoPictures:
+    """An AI service that refuses every request with a picture."""
+
+    asked: list[Sequence[Mapping[str, Any]]] = field(default_factory=list)
+    settings: Any = field(default_factory=lambda: SimpleNamespace(base_url="https://ai.example"))
+
+    def complete(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        schema: Mapping[str, Any] | None = None,
+        max_tokens: int = 0,
+    ) -> Answer:
+        self.asked.append(messages)
+        raise AiCallError(FailureKind.OTHER, "HTTP 400: this model does not read images", 400)
 
 
 def carded(page: Any) -> bool:
@@ -141,3 +162,20 @@ def test_a_picture_signal_becomes_one_card(qtbot: QtBot, tmp_path: Path) -> None
         content = ai.asked[0][1]["content"]
         assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
         assert lines[-1].endswith("(check the numbers on the card)")
+
+
+def test_a_model_that_refuses_pictures_gets_none_for_a_while(qtbot: QtBot, tmp_path: Path) -> None:
+    _page, desk, _signals, now, _price = desk_page(qtbot, tmp_path)
+    ai = NoPictures()
+    with temporary_store() as store:
+        repository, _magic = channel(store, LIVE)
+        feed = ChannelFeed(desk, repository, utc_now=lambda: now, ai=lambda: ai)
+        lines: list[str] = []
+        feed.noted.connect(lambda _title, line: lines.append(line))
+        first = feed.handle(ChannelMessage(GOLD.id, 8, now, "", photo=b"\xff\xd8 one"))
+        assert first is not None and first.reason == "a picture: the AI reads it"
+        qtbot.waitUntil(lambda: bool(lines), timeout=5000)
+        assert lines[-1].endswith(PICTURE_PAUSED)
+        assert feed.pictures_off_until == now + PICTURE_PAUSE
+        feed.handle(ChannelMessage(GOLD.id, 9, now, "", photo=b"\xff\xd8 two"))
+        assert len(ai.asked) == 1  # no second picture to a model that refused one
