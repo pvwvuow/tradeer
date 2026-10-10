@@ -1,11 +1,14 @@
 """The Signal desk's order card in the AI Lab (docs/SIGNAL_DESK.md 2.4, phase 21a3): a pasted
 signal becomes a card that the pipeline plans, sizes and checks, nothing is sent without the
 full hold, Skip dismisses every leg, the context lines and the full check (the same geometry
-in the history) come with it (21b), and the header shows the trading mode."""
+in the history) come with it (21b), the AI writes a note from the card's lines, and the
+header shows the trading mode."""
 
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import Qt
@@ -246,6 +249,42 @@ def test_the_card_shows_the_context_now(qtbot: QtBot, tmp_path: Path) -> None:
     assert "Next high-impact news: USD CPI in " in text
     assert text.endswith("No open trades on EUR or USD.")
     assert not card.context_label.isHidden()
+
+
+class FakeAi:
+    """An AI connection that answers every note with four sentences."""
+
+    def __init__(self) -> None:
+        self.asked: list[list[Mapping[str, str]]] = []
+
+    def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        max_tokens: int = 0,
+    ) -> SimpleNamespace:
+        self.asked.append(list(messages))
+        return SimpleNamespace(text="**It** has room. The spread is normal. News is near. More.")
+
+
+def test_the_ai_writes_a_three_sentence_note_from_the_card_only(
+    qtbot: QtBot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page, desk, signals, now, price = desk_page(qtbot, tmp_path)
+    ai = FakeAi()
+    monkeypatch.setattr(page.llm_panel, "make_client", lambda: ai)
+    card = pasted(page, buy_text(price))
+    signals.on_cycle(now + 1)
+    qtbot.waitUntil(lambda: card.note_state in ("done", "failed"), timeout=10_000)
+    text = card.note_label.text()
+    note = "It has room. The spread is normal. News is near."
+    assert text == f"AI note (from the lines above only):\n{note}"
+    facts = ai.asked[0][1]["content"]
+    assert buy_text(price) in facts and "EURUSD  BUY MARKET" in facts
+    assert "LOTS" not in facts
+    assert desk.ask_note(card.request_id) is False  # one note per card
 
 
 def test_the_card_words() -> None:
