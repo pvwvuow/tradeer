@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.0](https://github.com/pvwvuow/tradeer/compare/v0.38.0...v0.39.0) (2026-10-10)
+
+
+### Features
+
+* **ai-lab:** Signal desk full check: same-geometry base rate (21b1) ([#124](https://github.com/pvwvuow/tradeer/issues/124)) ([fe31c58](https://github.com/pvwvuow/tradeer/commit/fe31c580635a52c552cc04fca8b8605cc1277515))
+
 ## [0.38.0](https://github.com/pvwvuow/tradeer/compare/v0.37.1...v0.38.0) (2026-10-10)
 
 
