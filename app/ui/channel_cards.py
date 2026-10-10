@@ -4,7 +4,9 @@
   the old and the new value, saved only after Hold to save.
 - `FollowUpCard`: a channel's follow-up of a signal you took ("close now", "move SL to
   entry", "new SL 2340"): what it would do, done only after Hold to apply.
-Both use the order card's hold button; letting go early does nothing.
+- An AI proposal (`app.ui.lab_actions`): a change the chat asked for, applied after Hold
+  to apply.
+All use the order card's hold button; letting go early does nothing.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from app.ui.signal_card import HoldButton
 from app.ui.theme import ThemeTokens
 
 CARD_FA: dict[str, str] = {
+    "AI proposal": "پیشنهاد هوش مصنوعی",
     "Channel setting": "تنظیم کانال",
     "Follow-up": "پیگیری سیگنال",
     "Hold to save": "برای ذخیره نگه دارید",

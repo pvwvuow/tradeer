@@ -61,6 +61,7 @@ from app.ui.channel_feed import ChannelFeed
 from app.ui.channels_page import ChannelsContext, ChannelsPage
 from app.ui.dashboard_page import DashboardContext
 from app.ui.journal_page import JournalContext
+from app.ui.lab_actions import LabActions
 from app.ui.lab_desk import LabDesk
 from app.ui.notifications_page import NotificationsContext, NotificationsPage
 from app.ui.style import hand_cursors, name_controls
@@ -132,6 +133,7 @@ class Insights:
     channels_page: ChannelsPage | None = None
     feed: ChannelFeed | None = None  # channel signals to the AI Lab's cards (phase 21d)
     engine: ExecutionEngine | None = None  # a channel's follow-ups ask it to close or move SL
+    actions: LabActions | None = None  # the AI Lab chat's channels, trades, doctor, proposals
 
     def attach(self, window: QWidget) -> None:
         from app.ui.tray import TrayNotifier
@@ -148,6 +150,7 @@ class Insights:
         self.attach_llm(window)
         self.attach_desk(window)
         self.attach_feed()
+        self.attach_actions(window)
         self.attach_channels(window)
 
     def attach_desk(self, window: QWidget) -> LabDesk | None:
@@ -173,6 +176,24 @@ class Insights:
         self.stop_hooks.append(feed.timer.stop)
         self.feed = feed
         return feed
+
+    def attach_actions(self, window: QWidget) -> LabActions | None:
+        """The AI Lab chat reads the channels, the open trades and the risk limits, checks
+        the app for problems and proposes changes that wait for your hold (0.43.1)."""
+        lab = window.findChild(AiLabPage)
+        if not isinstance(lab, AiLabPage):
+            return None
+        channels = self.channels
+        self.actions = LabActions(
+            lab,
+            repository=channels.repository if channels is not None else None,
+            reader=channels.reader if channels is not None else None,
+            feed=self.feed,
+            engine=self.engine,
+            risk=self.dashboard.risk,
+            log=write,
+        )
+        return self.actions
 
     def attach_llm(self, window: QWidget) -> bool:
         """Give the window's AI Lab the optional AI connection (still off until saved on)."""
