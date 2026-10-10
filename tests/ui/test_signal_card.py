@@ -1,8 +1,9 @@
 """The Signal desk's order card in the AI Lab (docs/SIGNAL_DESK.md 2.4, phase 21a3): a pasted
 signal becomes a card that the pipeline plans, sizes and checks, nothing is sent without the
-full hold, Skip dismisses every leg, the full check counts the same geometry in the
-history (21b), and the header shows the trading mode."""
+full hold, Skip dismisses every leg, the context lines and the full check (the same geometry
+in the history) come with it (21b), and the header shows the trading mode."""
 
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -10,10 +11,12 @@ import pytest
 from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
+from app.calendar.models import CalendarEvent, Impact
 from app.core.execution_settings import ExecutionConfig, ExecutionSettingsSource
 from app.core.strategy_settings import StrategySettingsSource
 from app.domain.modes import OperatingMode
 from app.domain.signals import Direction, OrderType
+from app.engine.market_watch import MarketSnapshot
 from app.engine.signal_pipeline import SignalPipeline
 from app.ui.ai_lab_page import AiLabContext, AiLabPage
 from app.ui.backtest_page import BacktestContext
@@ -225,6 +228,24 @@ def test_without_the_history_the_full_check_says_so(qtbot: QtBot, tmp_path: Path
     qtbot.waitUntil(lambda: card.state == "waiting")
     assert card.full_state == "failed"
     assert "needs the price history" in card.full_label.text()
+
+
+def test_the_card_shows_the_context_now(qtbot: QtBot, tmp_path: Path) -> None:
+    signals, now, price = watching()
+    page = AiLabPage(lab(tmp_path))
+    qtbot.addWidget(page)
+    cpi = CalendarEvent(int(time.time()) + 7200, "USD", Impact.HIGH, "CPI")
+    market = MarketSnapshot("running", "", events=(cpi,))
+    LabDesk(page, signals, market=lambda: market)
+    card = pasted(page, buy_text(price))
+    assert card.context_label.isHidden()
+    signals.on_cycle(now + 1)
+    qtbot.waitUntil(lambda: card.state == "waiting")
+    text = card.context_label.text()
+    assert text.startswith("Context now:\nNo live analysis of EURUSD yet.")
+    assert "Next high-impact news: USD CPI in " in text
+    assert text.endswith("No open trades on EUR or USD.")
+    assert not card.context_label.isHidden()
 
 
 def test_the_card_words() -> None:
