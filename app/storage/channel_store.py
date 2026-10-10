@@ -473,13 +473,13 @@ class ChannelRepository:
             (channel_id,),
         )
         deleted = edited = 0
-        for row in rows:
-            message_id = int(row["message_id"])
+        for item in rows:
+            message_id = int(item["message_id"])
             if message_id not in signals:
                 continue
-            if row.get("deleted_at"):
+            if item.get("deleted_at"):
                 deleted += 1
-            edited_at = _when(row.get("edited_at"))
+            edited_at = _when(item.get("edited_at"))
             if edited_at is not None and message_id in exits and edited_at > exits[message_id]:
                 edited += 1
         return deleted, edited

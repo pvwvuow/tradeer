@@ -155,10 +155,7 @@ def follow(leg: ShadowLeg, bars: Bars, point: float, now: float) -> ShadowResult
     stops = np.full(stop - index, leg.sl)
     if leg.break_even_at is not None:
         stops = np.where(times[span] >= leg.break_even_at, fill, stops)
-    if long:
-        lost = first_hit(bars.low[span] <= stops)
-    else:
-        lost = first_hit(bars.high[span] + gap >= stops)
+    lost = first_hit(bars.low[span] <= stops) if long else first_hit(bars.high[span] + gap >= stops)
     won = -1
     if leg.tp is not None:
         offset = first_target - index
