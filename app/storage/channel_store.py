@@ -30,8 +30,7 @@ TABLES_SQL = (
     "channel_id INTEGER NOT NULL, message_id INTEGER NOT NULL, date TEXT NOT NULL, "
     "text TEXT NOT NULL, reply_to INTEGER, edited_text TEXT, edited_at TEXT, deleted_at TEXT, "
     "received_at TEXT NOT NULL, PRIMARY KEY (channel_id, message_id))",
-    "CREATE INDEX IF NOT EXISTS tg_messages_channel_id_date_idx "
-    "ON tg_messages (channel_id, date)",
+    "CREATE INDEX IF NOT EXISTS tg_messages_channel_id_date_idx ON tg_messages (channel_id, date)",
 )
 
 
