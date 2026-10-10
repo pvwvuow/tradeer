@@ -105,7 +105,7 @@ from app.observability.log_reader import read_entries
 from app.storage.repositories import Store
 from app.storage.signal_store import SignalRepository
 from app.strategies.registry import STRATEGIES
-from app.ui.ai_chat import ChatPanel, chat_words
+from app.ui.ai_chat import ChatPanel, chat_qss, chat_words
 from app.ui.analytics_page import AnalyticsContext, start_balance
 from app.ui.backtest_page import BacktestContext
 from app.ui.lab_cards import (
@@ -261,8 +261,73 @@ _TITLES = {
     "walk_forward": "Walk-forward windows",
 }
 SYMBOL = re.compile(r"\b([A-Z]{3})/?([A-Z]{3})\b")
+INTENT_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("candles", ("کندل", "candle", "نمودار قیمت")),
+    ("equity", ("منحنی سرمایه", "equity")),
+    ("sensitivity", ("حساسیت", "heat ?map", "sensitivity")),
+    ("r_distribution", ("توزیع", "هیستوگرام", "histogram", "distribution")),
+    ("monte_carlo", ("مونت", "monte")),
+    ("walk_forward", ("walk[ -]?forward", "پنجره")),
+    ("stats", ("خلاصه", "آمار", "stats", "statistics", "summary")),
+    ("trades", ("جدول", "table", "معاملات", "معامله", "ترید", "trades")),
+)
+INTENTS = tuple((kind, re.compile("|".join(words), re.IGNORECASE)) for kind, words in INTENT_WORDS)
+SHOW_WORDS = (
+    "نشون",
+    "نشان",
+    "بیار",
+    "بکش",
+    "رسم",
+    "ببینم",
+    "بده",
+    "بگو",
+    "اجرا",
+    "بزن",
+    r"\brun\b",
+    r"\bshow\b",
+    r"\bdraw\b",
+    r"\bplot\b",
+    r"\bdisplay\b",
+    r"\blist\b",
+)
+ASKING_WORDS = (
+    "چرا",
+    "چطور",
+    "چگونه",
+    "تحلیل",
+    "توضیح",
+    "بررسی",
+    "مقایسه",
+    "اگه",
+    "اگر",
+    r"\bwhy\b",
+    r"\bhow\b",
+    r"\bexplain",
+    r"\banaly",
+    r"\bcompare",
+    r"\bif\b",
+)
+SHOW = re.compile("|".join(SHOW_WORDS), re.IGNORECASE)
+ASKING = re.compile("|".join(ASKING_WORDS), re.IGNORECASE)
+INTENT_CHARS = 80
+SHORT_WORDS = 3
 TRADE_HEAD = ("CLOSED", "SYMBOL", "STRATEGY", "SIDE", "R", "NET")
 TRADE_WIDTHS = (86, 72, 0, 44, 52, 76)
+
+
+def visual_intent(text: str) -> str:
+    """The chart card a short request asks for, in Persian or English ("show my recent
+    trades", "آمار"), or "" for a question the AI should answer ("why did the trades
+    lose?")."""
+    clean = text.strip()
+    if not clean or len(clean) > INTENT_CHARS or ASKING.search(clean):
+        return ""
+    if len(clean.split()) > SHORT_WORDS and not SHOW.search(clean):
+        return ""
+    for kind, pattern in INTENTS:
+        if pattern.search(clean):
+            return kind
+    return ""
 
 
 def _quiet(level: str, message: str) -> None:
@@ -659,7 +724,7 @@ class AiLabPage(QWidget):
 
     def apply_tokens(self, tokens: ThemeTokens) -> None:
         self.tokens = tokens
-        self.setStyleSheet(lab_qss(tokens))
+        self.setStyleSheet(lab_qss(tokens) + chat_qss(tokens))
         apply_tree(self, tokens)
         for card in (self.paste_card, self.compare_card, self.verdict_box, self.activate_card):
             apply_tree(card, tokens)
@@ -781,8 +846,12 @@ class AiLabPage(QWidget):
             name="chart",
             description=(
                 "Draw a chart card under your answer from the app's own data and get the "
-                "numbers it shows. kind: stats, equity (current vs suggested, from the last "
-                "comparison), r_distribution, monte_carlo, trades, candles (with symbol)."
+                "numbers it shows. Always use it when the user wants to see trades, a table, "
+                "stats, the equity, the R distribution, a Monte Carlo or candles: the card "
+                "shows the data, so never write it again as a Markdown table or a list; say "
+                "in one to three sentences what stands out. kind: stats, equity (current vs "
+                "suggested, from the last comparison), r_distribution, monte_carlo, trades, "
+                "candles (with symbol)."
             ),
             args="kind (str), symbol (str, for candles)",
             run=self._chart_tool,
@@ -857,15 +926,11 @@ class AiLabPage(QWidget):
                     symbol = "".join(found.groups()) if found else ""
                 self.visual(kind, symbol)
                 return True
-        lowered = key.lower()
-        if "walk-forward" in lowered or "walk forward" in lowered:
+        kind = visual_intent(key)
+        if kind:
             self.chat.add_bubble(clean)
-            self.visual("walk_forward")
-            return True
-        if "candle" in lowered or "\u06a9\u0646\u062f\u0644" in key:
-            found = SYMBOL.search(clean.upper())
-            self.chat.add_bubble(clean)
-            self.visual("candles", "".join(found.groups()) if found else "")
+            found = SYMBOL.search(clean.upper()) if kind == "candles" else None
+            self.visual(kind, "".join(found.groups()) if found else "")
             return True
         return False
 

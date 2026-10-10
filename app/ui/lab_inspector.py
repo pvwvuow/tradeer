@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -35,8 +35,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
-    QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -186,8 +186,14 @@ def clear(layout: QVBoxLayout) -> None:
             widget.deleteLater()
 
 
-class ItemButton(QPushButton):
-    """A clickable row: a title (and a line under it) at the start, a tag or text at the end."""
+class ItemButton(QFrame):
+    """A clickable row: a title (and a line under it) at the start, a tag or text at the end.
+
+    A frame, not a push button, so the row grows with its wrapped texts instead of drawing
+    them over each other; a click, Enter or Space emits `clicked`.
+    """
+
+    clicked = Signal()
 
     def __init__(
         self,
@@ -202,9 +208,12 @@ class ItemButton(QPushButton):
         super().__init__()
         self.setProperty("lab", "item")
         self.setProperty("current", "false")
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAccessibleName(title)
         self.setToolTip(title)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         row = QHBoxLayout(self)
         row.setContentsMargins(10, 8, 10, 8)
         row.setSpacing(10)
@@ -214,15 +223,18 @@ class ItemButton(QPushButton):
             row.addWidget(first, 0, MIDDLE)
         texts = QVBoxLayout()
         texts.setSpacing(2)
-        main = mono_label(title) if mono else lab_label(title, "text")
         if mono:
+            main = mono_label(title)
             main.setProperty("size", "small")
+            main.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        else:
+            main = lab_label(title, "text", wrap=True)
+        main.setMinimumWidth(0)
         main.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         texts.addWidget(main)
         self.title_label = main
         if under:
-            note = lab_label(under, "note")
-            texts.addWidget(note)
+            texts.addWidget(lab_label(under, "note", wrap=True))
         row.addLayout(texts, 1)
         self.end: QWidget | None = None
         if end:
@@ -230,11 +242,35 @@ class ItemButton(QPushButton):
             row.addWidget(self.end, 0, MIDDLE)
         for child in self.findChildren(QWidget):
             child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setMinimumHeight(50 if under or start else 40)
+        self.setMinimumHeight(40)
 
     def set_current(self, current: bool) -> None:
         self.setProperty("current", "true" if current else "false")
         restyle(self)
+
+    def click(self) -> None:
+        self.clicked.emit()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 (Qt name)
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 (Qt name)
+        inside = self.rect().contains(event.position().toPoint())
+        if event.button() == Qt.MouseButton.LeftButton and inside:
+            event.accept()
+            self.clicked.emit()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 (Qt name)
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            event.accept()
+            self.clicked.emit()
+            return
+        super().keyPressEvent(event)
 
 
 class Inspector(QFrame):
@@ -333,7 +369,7 @@ class HistoryPanel(QWidget):
         layout.addWidget(self.new_button)
         self.search = QLineEdit()
         self.search.setObjectName("AiHistorySearch")
-        self.search.setProperty("lab", "in")
+        self.search.setProperty("lab", "search")
         self.search.setPlaceholderText(word("Search the chats..."))
         self.search.setAccessibleName(word("Search the history"))
         self.search.setLayoutDirection(Qt.LayoutDirection.RightToLeft if fa else LTR)
@@ -362,7 +398,7 @@ class HistoryPanel(QWidget):
             self.rows.addWidget(lab_label(self.word("No saved chats yet."), "note", wrap=True))
             return
         for name, chats in grouped(found, moment):
-            cap = lab_label(self.word(name), "cap")
+            cap = lab_label(self.word(name), "label" if self.fa else "cap")
             self.rows.addWidget(cap)
             for chat in chats:
                 title = ("\U0001f4cc " if chat.pinned else "") + chat.title
@@ -387,6 +423,7 @@ class HistoryPanel(QWidget):
         if chat is None:
             return
         menu = QMenu(self)
+        menu.setFont(self.font())
         word = self.word
         menu.addAction(word("Unpin") if chat.pinned else word("Pin"), lambda: self.pin(chat_id))
         menu.addAction(word("Rename"), lambda: self.rename(chat_id))
@@ -475,6 +512,7 @@ class PromptsPanel(QWidget):
 
     def _menu(self, prompt_id: str, widget: QWidget, point: QPoint) -> None:
         menu = QMenu(self)
+        menu.setFont(self.font())
         menu.addAction(self.word("Delete"), lambda: self.delete(prompt_id))
         menu.popup(widget.mapToGlobal(point))
 
@@ -680,7 +718,7 @@ class UsagePanel(QWidget):
             value.setProperty("size", "big")
             box.addWidget(cap_label)
             box.addWidget(value)
-            box.addWidget(lab_label(word("tokens this month"), "note"))
+            box.addWidget(lab_label(word("tokens this month"), "note", wrap=True))
             boxes.addWidget(frame, 1)
         layout.addLayout(boxes)
         self.month_cost = self._row(layout, word("Estimated cost this month"))
@@ -702,10 +740,12 @@ class UsagePanel(QWidget):
     @staticmethod
     def _row(layout: QVBoxLayout, name: str) -> QLabel:
         row = QHBoxLayout()
-        row.addWidget(lab_label(name, "muted"))
-        row.addStretch(1)
+        row.setSpacing(10)
+        label = lab_label(name, "muted", wrap=True)
+        label.setMinimumWidth(0)
+        row.addWidget(label, 1)
         value = mono_label("")
-        row.addWidget(value)
+        row.addWidget(value, 0, MIDDLE)
         layout.addLayout(row)
         return value
 

@@ -83,13 +83,15 @@ def test_it_is_off_until_the_connection_is_saved(qtbot: QtBot, tmp_path: Path) -
 
 def test_new_chat_forgets_and_persian_runs_right_to_left(qtbot: QtBot, tmp_path: Path) -> None:
     chat = chat_page(qtbot, tmp_path, Scripted(ANSWER))
+    assert not chat.quick.isVisibleTo(chat)  # the welcome shows its own suggestions
     assert chat.ask("\u0686\u0637\u0648\u0631 \u0628\u0648\u062f\u061f") is True
     qtbot.waitUntil(lambda: not chat.busy, timeout=10_000)
+    assert chat.quick.isVisibleTo(chat) and not chat.welcome.isVisibleTo(chat)
     assert chat.views[-1].question.layoutDirection().name == "RightToLeft"
     assert persian("\u0633\u0644\u0627\u0645 EURUSD") and not persian("Hello")
     chat.new_chat()
     assert chat.turns == [] and chat.views == [] and "forgets" in chat.status.text()
-    assert chat.welcome.isVisibleTo(chat)
+    assert chat.welcome.isVisibleTo(chat) and not chat.quick.isVisibleTo(chat)
 
 
 def test_the_chat_is_saved_opens_again_and_is_in_the_ledger(
@@ -121,7 +123,7 @@ def test_the_chat_is_saved_opens_again_and_is_in_the_ledger(
 def test_the_agent_can_ask_for_a_chart_card(qtbot: QtBot, tmp_path: Path) -> None:
     page = lab_page(qtbot, tmp_path, Scripted(CHART, ANSWER))
     page.export_days.setValue(0)
-    assert page.chat.ask("Show me my stats") is True
+    assert page.chat.ask("How am I doing overall?") is True
     qtbot.waitUntil(lambda: not page.chat.busy, timeout=10_000)
     assert page.chat.extras and page.chat.extras[-1].objectName() == "AiStatsCard"
     assert "Draw a chart (kind stats)" in page.chat.views[-1].steps.text()

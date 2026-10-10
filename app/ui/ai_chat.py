@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QFocusEvent, QKeyEvent
+from PySide6.QtGui import QFocusEvent, QFont, QFontMetrics, QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -51,13 +51,16 @@ from app.ui.lab_parts import (
     lab_label,
     lab_words,
 )
-from app.ui.theme import DEFAULT, ThemeTokens
+from app.ui.theme import DEFAULT, ThemeTokens, px
 from app.ui.v2 import Tag
 
 Job = Callable[[], None]
 ClientFactory = Callable[[], AiClient | str]
 Intercept = Callable[[str], bool]
+TEXT_FONT = "Vazirmatn"  # the design's face for words (bundled by scripts/ci/build.ps1)
 BUBBLE_WIDTH = 520
+BUBBLE_PADDING = 16 * 2 + 2 + 12  # the bubble's padding, border and a little air
+ARROW_SIZE = 30
 SUGGESTIONS = (
     "Build the report for the AI",
     "Compare the suggestion",
@@ -95,6 +98,64 @@ CHAT_FA: dict[str, str] = {
     ),
 }
 FA_DIGITS = str.maketrans("0123456789", "".join(chr(0x06F0 + digit) for digit in range(10)))
+
+
+def chat_qss(tokens: ThemeTokens) -> str:
+    """The chat's and the inspector's rules, after `lab_qss`: the word face, the rounded
+    question bubble, the arrows of the quick prompts, the search field and the list rows."""
+    t = tokens
+    return f"""
+QLabel, QPushButton, QPlainTextEdit, QLineEdit {{
+    font-family: "{TEXT_FONT}";
+}}
+QLabel[lab="bubble"] {{
+    background-color: {t.hover};
+    border: 1px solid {t.border};
+    border-radius: 14px;
+    padding: 10px 16px;
+    font-size: {px(15):g}pt;
+}}
+QPushButton[lab="arrow"] {{
+    background-color: transparent;
+    color: {t.text_secondary};
+    border: 1px solid {t.border};
+    border-radius: 6px;
+    padding: 0px;
+    min-height: 0px;
+    font-size: {px(16):g}pt;
+}}
+QPushButton[lab="arrow"]:hover {{
+    background-color: {t.hover};
+    color: {t.text};
+}}
+QPushButton[lab="arrow"]:disabled {{
+    color: {t.border_strong};
+}}
+QLineEdit[lab="search"] {{
+    min-height: 38px;
+    max-height: 40px;
+    border: 1px solid {t.border_strong};
+    border-radius: 6px;
+    background: transparent;
+    font-size: {px(13):g}pt;
+    padding: 0px 12px;
+}}
+QFrame[lab="item"] {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+}}
+QFrame[lab="item"]:hover {{
+    background-color: {t.hover};
+}}
+QFrame[lab="item"][current="true"] {{
+    background-color: {t.hover};
+    border-color: {t.border_strong};
+}}
+QFrame[lab="item"] QLabel {{
+    background: transparent;
+}}
+"""
 
 
 def _start_thread(job: Job) -> None:
@@ -168,7 +229,12 @@ def bubble(text: str) -> QWidget:
     line.setContentsMargins(0, 0, 0, 0)
     label = _text(text, "bubble")
     label.setObjectName("AiChatBubble")
-    label.setMaximumWidth(BUBBLE_WIDTH)
+    font = QFont(label.font())
+    font.setFamily(TEXT_FONT)
+    font.setPointSizeF(px(15))
+    metrics = QFontMetrics(font)
+    widest = max((metrics.horizontalAdvance(part) for part in text.split("\n")), default=0)
+    label.setMaximumWidth(min(widest + BUBBLE_PADDING, BUBBLE_WIDTH))
     label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
     line.addWidget(label)
     line.addStretch(1)
@@ -201,9 +267,10 @@ class TurnView(QFrame):
         meta.addWidget(self.meta)
         meta.addStretch(1)
         layout.addLayout(meta)
-        self.steps = _text("\u2026 Thinking", "muted")
+        self.steps = _text("", "muted")
         self.steps.setObjectName("AiChatSteps")
         self.steps.setLayoutDirection(LTR)
+        self.steps.hide()  # one line says the AI works: the folded line over the answer
         layout.addWidget(self.steps)
         self.skeleton = Skeleton(340)
         layout.addWidget(self.skeleton)
@@ -222,12 +289,14 @@ class TurnView(QFrame):
         self.done = False
 
     def _fold(self, shown: bool) -> None:
-        if self.done:
-            self.steps.setVisible(shown)
+        self.steps.setVisible(shown and bool(self.steps.text()))
 
     def add_step(self, step: Step) -> None:
         self.lines.append(step.line())
-        self.steps.setText("\n".join([*self.lines, "\u2026 Working"]))
+        self.steps.setText("\n".join(self.lines))
+        if not self.done:
+            self.meta.setText(f"{chat_words(self.fa)('Working...')} \u00b7 {step.title}")
+        self.steps.setVisible(self.meta.isChecked())
 
     def _stop_loading(self) -> None:
         self.done = True
@@ -278,6 +347,79 @@ class ChatInput(QPlainTextEdit):
     def focusOutEvent(self, event: QFocusEvent) -> None:  # noqa: N802 (Qt name)
         super().focusOutEvent(event)
         self.focused.emit(False)
+
+
+class PromptStrip(QWidget):
+    """The quick prompts in one row that slides: the arrows move it by about a page."""
+
+    def __init__(self, spacing: int = 8) -> None:
+        super().__init__()
+        self.setObjectName("AiChatQuick")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        self.back = lab_button("\u2039", "arrow")
+        self.forward = lab_button("\u203a", "arrow")
+        for button, name in ((self.back, "Earlier prompts"), (self.forward, "More prompts")):
+            button.setObjectName("AiChatQuickArrow")
+            button.setAccessibleName(name)
+            button.setToolTip(name)
+            button.setFixedSize(ARROW_SIZE, ARROW_SIZE)
+        self.area = QScrollArea()
+        self.area.setFrameShape(QFrame.Shape.NoFrame)
+        self.area.setWidgetResizable(True)
+        self.area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        holder = QWidget()
+        self.line = QHBoxLayout(holder)
+        self.line.setContentsMargins(0, 0, 0, 0)
+        self.line.setSpacing(spacing)
+        self.line.addStretch(1)
+        self.area.setWidget(holder)
+        row.addWidget(self.back)
+        row.addWidget(self.area, 1)
+        row.addWidget(self.forward)
+        self.items: list[QPushButton] = []
+        self.back.clicked.connect(lambda: self.slide(-1))
+        self.forward.clicked.connect(lambda: self.slide(1))
+        bar = self.area.horizontalScrollBar()
+        if bar is not None:
+            bar.rangeChanged.connect(lambda _low, _high: self._arrows())
+            bar.valueChanged.connect(lambda _value: self._arrows())
+        self._arrows()
+
+    def add(self, button: QPushButton) -> None:
+        self.line.insertWidget(len(self.items), button)
+        self.items.append(button)
+        height = max(item.sizeHint().height() for item in self.items)
+        self.area.setFixedHeight(max(height, ARROW_SIZE) + 2)
+        self._arrows()
+
+    def slide(self, direction: int) -> None:
+        bar = self.area.horizontalScrollBar()
+        viewport = self.area.viewport()
+        if bar is None or viewport is None:
+            return
+        bar.setValue(bar.value() + direction * max(viewport.width() - 60, 80))
+
+    def _arrows(self) -> None:
+        """The arrows only when the prompts are wider than the whole strip (a fixed test, so
+        showing them never changes the answer), each one enabled while it can move."""
+        holder = self.area.widget()
+        needed = holder.minimumSizeHint().width() if holder is not None else 0
+        more = needed > self.width()
+        if more != self.back.isVisibleTo(self):
+            self.back.setVisible(more)
+            self.forward.setVisible(more)
+        bar = self.area.horizontalScrollBar()
+        if bar is not None:
+            self.back.setEnabled(bar.value() > bar.minimum())
+            self.forward.setEnabled(bar.value() < bar.maximum())
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt name)
+        super().resizeEvent(event)
+        self._arrows()
 
 
 class _Bridge(QObject):
@@ -375,7 +517,7 @@ class ChatPanel(QWidget):
         top.addWidget(self.status, 1)
         top.addWidget(self.new_button)
         lower.addLayout(top)
-        self.quick = FlowBox(8)
+        self.quick = PromptStrip(8)
         self.example_buttons: list[QPushButton] = []
         for text in QUICK_PROMPTS:
             label = word(text)
@@ -385,6 +527,7 @@ class ChatPanel(QWidget):
             self.quick.add(button)
             self.example_buttons.append(button)
         lower.addWidget(self.quick)
+        self.quick.hide()  # the welcome has its own suggestions; the strip comes after it
         lower.addWidget(self._build_composer())
         self.disclaimer = lab_label(
             word("The AI only advises. No real order is ever sent from here."),
@@ -482,6 +625,11 @@ class ChatPanel(QWidget):
         cursor.movePosition(cursor.MoveOperation.End)
         self.input.setTextCursor(cursor)
 
+    def _show_welcome(self, shown: bool) -> None:
+        """The welcome with its suggestions, or the quick prompts once the chat began."""
+        self.welcome.setVisible(shown)
+        self.quick.setVisible(not shown)
+
     def _typed(self) -> None:
         if self._busy:
             return
@@ -529,7 +677,7 @@ class ChatPanel(QWidget):
             self.messages.removeWidget(widget)
         self.messages.addWidget(widget)
         widget.show()
-        self.welcome.hide()
+        self._show_welcome(False)
         self._scroll_down()
 
     def add_bubble(self, text: str) -> None:
@@ -620,7 +768,7 @@ class ChatPanel(QWidget):
             return
         self._clear()
         self.chat = None
-        self.welcome.show()
+        self._show_welcome(True)
         self.status.setText(self.word("New chat: the AI forgets the earlier questions."))
         self.chat_changed.emit("")
         self._update()
@@ -645,7 +793,7 @@ class ChatPanel(QWidget):
             self.views.append(view)
             self._append(view)
         self.turns = list(chat.turns)
-        self.welcome.setVisible(not chat.turns)
+        self._show_welcome(not chat.turns)
         self.status.setText("")
         self.chat_changed.emit(chat.chat_id)
         self._update()

@@ -16,10 +16,11 @@ from app.domain.modes import OperatingMode
 from app.risk.settings import RiskSettingsSource
 from app.storage.backtest_store import BacktestRepository
 from app.storage.repositories import Store
-from app.ui.ai_lab_page import SUBTITLE_FA, AiLabContext, AiLabPage, ai_lab_context
+from app.ui.ai_lab_page import SUBTITLE_FA, AiLabContext, AiLabPage, ai_lab_context, visual_intent
 from app.ui.analytics_page import AnalyticsContext
 from app.ui.backtest_page import BacktestContext
 from app.ui.lab_cards import ChartCard
+from app.ui.lab_inspector import ItemButton
 from app.ui.lab_parts import LabCard
 from app.ui.main_window import MainWindow
 from tests.unit.backtest_helpers import noisy_history
@@ -236,6 +237,32 @@ def test_the_charts_come_from_the_trades(qtbot: QtBot, tmp_path: Path) -> None:
     assert page.chat.send() is True and isinstance(page.chat.extras[-1], ChartCard)
     page.chat.new_chat()
     assert page.chat.extras == []
+
+
+def test_a_short_request_draws_its_card_without_an_ai(qtbot: QtBot, tmp_path: Path) -> None:
+    page = AiLabPage(lab(tmp_path), persian=True)
+    qtbot.addWidget(page)
+    page.export_days.setValue(0)
+    page.chat.input.setPlainText("معاملات اخیر رو نشون بده")
+    assert page.chat.send() is True and isinstance(page.chat.extras[-1], ChartCard)
+    assert page.chat.input.toPlainText() == ""
+    assert visual_intent("آمار") == "stats"
+    assert visual_intent("Show me the R distribution") == "r_distribution"
+    assert visual_intent("چرا معاملات اخیر ضرر داد") == ""
+    assert visual_intent("How did I do?") == "" and visual_intent("") == ""
+
+
+def test_inspector_rows_click_and_grow_with_their_text(qtbot: QtBot) -> None:
+    row = ItemButton("A long chat title that needs more than one line " * 3, "today 14:02")
+    qtbot.addWidget(row)
+    hits: list[int] = []
+    row.clicked.connect(lambda: hits.append(1))
+    qtbot.mouseClick(row, Qt.MouseButton.LeftButton)
+    qtbot.keyClick(row, Qt.Key.Key_Return)
+    assert hits == [1, 1]
+    layout = row.layout()
+    assert layout is not None and layout.hasHeightForWidth()
+    assert layout.totalHeightForWidth(274) > layout.totalHeightForWidth(4000)
 
 
 def test_saved_prompts_and_the_inspector(qtbot: QtBot, tmp_path: Path) -> None:
