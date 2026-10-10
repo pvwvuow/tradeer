@@ -9,6 +9,7 @@ from app.strategies.base import Strategy, StrategyInfo
 from app.strategies.channel_breakout import ChannelBreakout
 from app.strategies.ema_momentum import EmaMomentum
 from app.strategies.london_breakout import LondonBreakout
+from app.strategies.manual_signal import NAME as MANUAL_SIGNAL
 from app.strategies.range_reversion import RangeReversion
 from app.strategies.trend_pullback import TrendPullback
 
@@ -32,13 +33,16 @@ OFF_BY_DEFAULT: frozenset[str] = frozenset(
 # One magic number per strategy (spec C7): MT5 marks every bot order and position with it, so
 # the risk limits count each strategy's trades and manual trades (magic 0) apart. Never reuse
 # or change a number: old positions and history are matched by it. 26_070_098 is the demo
-# test's (app.domain.history.TEST_MAGIC).
+# test's (app.domain.history.TEST_MAGIC). 26_070_006 is kept for the AI Desk's `ai_analyst`
+# (docs/AI_DESK.md). The Signal desk's manual signals are not in STRATEGIES (they have no
+# rules to run on a bar) but their orders need a magic number like every bot order.
 MAGIC_NUMBERS: dict[str, int] = {
     TrendPullback.name: 26_070_001,
     LondonBreakout.name: 26_070_002,
     RangeReversion.name: 26_070_003,
     ChannelBreakout.name: 26_070_004,
     EmaMomentum.name: 26_070_005,
+    MANUAL_SIGNAL: 26_070_007,
 }
 
 
