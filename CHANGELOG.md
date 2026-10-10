@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.0](https://github.com/pvwvuow/tradeer/compare/v0.42.0...v0.43.0) (2026-10-10)
+
+
+### Features
+
+* Telegram channel cards, budgets, shadow results, follow-ups, stats (21d, 21e) ([#133](https://github.com/pvwvuow/tradeer/issues/133)) ([a183b61](https://github.com/pvwvuow/tradeer/commit/a183b61ba934fab656cc93c554807dc71c11be86))
+
 ## [0.42.0](https://github.com/pvwvuow/tradeer/compare/v0.41.0...v0.42.0) (2026-10-10)
 
 
