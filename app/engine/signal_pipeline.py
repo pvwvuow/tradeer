@@ -327,6 +327,11 @@ class SignalPipeline:
         with self._lock:
             self._desk_queue.append(request)
 
+    def use_quotes(self, quote: Quote | None) -> None:
+        """The live bid and ask the Signal desk plans on (the main window hands in the
+        market watch's quotes); without them the newest analysis price and spread."""
+        self._quote = quote
+
     # Analysis thread -------------------------------------------------------------------
     def load(self) -> int:
         """The newest saved signals, so the page and the expiry survive a restart."""
