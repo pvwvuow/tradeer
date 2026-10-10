@@ -13,7 +13,9 @@ spread and the limits again. Skip dismisses the legs. The AI never sends an orde
 The full check (phase 21b) starts by itself once a card waits for you: in a worker thread it
 loads 2 years of the symbol's M15 history (the Backtest page's loader and cache) and counts
 how often the same geometry reached each target before the stop loss
-(`app.signals.base_rate`). One check runs at a time.
+(`app.signals.base_rate`). One check runs at a time. With it come the context lines
+(`app.engine.desk_context`): the market watch's analysis card of the symbol, the next
+high-impact news and the bot's open trades on the same currencies (phase 21b2).
 
 The page's header shows the trading mode (PAPER, SEMI-AUTO, AUTO) and REAL ORDERS: ONLY
 WITH YOUR CONFIRM when a confirmed order would be real (Semi-auto or Auto on a real account).
@@ -35,6 +37,8 @@ from PySide6.QtCore import QObject, Qt, Signal
 from app.backtest.service import BacktestRequest
 from app.domain.modes import OperatingMode
 from app.domain.signals import SignalState
+from app.engine.desk_context import desk_context
+from app.engine.market_watch import MarketSnapshot
 from app.engine.signal_desk import DeskRequest, new_request
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.observability.logger import audit
@@ -114,11 +118,13 @@ class LabDesk(QObject):
         page: AiLabPage,
         desk: Desk,
         real_account: Callable[[], bool] = _real_account,
+        market: Callable[[], MarketSnapshot | None] | None = None,
     ) -> None:
         super().__init__(page)
         self.page = page
         self.desk = desk
         self.real_account = real_account
+        self.market = market
         self.word = order_words(page.persian)
         self.cards: dict[str, OrderCard] = {}
         self.last: SignalsSnapshot | None = None
@@ -249,6 +255,7 @@ class LabDesk(QObject):
         if request_id in self.checked and not again:
             return False
         self.checked.add(request_id)
+        self.update_context(card)
         result = card.result
         context = self.page.context
         backtest = context.backtest if context is not None else None
@@ -266,6 +273,27 @@ class LabDesk(QObject):
             name="signal-desk-full-check",
             daemon=True,
         ).start()
+        return True
+
+    def update_context(self, card: OrderCard) -> bool:
+        """The card's context lines from the market watch and the open trades."""
+        result = card.result
+        plan = result.plan if result is not None else None
+        if plan is None or self.market is None:
+            return False
+        market: MarketSnapshot | None = None
+        with contextlib.suppress(Exception):
+            market = self.market()
+        lines = desk_context(
+            plan.symbol,
+            plan.direction,
+            analysis=market.analyses.get(plan.symbol) if market is not None else None,
+            events=market.events if market is not None else (),
+            records=self.last.signals if self.last is not None else (),
+            own=card.leg_ids,
+            now=time.time(),
+        )
+        card.show_context(lines)
         return True
 
     def _full_work(
