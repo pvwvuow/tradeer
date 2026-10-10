@@ -139,10 +139,11 @@ class Insights:
         lab = window.findChild(AiLabPage)
         if self.signals is None or not isinstance(lab, AiLabPage):
             return None
+        market = self.dashboard.market  # the context lines read the market watch
         if self.real_account is None:
-            self.desk = LabDesk(lab, self.signals)
+            self.desk = LabDesk(lab, self.signals, market=market)
         else:
-            self.desk = LabDesk(lab, self.signals, self.real_account)
+            self.desk = LabDesk(lab, self.signals, self.real_account, market=market)
         return self.desk
 
     def attach_llm(self, window: QWidget) -> bool:
