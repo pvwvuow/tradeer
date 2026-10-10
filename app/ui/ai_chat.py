@@ -15,6 +15,12 @@ trades.
 0.44.2 (`app.ui.lab_soft`): softer shapes, the welcome's suggestions as a grid of 2 by 2
 tiles, the AI's mark in front of every answer, the steps as a timeline and a short fade for
 every new message and card.
+
+0.45.0 (docs/AI_LAB_V4.md): the chat reads like ChatGPT. Your message sits at the end of the
+line in a soft bubble (Copy on hover); the answer is drawn as a report (`AnswerView`: tiles,
+tables, callouts, charts, next steps), with Copy and Retry under it. Chart cards the agent
+placed with an `app-chart` block stand inside the answer. A round button jumps to the latest
+message, and the message box grows with its text.
 """
 
 from __future__ import annotations
@@ -23,8 +29,8 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QFocusEvent, QFont, QFontMetrics, QKeyEvent, QResizeEvent
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QEnterEvent, QFocusEvent, QFont, QFontMetrics, QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -41,6 +47,14 @@ from PySide6.QtWidgets import (
 from app.ai.agent import Limits, Step, Tool, Turn, run_turn
 from app.ai.chat_store import Chat, ChatStore, start_chat
 from app.ai.transport import AiCallError, AiClient, Completion, Message, plain_text
+from app.ui.answer_view import (
+    AnswerView,
+    ChartSlot,
+    CopyButton,
+    action_button,
+    answer_qss,
+    persian,
+)
 from app.ui.lab_parts import (
     CHAT_WIDTH,
     LTR,
@@ -56,7 +70,7 @@ from app.ui.lab_parts import (
     lab_words,
 )
 from app.ui.lab_soft import TILE_WIDTH, AiMark, fade_in, soft_qss
-from app.ui.theme import DEFAULT, ThemeTokens, px
+from app.ui.theme import DEFAULT, ThemeTokens, mix, px
 from app.ui.v2 import Tag
 
 Job = Callable[[], None]
@@ -66,6 +80,9 @@ TEXT_FONT = "Vazirmatn"  # the design's face for words (bundled by scripts/ci/bu
 BUBBLE_WIDTH = 520
 BUBBLE_PADDING = 18 * 2 + 2 + 12  # the bubble's padding, border and a little air
 ARROW_SIZE = 30
+DOWN_SIZE = 34
+INPUT_MIN = 52
+INPUT_MAX = 200
 STEP_DOT = "\u25cf"
 SUGGESTIONS = (
     "Build the report for the AI",
@@ -102,6 +119,9 @@ CHAT_FA: dict[str, str] = {
     "New chat: the AI forgets the earlier questions.": (
         "گفتگوی جدید: AI سؤال‌های قبلی را فراموش می‌کند."
     ),
+    "Retry": "دوباره",
+    "Ask the same question again": "همین سؤال را دوباره بپرس",
+    "Jump to the latest message": "رفتن به آخرین پیام",
 }
 FA_DIGITS = str.maketrans("0123456789", "".join(chr(0x06F0 + digit) for digit in range(10)))
 
@@ -163,7 +183,35 @@ QFrame[lab="item"] QLabel {{
     background: transparent;
 }}
 """
-    return rules + soft_qss(tokens)
+    return rules + soft_qss(tokens) + answer_qss(tokens) + chat_v2_qss(tokens)
+
+
+def chat_v2_qss(tokens: ThemeTokens) -> str:
+    """0.45.0: the ChatGPT-like shapes: a soft bubble without a border, a round composer and
+    the jump button."""
+    t = tokens
+    return f"""
+QLabel[lab="bubble"] {{
+    background-color: {mix(t.surface, t.text, 0.07)};
+    border: 1px solid transparent;
+    border-radius: 20px;
+}}
+QFrame[lab="composer"] {{
+    border-radius: 24px;
+}}
+QPushButton[lab="down"] {{
+    background-color: {t.surface};
+    color: {t.text};
+    border: 1px solid {t.border_strong};
+    border-radius: {DOWN_SIZE // 2}px;
+    padding: 0px;
+    min-height: 0px;
+    font-size: {px(15):g}pt;
+}}
+QPushButton[lab="down"]:hover {{
+    background-color: {t.hover};
+}}
+"""
 
 
 def _start_thread(job: Job) -> None:
@@ -179,15 +227,6 @@ def _app_language() -> str:
 
 
 def _no_intercept(text: str) -> bool:
-    return False
-
-
-def persian(text: str) -> bool:
-    """The first letter is Persian or Arabic: the message runs right to left (the rule of
-    the first strong character, as in Unicode bidi)."""
-    for char in text:
-        if char.isalpha():
-            return "\u0600" <= char <= "\u06ff"
     return False
 
 
@@ -231,10 +270,12 @@ def direction(label: QLabel, text: str) -> None:
 
 
 def bubble(text: str) -> QWidget:
-    """The design's question bubble (520 px at most) at the reading start of the column."""
+    """Your message in a soft bubble (520 px at most) at the end of the line, as in
+    ChatGPT."""
     row = QWidget()
     line = QHBoxLayout(row)
     line.setContentsMargins(0, 0, 0, 0)
+    line.addStretch(1)
     label = _text(text, "bubble")
     label.setObjectName("AiChatBubble")
     font = QFont(label.font())
@@ -245,7 +286,6 @@ def bubble(text: str) -> QWidget:
     label.setMaximumWidth(min(widest + BUBBLE_PADDING, BUBBLE_WIDTH))
     label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
     line.addWidget(label)
-    line.addStretch(1)
     return row
 
 
@@ -285,12 +325,16 @@ class TileGrid(QWidget):
 
 
 class TurnView(QFrame):
-    """One question: the bubble, the folded steps, the loading bars, the answer, the cost."""
+    """One question: the bubble, the folded steps, the loading bars, the answer drawn as a
+    report, then Copy, Retry and the cost."""
+
+    retry = Signal()
 
     def __init__(self, question: str, parent: QWidget | None = None, fa: bool = False) -> None:
         super().__init__(parent)
         self.setObjectName("AiChatTurn")
         self.fa = fa
+        word = chat_words(fa)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
@@ -298,6 +342,14 @@ class TurnView(QFrame):
         found = self.bubble.findChild(QLabel)
         self.question: QLabel = found if found is not None else QLabel(question)
         layout.addWidget(self.bubble)
+        mine = QHBoxLayout()
+        mine.setContentsMargins(0, 0, 0, 0)
+        mine.addStretch(1)
+        self.question_copy = CopyButton(lambda: question, fa)
+        self.question_copy.setObjectName("AiChatQuestionCopy")
+        self.question_copy.hide()
+        mine.addWidget(self.question_copy)
+        layout.addLayout(mine)
         meta = QHBoxLayout()
         meta.setSpacing(10)
         self.meta_icon = LabIcon("bars", 20)
@@ -322,23 +374,47 @@ class TurnView(QFrame):
         answer_row.setSpacing(12)
         self.mark = AiMark()
         self.mark.hide()
-        self.answer = _text("", "answer", markdown=True)
+        self.answer = AnswerView(fa)
         self.answer.setObjectName("AiChatAnswer")
         self.answer.hide()
         answer_row.addWidget(self.mark, 0, Qt.AlignmentFlag.AlignTop)
         answer_row.addWidget(self.answer, 1)
         layout.addLayout(answer_row)
+        self.actions = QWidget()
+        self.actions.setObjectName("AiChatActions")
+        tools = QHBoxLayout(self.actions)
+        tools.setContentsMargins(34, 0, 0, 0)
+        tools.setSpacing(4)
+        self.copy_button = CopyButton(self.answer.text, fa)
+        self.copy_button.setObjectName("AiChatCopy")
+        again = word("Ask the same question again")
+        self.retry_button = action_button("\u21bb " + word("Retry"), again)
+        self.retry_button.setObjectName("AiChatRetry")
+        self.retry_button.clicked.connect(lambda _checked=False: self.retry.emit())
         self.cost = _text("", "note")
         self.cost.setObjectName("AiChatCost")
         self.cost.setLayoutDirection(LTR)
         self.cost.hide()
-        layout.addWidget(self.cost)
+        tools.addWidget(self.copy_button)
+        tools.addWidget(self.retry_button)
+        tools.addSpacing(8)
+        tools.addWidget(self.cost, 1)
+        self.actions.hide()
+        layout.addWidget(self.actions)
         self.lines: list[str] = []
         self.started = time.monotonic()
         self.done = False
 
     def _fold(self, shown: bool) -> None:
         self.steps.setVisible(shown and bool(self.steps.text()))
+
+    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 (Qt name)
+        super().enterEvent(event)
+        self.question_copy.show()
+
+    def leaveEvent(self, event: QEvent) -> None:  # noqa: N802 (Qt name)
+        super().leaveEvent(event)
+        self.question_copy.hide()
 
     def add_step(self, step: Step) -> None:
         self.lines.append(f"{STEP_DOT}  {step.line()}")
@@ -362,17 +438,20 @@ class TurnView(QFrame):
         self.meta.setText(worked_line(seconds, count, self.fa))
         text = turn.answer or f"_{turn.stopped.capitalize()}._"
         self.answer.setText(text)
-        direction(self.answer, text)
         self.answer.show()
         self.mark.show()
         self.cost.setText(turn.cost_line())
         self.cost.show()
+        self.copy_button.setVisible(bool(turn.answer))
+        self.actions.show()
 
     def fail(self, text: str) -> None:
         self._stop_loading()
         self.meta.setText("\u2717 " + text)
         self.steps.setText("\n".join([*self.lines, f"\u2717 {text}"]))
         self.steps.show()
+        self.copy_button.hide()
+        self.actions.show()
 
 
 class ChatInput(QPlainTextEdit):
@@ -526,6 +605,7 @@ class ChatPanel(QWidget):
         self.extras: list[QWidget] = []
         self._cancel = threading.Event()
         self._busy = False
+        self._placing = False  # True while the page makes the cards of a finished answer
         self.bridge = _Bridge()
         self.bridge.step.connect(self.show_step, Qt.ConnectionType.QueuedConnection)
         self.bridge.done.connect(self.show_turn, Qt.ConnectionType.QueuedConnection)
@@ -554,6 +634,18 @@ class ChatPanel(QWidget):
         holder.addWidget(centred(column), 1)
         self.transcript.setWidget(body)
         outer.addWidget(self.transcript, 1)
+        self.down = lab_button("\u2193", "down")
+        self.down.setObjectName("AiChatDown")
+        self.down.setParent(self.transcript)
+        self.down.setFixedSize(DOWN_SIZE, DOWN_SIZE)
+        self.down.setAccessibleName(word("Jump to the latest message"))
+        self.down.setToolTip(word("Jump to the latest message"))
+        self.down.clicked.connect(self._to_bottom)
+        self.down.hide()
+        scroll = self.transcript.verticalScrollBar()
+        if scroll is not None:
+            scroll.valueChanged.connect(lambda _value: self._place_down())
+            scroll.rangeChanged.connect(lambda _low, _high: self._place_down())
         bottom = QWidget()
         lower = QVBoxLayout(bottom)
         lower.setContentsMargins(0, 0, 0, 0)
@@ -634,7 +726,7 @@ class ChatPanel(QWidget):
             word("Ask, ask for a chart, or paste the AI's answer here..."),
         )
         self.input.setAccessibleName(word("Your message"))
-        self.input.setFixedHeight(72)
+        self.input.setFixedHeight(INPUT_MIN)
         self.input.setFrameShape(QFrame.Shape.NoFrame)
         self.input.submitted.connect(self.send)
         self.input.textChanged.connect(self._typed)
@@ -680,7 +772,17 @@ class ChatPanel(QWidget):
         self.welcome.setVisible(shown)
         self.quick.setVisible(not shown)
 
+    def _grow(self) -> None:
+        """The message box grows with its text, up to INPUT_MAX, then it scrolls."""
+        document = self.input.document()
+        lines = max(int(document.size().height()), 1)
+        spacing = self.input.fontMetrics().lineSpacing()
+        height = min(max(lines * spacing + 16, INPUT_MIN), INPUT_MAX)
+        if height != self.input.height():
+            self.input.setFixedHeight(height)
+
     def _typed(self) -> None:
+        self._grow()
         if self._busy:
             return
         length = len(self.input.toPlainText())
@@ -741,9 +843,27 @@ class ChatPanel(QWidget):
         self._append(row)
 
     def add_extra(self, widget: QWidget) -> None:
-        """A one-off card (an export, an Ask AI request, a chart): gone with a new chat."""
+        """A one-off card (an export, an Ask AI request, a chart): gone with a new chat. A
+        chart card the answer placed with an `app-chart` block goes into its place."""
         self.extras.append(widget)
-        self._append(widget)
+        slot = self._free_slot()
+        if slot is None:
+            self._append(widget)
+            return
+        slot.fill(widget)
+        fade_in(widget, self.tokens, self.composer.motion)
+        self._scroll_down()
+
+    def _free_slot(self) -> ChartSlot | None:
+        """The answer's next free chart place: while the page makes the cards of the answer,
+        or one whose "Working..." card was just hidden."""
+        if not self.views:
+            return None
+        for slot in self.views[-1].answer.slots:
+            reused = slot.card is not None and slot.free
+            if slot.free and (self._placing or reused):
+                return slot
+        return None
 
     def add_card(self, card: QWidget) -> None:
         """A card of the manual loop at the end of the transcript (moved there if shown)."""
@@ -770,6 +890,7 @@ class ChatPanel(QWidget):
             return False
         client: AiClient = found
         view = TurnView(question, fa=self.fa)
+        view.retry.connect(lambda text=question: self.retry(text))
         apply_tree(view, self.tokens)
         self.views.append(view)
         self._append(view)
@@ -811,6 +932,10 @@ class ChatPanel(QWidget):
         self.start_job(job)
         return True
 
+    def retry(self, question: str) -> bool:
+        """Ask a question again (Retry under an answer)."""
+        return self.ask(question)
+
     def stop(self) -> None:
         if self._busy:
             self._cancel.set()
@@ -837,6 +962,7 @@ class ChatPanel(QWidget):
         self.chat = chat
         for turn in chat.turns:
             view = TurnView(turn.question, fa=self.fa)
+            view.retry.connect(lambda text=turn.question: self.retry(text))
             for step in turn.steps:
                 view.add_step(step)
             view.finish(turn)
@@ -882,7 +1008,11 @@ class ChatPanel(QWidget):
                 self.views[-1].finish(turn)
             self.status.setText(turn.stopped.capitalize() if turn.stopped else "")
             self._save(turn)
-            self.turn_done.emit(turn)
+            self._placing = True
+            try:
+                self.turn_done.emit(turn)
+            finally:
+                self._placing = False
         self._update()
         self._scroll_down()
 
@@ -914,6 +1044,20 @@ class ChatPanel(QWidget):
         bar = self.transcript.verticalScrollBar()
         if bar is not None:
             bar.setValue(bar.maximum())
+
+    def _place_down(self) -> None:
+        """The jump button at the bottom middle of the transcript, while the latest message
+        is out of sight."""
+        bar = self.transcript.verticalScrollBar()
+        far = bar is not None and bar.maximum() - bar.value() > DOWN_SIZE * 3
+        self.down.setVisible(far and bool(self.views or self.extras))
+        left = (self.transcript.width() - DOWN_SIZE) // 2
+        self.down.move(left, self.transcript.height() - DOWN_SIZE - 14)
+        self.down.raise_()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt name)
+        super().resizeEvent(event)
+        self._place_down()
 
     def _update(self) -> None:
         busy = self._busy
