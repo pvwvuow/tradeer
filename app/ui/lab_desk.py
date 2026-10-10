@@ -19,6 +19,11 @@ high-impact news and the bot's open trades on the same currencies (phase 21b2). 
 full check is over and the AI connection is on, the AI writes a three-sentence note from the
 card's lines only (`app.ai.desk_note`, phase 21b3); it has no way to send an order.
 
+A Telegram channel in Live (phase 21d, `app.ui.channel_feed`) brings its signals here too,
+through `take` with a `CardSource`: the card says which channel sent it, the legs are booked
+to the channel's own strategy and magic and sized with its budget, and it is a quick card
+(the full check only when you press it). It waits for the same hold as a pasted one.
+
 The page's header shows the trading mode (PAPER, SEMI-AUTO, AUTO) and REAL ORDERS: ONLY
 WITH YOUR CONFIRM when a confirmed order would be real (Semi-auto or Auto on a real account).
 """
@@ -29,7 +34,8 @@ import contextlib
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Protocol
@@ -43,7 +49,7 @@ from app.domain.modes import OperatingMode
 from app.domain.signals import SignalState
 from app.engine.desk_context import desk_context
 from app.engine.market_watch import MarketSnapshot
-from app.engine.signal_desk import DeskRequest, new_request
+from app.engine.signal_desk import MARKET_MINUTES, PENDING_MINUTES, DeskRequest, new_request
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.observability.logger import audit
 from app.signals.base_rate import HISTORY_DAYS, TIMEFRAME, BaseRate, Geometry, base_rate
@@ -72,6 +78,24 @@ class Desk(Protocol):
     def approve(self, signal_id: str) -> None: ...
 
     def dismiss(self, signal_id: str) -> None: ...
+
+
+@dataclass(frozen=True)
+class CardSource:
+    """Where a card's signal came from and how it is booked (pasted by default)."""
+
+    source: str = "pasted"  # the request's source: "pasted" or "channel:<magic>"
+    label: str = "pasted"  # the card's "from:"
+    strategy: str = "manual_signal"  # a channel's own "channel:<magic>"
+    features: Mapping[str, float | str] = field(default_factory=dict)  # a channel's budget
+    max_open: int = 0
+    aliases: Mapping[str, str] = field(default_factory=dict)
+    quick: bool = False  # no automatic full check
+    market_minutes: int = MARKET_MINUTES
+    pending_minutes: int = PENDING_MINUTES
+
+
+PASTED = CardSource()
 
 
 def _real_account() -> bool:
@@ -136,6 +160,7 @@ class LabDesk(QObject):
         self.checked: set[str] = set()  # cards whose full check has started
         self._full_lock = threading.Lock()
         self.noted: set[str] = set()  # cards whose AI note was asked for
+        self.quick: set[str] = set()  # quick cards: the full check waits for its button
         self._next = page.chat.intercept
         page.chat.intercept = self.intercept
         self.snapshot.connect(self.show_snapshot, Qt.ConnectionType.QueuedConnection)
@@ -178,20 +203,32 @@ class LabDesk(QObject):
             return True
         return self._next(text)
 
-    def parse_text(self, text: str) -> ParsedSignal:
+    def parse_text(self, text: str, aliases: Mapping[str, str] | None = None) -> ParsedSignal:
         symbols = self.symbols()
-        parsed = parse(text, symbols)
+        parsed = parse(text, symbols, aliases)
         if not parsed.symbol and symbols:
-            parsed = parse(text)  # not on the watchlist: the desk says so on the card
+            parsed = parse(text, (), aliases)  # not on the watchlist: the card says so
         return parsed
 
-    def take(self, text: str) -> OrderCard:
-        """An order card for a pasted signal, handed to the desk (nothing is sent)."""
-        parsed = self.parse_text(text)
-        card = OrderCard(parsed, self.word, real=self.real_orders())
-        request = new_request(parsed, time.time())
+    def take(self, text: str, origin: CardSource = PASTED) -> OrderCard:
+        """An order card for a pasted or channel signal, handed to the desk (nothing is
+        sent)."""
+        parsed = self.parse_text(text, origin.aliases)
+        card = OrderCard(parsed, self.word, real=self.real_orders(), source=origin.label)
+        request = new_request(
+            parsed,
+            time.time(),
+            origin.source,
+            strategy=origin.strategy,
+            features=origin.features,
+            max_open=origin.max_open,
+            market_minutes=origin.market_minutes,
+            pending_minutes=origin.pending_minutes,
+        )
         card.request_id = request.id
         self.cards[request.id] = card
+        if origin.quick:
+            self.quick.add(request.id)
         card.edit.connect(partial(self.page.chat.set_text, parsed.text))
         card.held.connect(partial(self.send, request.id))
         card.skip.connect(partial(self.skip, request.id))
@@ -202,11 +239,12 @@ class LabDesk(QObject):
         card.apply_tokens(tokens)
         self.page.chat.add_extra(card)
         self.desk.submit(request)
-        self._log(f"Signal desk: pasted {parsed.summary()}")
+        self._log(f"Signal desk: {origin.label} {parsed.summary()}")
         return card
 
     def _forget(self, request_id: str, *_: object) -> None:
         self.cards.pop(request_id, None)
+        self.quick.discard(request_id)
 
     def _log(self, message: str) -> None:
         context = self.page.context
@@ -250,7 +288,7 @@ class LabDesk(QObject):
                 currency=currency,
                 note=note,
             )
-            if card.state == "waiting" and key not in self.checked:
+            if card.state == "waiting" and key not in self.checked and key not in self.quick:
                 self.full_check(key)
 
     # The full check ----------------------------------------------------------------------

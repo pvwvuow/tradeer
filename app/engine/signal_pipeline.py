@@ -43,6 +43,7 @@ from app.engine.signal_desk import (
     desk_reason,
     leg_shares,
     summary,
+    too_many_open,
 )
 from app.ml import features as model_features
 from app.ml.predictor import Prediction
@@ -782,6 +783,9 @@ class SignalPipeline:
         found = plan(replace(parsed, symbol=symbol), market)
         if not found.ok:
             return DeskResult(request.id, False, "; ".join(found.problems), found, at=now)
+        busy = too_many_open(self._open_groups(request.strategy), request.max_open)
+        if busy:
+            return DeskResult(request.id, False, busy, found, at=now)
         parent = self._legs(request, ctx, found, (1.0,), now)[0]
         shares = self._shares(parent, len(found.tps), spec, latest.clock, now)
         signals = self._legs(request, ctx, found, shares, now)
@@ -816,7 +820,19 @@ class SignalPipeline:
             reason=desk_reason(request),
             created_at=now,
             expires_at=now + 60.0 * minutes,
+            strategy=request.strategy,
+            extra=request.features,
         )
+
+    def _open_groups(self, strategy: str) -> int:
+        """A source's trades that wait, are on their way or open; the legs of one signal
+        count as one."""
+        groups = {
+            str(record.signal.features.get(GROUP_FEATURE) or record.id)
+            for record in self._records.values()
+            if record.signal.strategy == strategy and record.signal.state in LIVE_STATES
+        }
+        return len(groups)
 
     def _shares(
         self,

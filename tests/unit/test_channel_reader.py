@@ -110,6 +110,8 @@ def test_the_reader_logs_in_reads_the_folder_and_stores_the_on_channels() -> Non
     with temporary_store() as store:
         repository = ChannelRepository(store)
         reader = ChannelReader(lambda: ON, lambda s, saved: telegram, secrets, repository)
+        heard: list[int] = []
+        reader.add_message_listener(lambda message: heard.append(message.message_id))
         assert reader.start().status is ReaderStatus.CONNECTING
         wait_for(lambda: reader.state.status is ReaderStatus.PHONE)
         with pytest.raises(LoginError):
@@ -135,6 +137,8 @@ def test_the_reader_logs_in_reads_the_folder_and_stores_the_on_channels() -> Non
         stored = repository.messages(GOLD.id)
         assert [(m.message_id, m.deleted) for m in stored] == [(2, True)]
         assert repository.counts() == {GOLD.id: 1} and reader.state.stored == 1
+        telegram.new(ChannelMessage(GOLD.id, 2, 101.0, "the same message again"))
+        assert heard == [2]  # only new messages of on channels reach the feed
         assert reader.log_out().status is ReaderStatus.OFF
         assert telegram.logged_out and secrets.forgotten and secrets.saved == ""
 

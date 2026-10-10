@@ -3,8 +3,9 @@ report scheduler, the notification center with its watcher, the tray and the Tel
 
 `build_insights` makes the parts before the window exists; `Insights.attach` adds what needs
 the window (the tray toasts, the report timer, the AI Lab's optional AI connection and its
-Signal desk, which plans pasted signals on the market watch's live quotes, and the Settings
-tab of the Telegram channel reader, phase 21c).
+Signal desk, which plans pasted signals on the market watch's live quotes, the Settings
+tab of the Telegram channel reader, phase 21c, and the channel feed that turns a Live
+channel's signals into order cards and follows every signal's shadow, phases 21d and 21e).
 Everything here only reads the engine's snapshots or uses the same public calls as the
 buttons.
 """
@@ -56,6 +57,7 @@ from app.storage.runtime import StorageRuntime
 from app.strategies.registry import strategy_for_magic
 from app.ui.ai_lab_page import AiLabPage
 from app.ui.analytics_page import AnalyticsContext
+from app.ui.channel_feed import ChannelFeed
 from app.ui.channels_page import ChannelsContext, ChannelsPage
 from app.ui.dashboard_page import DashboardContext
 from app.ui.journal_page import JournalContext
@@ -128,6 +130,8 @@ class Insights:
     desk: LabDesk | None = None
     channels: ChannelsContext | None = None  # the Telegram channel reader (phase 21c)
     channels_page: ChannelsPage | None = None
+    feed: ChannelFeed | None = None  # channel signals to the AI Lab's cards (phase 21d)
+    engine: ExecutionEngine | None = None  # a channel's follow-ups ask it to close or move SL
 
     def attach(self, window: QWidget) -> None:
         from app.ui.tray import TrayNotifier
@@ -143,6 +147,7 @@ class Insights:
         QTimer.singleShot(30_000, self.reports.run_due)
         self.attach_llm(window)
         self.attach_desk(window)
+        self.attach_feed()
         self.attach_channels(window)
 
     def attach_desk(self, window: QWidget) -> LabDesk | None:
@@ -157,6 +162,17 @@ class Insights:
         else:
             self.desk = LabDesk(lab, self.signals, self.real_account, market=market)
         return self.desk
+
+    def attach_feed(self) -> ChannelFeed | None:
+        """A Live channel's signals become order cards in the AI Lab (docs/SIGNAL_DESK.md
+        3.3 to 3.5); attached before the reader starts, so no message is missed."""
+        if self.desk is None or self.channels is None:
+            return None
+        feed = ChannelFeed(self.desk, self.channels.repository, engine=self.engine, log=write)
+        feed.attach(self.channels.reader)
+        self.stop_hooks.append(feed.timer.stop)
+        self.feed = feed
+        return feed
 
     def attach_llm(self, window: QWidget) -> bool:
         """Give the window's AI Lab the optional AI connection (still off until saved on)."""
@@ -417,6 +433,7 @@ def build_insights(
         signals=pipeline,
         real_account=real_account,
         channels=build_channels(profile, profile_dir, storage, credentials),
+        engine=execution,
     )
     apply_bot()
     return insights

@@ -4,7 +4,8 @@ read only, in its own thread with its own asyncio loop.
 `ChannelReader` logs in once (phone, the code Telegram sends, the two-step password if set),
 keeps the session in Credential Manager, finds the folder, gives every channel in it its
 magic (`ChannelRepository.sync_folder`) and stores every new message, edit and deletion of
-the channels that are on. The folder is read again every 10 minutes. It never posts, joins,
+the channels that are on. A new message then goes to the message listeners (the channel
+feed, phase 21d). The folder is read again every 10 minutes. It never posts, joins,
 leaves, reacts or marks anything as read, and nothing here can send an order.
 
 Telegram itself is behind `TelegramApi` (`app.channels.telethon_api` with Telethon, an
@@ -32,6 +33,7 @@ WAIT_SECONDS = 60.0
 Result = TypeVar("Result")
 Log = Callable[[str, str], None]
 Listener = Callable[["ReaderState"], None]
+MessageListener = Callable[[ChannelMessage], None]  # a new message, stored (reader thread)
 
 
 class ReaderStatus(StrEnum):
@@ -129,6 +131,7 @@ class ChannelReader:
         self._folder_seconds = folder_seconds
         self._lock = threading.Lock()
         self._listeners: list[Listener] = []
+        self._readers: list[MessageListener] = []
         self._state = ReaderState(ReaderStatus.OFF)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -146,6 +149,12 @@ class ChannelReader:
     def add_listener(self, listener: Listener) -> None:
         with self._lock:
             self._listeners.append(listener)
+
+    def add_message_listener(self, listener: MessageListener) -> None:
+        """Called in the reader thread with every new message of an on channel, after it
+        was stored (phase 21d: the channel feed turns signals into order cards)."""
+        with self._lock:
+            self._readers.append(listener)
 
     def _set(self, status: ReaderStatus, message: str = "", **changes: Any) -> None:
         with self._lock:
@@ -355,6 +364,13 @@ class ChannelReader:
     def _on_new(self, message: ChannelMessage) -> None:
         if self._wanted(message.channel_id) and self._repository.save_message(message, self._now()):
             self._count()
+            with self._lock:
+                readers = list(self._readers)
+            for reader in readers:
+                try:
+                    reader(message)
+                except Exception as error:
+                    self._log("WARNING", f"Telegram message not handled: {type(error).__name__}")
 
     def _on_edit(self, message: ChannelMessage) -> None:
         if self._wanted(message.channel_id):

@@ -4,7 +4,12 @@ Connect your own Telegram account (api_id and api_hash from my.telegram.org), ch
 proxy (the system proxy by default, needed in Iran), log in once with the phone number, the
 code Telegram sends and the two-step password, and turn each channel of the "AI Lab" folder
 on or off. The api_hash, the session and the proxy secret go to Windows Credential Manager;
-`channels.json` holds the rest. Reading only: signal cards from channels come in phase 21d.
+`channels.json` holds the rest.
+
+Each channel has its own settings (phase 21d, `app.channels.policy`): Paper trial (counted,
+no card asks for money) or Live (an order card in the AI Lab for each signal, still with your
+hold-to-confirm), its budget, the risk per trade of its equity, how many trades it may have
+open, its daily loss and drawdown stops, the symbols it may trade and its aliases.
 """
 
 from __future__ import annotations
@@ -30,9 +35,17 @@ from PySide6.QtWidgets import (
 )
 
 from app.channels.folder import preview
+from app.channels.policy import (
+    ChannelMode,
+    ChannelPolicy,
+    alias_text,
+    budget_state,
+)
 from app.channels.reader import ChannelReader, LoginError, ReaderState, ReaderStatus
+from app.channels.record import stats_of, trial_of
 from app.channels.secrets import CredentialSecrets
 from app.channels.settings import ChannelSettings, ChannelSettingsSource, ProxyKind
+from app.channels.stats import ranking
 from app.core.credentials import CredentialError
 from app.observability.logger import audit
 from app.storage.channel_store import ChannelRepository
@@ -40,10 +53,16 @@ from app.ui.pages import PAGE_MARGIN, styled_label
 
 INTRO = (
     "The app reads your own Telegram account, but only the folder named below. It never "
-    "posts, reacts, joins, leaves or marks anything as read. For now the messages of the "
-    "channels you turn on are only stored; signal cards from channels come in a later "
-    "version, and every order will still need your hold-to-confirm."
+    "posts, reacts, joins, leaves or marks anything as read. A channel you turn on starts "
+    "in Paper trial: its signals are counted, no card asks for money. Set it to Live with a "
+    "budget and each of its signals becomes an order card in the AI Lab; every order still "
+    "needs your hold-to-confirm."
 )
+MODE_LABELS: dict[ChannelMode, str] = {
+    ChannelMode.PAPER: "Paper trial (counted, no order cards)",
+    ChannelMode.LIVE: "Live (order cards, each needs your hold)",
+    ChannelMode.OFF: "Off (stored only)",
+}
 STEPS = (
     "1. Open my.telegram.org and log in with your phone number.\n"
     "2. Open API development tools and create an app (any name and short name).\n"
@@ -180,6 +199,52 @@ class ChannelsPage(QWidget):
         layout.addWidget(self.channels)
         self.refresh_button = self._button("Read the folder again", "ChannelsRefresh", self.refresh)
         layout.addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(styled_label("Ranking (shadow results of every signal)", "heading"))
+        self.ranking = styled_label("", "muted", wrap=True)
+        self.ranking.setObjectName("ChannelsRanking")
+        layout.addWidget(self.ranking)
+        layout.addWidget(styled_label("Channel settings", "heading"))
+        self.policy_title = styled_label("Pick a channel in the list.", "muted", wrap=True)
+        self.policy_title.setObjectName("ChannelPolicyTitle")
+        layout.addWidget(self.policy_title)
+        form = QGridLayout()
+        form.setHorizontalSpacing(10)
+        self.mode = QComboBox()
+        self.mode.setObjectName("ChannelMode")
+        self.mode.setAccessibleName("Mode")
+        for mode, label in MODE_LABELS.items():
+            self.mode.addItem(label, mode.value)
+        self.budget = self._edit("ChannelBudget", "Budget in the account currency, e.g. 100")
+        self.risk = self._edit("ChannelRisk", "Risk per trade, % of the channel's equity")
+        self.max_open = self._edit("ChannelMaxOpen", "Open trades at most")
+        self.daily_loss = self._edit("ChannelDailyLoss", "Daily loss stop, %")
+        self.drawdown = self._edit("ChannelDrawdown", "Drawdown stop, % of the budget")
+        self.symbols = self._edit("ChannelSymbols", "Symbols it may trade, e.g. XAUUSD, EURUSD")
+        self.aliases = self._edit("ChannelAliases", "Aliases, e.g. GOLD=XAUUSD")
+        fields: list[tuple[str, QWidget]] = [
+            ("Mode", self.mode),
+            ("Budget", self.budget),
+            ("Risk per trade %", self.risk),
+            ("Max open trades", self.max_open),
+            ("Daily loss stop %", self.daily_loss),
+            ("Drawdown stop %", self.drawdown),
+            ("Symbols (empty = all)", self.symbols),
+            ("Aliases", self.aliases),
+        ]
+        for row, (title, widget) in enumerate(fields):
+            form.addWidget(styled_label(title, "muted"), row, 0)
+            form.addWidget(widget, row, 1)
+        layout.addLayout(form)
+        self.policy_button = self._button("Save channel", "ChannelPolicySave", self.save_policy)
+        layout.addWidget(self.policy_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.policy_status = styled_label("", "muted", wrap=True)
+        self.policy_status.setObjectName("ChannelPolicyStatus")
+        layout.addWidget(self.policy_status)
+        self.stats = styled_label("", "body", wrap=True)
+        self.stats.setObjectName("ChannelStats")
+        layout.addWidget(self.stats)
+        self._policy_enabled(False)
+        self.channels.currentItemChanged.connect(lambda *_: self.show_policy())
         layout.addStretch(1)
         area.setWidget(body)
         outer.addWidget(area)
@@ -335,7 +400,8 @@ class ChannelsPage(QWidget):
         if context is None:
             return
         counts = context.repository.counts()
-        self.channels.blockSignals(True)
+        selected = self.selected_channel()
+        self.channels.blockSignals(True)  # also keeps the settings being typed below
         try:
             self.channels.clear()
             for channel in context.repository.channels():
@@ -352,8 +418,126 @@ class ChannelsPage(QWidget):
                 checked = Qt.CheckState.Checked if channel.enabled else Qt.CheckState.Unchecked
                 item.setCheckState(checked)
                 self.channels.addItem(item)
+                if channel.channel_id == selected:
+                    self.channels.setCurrentItem(item)
         finally:
             self.channels.blockSignals(False)
+        repository = context.repository
+        found = [
+            (channel.title, stats_of(repository, channel, repository.policy(channel.channel_id)))
+            for channel in repository.channels()
+            if channel.in_folder and channel.enabled
+        ]
+        self.ranking.setText("\n".join(ranking(found)) or "No channel is on yet.")
+
+    # One channel's settings ---------------------------------------------------------------
+    def _policy_enabled(self, on: bool) -> None:
+        widgets: tuple[QWidget, ...] = (
+            self.mode,
+            self.budget,
+            self.risk,
+            self.max_open,
+            self.daily_loss,
+            self.drawdown,
+            self.symbols,
+            self.aliases,
+            self.policy_button,
+        )
+        for widget in widgets:
+            widget.setEnabled(on)
+
+    def selected_channel(self) -> int | None:
+        item = self.channels.currentItem()
+        return int(item.data(CHANNEL_ROLE)) if item is not None else None
+
+    def show_policy(self) -> ChannelPolicy | None:
+        context, channel_id = self.context, self.selected_channel()
+        if context is None or channel_id is None:
+            self._policy_enabled(False)
+            return None
+        source = context.repository.source(channel_id)
+        if source is None:
+            self._policy_enabled(False)
+            return None
+        policy = context.repository.policy(channel_id)
+        self._policy_enabled(True)
+        self.policy_title.setText(f"{source.title} (magic {source.magic})")
+        self.mode.setCurrentIndex(max(0, self.mode.findData(policy.mode.value)))
+        self.budget.setText(f"{policy.budget:g}" if policy.budget else "")
+        self.risk.setText(f"{policy.risk_percent:g}")
+        self.max_open.setText(str(policy.max_open))
+        self.daily_loss.setText(f"{policy.daily_loss_percent:g}")
+        self.drawdown.setText(f"{policy.drawdown_percent:g}")
+        self.symbols.setText(", ".join(policy.symbols))
+        self.aliases.setText(alias_text(policy.aliases))
+        self.policy_status.setText(self._money_text(source.magic, policy))
+        lines = stats_of(context.repository, source, policy).lines()
+        if policy.mode is ChannelMode.PAPER:
+            lines.insert(0, trial_of(context.repository, source, context.now()).text())
+        self.stats.setText("\n".join(lines))
+        return policy
+
+    def _money_text(self, magic: int, policy: ChannelPolicy) -> str:
+        context = self.context
+        if context is None:
+            return ""
+        now = context.now()
+        start = now - now % 86_400
+        return budget_state(policy, context.repository.money(magic, start)).text
+
+    def collect_policy(self, old: ChannelPolicy) -> ChannelPolicy:
+        """The channel's settings on screen (raises ValueError with a readable message)."""
+        numbers: dict[str, float] = {}
+        for name, edit, empty in (
+            ("budget", self.budget, 0.0),
+            ("risk_percent", self.risk, old.risk_percent),
+            ("max_open", self.max_open, float(old.max_open)),
+            ("daily_loss_percent", self.daily_loss, old.daily_loss_percent),
+            ("drawdown_percent", self.drawdown, old.drawdown_percent),
+        ):
+            text = edit.text().strip().replace(",", "")
+            try:
+                numbers[name] = float(text) if text else empty
+            except ValueError:
+                raise ValueError(f"{name.replace('_', ' ')} is a number") from None
+        mode = ChannelMode(str(self.mode.currentData() or ChannelMode.PAPER.value))
+        if mode is ChannelMode.LIVE and numbers["budget"] <= 0:
+            raise ValueError("Live needs a budget: enter the money this channel may use")
+        try:
+            return ChannelPolicy.model_validate(
+                {
+                    **old.model_dump(),
+                    **numbers,
+                    "max_open": int(numbers["max_open"]),
+                    "mode": mode.value,
+                    "symbols": self.symbols.text(),
+                    "aliases": self.aliases.text(),
+                },
+            )
+        except ValueError as error:
+            raise ValueError(f"a value is out of range ({type(error).__name__})") from None
+
+    def save_policy(self) -> bool:
+        context, channel_id = self.context, self.selected_channel()
+        if context is None or channel_id is None:
+            return False
+        old = context.repository.policy(channel_id)
+        try:
+            policy = self.collect_policy(old)
+        except ValueError as error:
+            self.policy_status.setText(f"Not saved: {error}.")
+            return False
+        context.repository.set_policy(channel_id, policy, context.now())
+        source = context.repository.source(channel_id)
+        title = source.title if source is not None else str(channel_id)
+        audit(
+            "telegram channel settings saved",
+            before=f"{title}: {old.mode.value}, budget {old.budget:g}",
+            after=f"{title}: {policy.mode.value}, budget {policy.budget:g}",
+        )
+        self.show_policy()
+        self.policy_status.setText("Saved. " + self.policy_status.text())
+        return True
 
     def _item_changed(self, item: QListWidgetItem) -> None:
         context = self.context
