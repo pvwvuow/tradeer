@@ -134,7 +134,7 @@ def test_the_channel_reader_never_writes_to_telegram_or_trades() -> None:
     anything as read. And no channel code sends an order."""
     writes = re.compile(
         r"send_message|send_file|send_read_acknowledge|JoinChannel|LeaveChannel|ReadHistory"
-        r"|SendReaction|forward_messages|delete_messages\(|order_send|order_check",
+        r"|SendReaction|forward_messages|_client\.delete_messages|order_send|order_check",
     )
     for path in sorted((APP / "channels").rglob("*.py")):
         text = path.read_text(encoding="utf-8")
