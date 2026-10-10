@@ -11,7 +11,8 @@ position without one of the bot's magic numbers (manual trades are never modifie
   with SL and TP in the request. A failed re-check expires the signal.
 - Auto (Phase 13b): on every cycle each new pending signal is sent once without a click,
   but only after the Go-Live gate (`auto_gate`) allowed its strategy and config; without the
-  gate Auto sends nothing. A refused signal expires with the gate's reason.
+  gate Auto sends nothing. A refused signal expires with the gate's reason. A Signal desk
+  signal (feature `confirm` = "user") is never sent by Auto: only by your confirmation.
 - Management: MFE/MAE in R on every cycle; the strategy's optional rules (break-even, ATR
   trailing, partial close, time exit) through `app.domain.management`.
 - Close: a managed position that is gone from MT5 is read back from the deal history (real
@@ -59,6 +60,7 @@ from app.mt5.models import SymbolSpec
 from app.risk.risk_manager import RiskDecision
 from app.storage.signal_store import iso_time
 from app.storage.trade_store import STATE_KEY, TradeRepository, bot_trade_id
+from app.strategies.manual_signal import needs_confirmation
 
 CLOSE_SYNC_CYCLES = 30  # cycles to wait for the closing deal before closing without it
 KEEP_MESSAGES = 30
@@ -294,7 +296,13 @@ class ExecutionEngine:
         if block:
             return [SignalUpdate(signal.id, SignalState.EXPIRED, f"not sent: {block}")]
         mode = self.mode()
-        if mode is OperatingMode.AUTO and self._auto_gate is not None:
+        # A signal that needs your confirmation only comes here after you confirmed it: the
+        # Go-Live gate decides what Auto may send by itself, so it does not apply to it.
+        if (
+            mode is OperatingMode.AUTO
+            and self._auto_gate is not None
+            and not needs_confirmation(signal)
+        ):
             refused = self._auto_gate(signal)
             if refused:
                 self._message(f"Auto: {signal.summary()} not sent: {refused}", "WARNING")
@@ -447,8 +455,8 @@ class ExecutionEngine:
             signal = record.signal
             if signal.state is not SignalState.PENDING_APPROVAL or signal.id in self._auto_sent:
                 continue
-            if signal.expires_at <= now:
-                continue
+            if signal.expires_at <= now or needs_confirmation(signal):
+                continue  # expired, or it waits for your hold-to-confirm (never Auto)
             self._auto_sent.add(signal.id)
             self._message(f"Auto: sending {signal.summary()} [{signal.strategy}]")
             updates += self.execute(record, now)
