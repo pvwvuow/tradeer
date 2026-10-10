@@ -48,6 +48,12 @@ class FakeAi:
         return Answer(text, text)
 
 
+def carded(page: Any) -> bool:
+    """The last thing in the chat is an order card."""
+    extras = page.chat.extras
+    return bool(extras) and isinstance(extras[-1], OrderCard)
+
+
 def reading_feed(desk: Any, repository: Any, now: float, ai: FakeAi) -> ChannelFeed:
     return ChannelFeed(desk, repository, utc_now=lambda: now, ai=lambda: ai)
 
@@ -80,7 +86,7 @@ def test_a_checked_reading_becomes_one_card(qtbot: QtBot, tmp_path: Path) -> Non
         found = feed.handle(ChannelMessage(GOLD.id, 1, now, text))
         assert found is not None and found.action is Action.SKIP
         assert found.reason == "an unclear message: the AI reads it"
-        qtbot.waitUntil(lambda: isinstance(page.chat.extras[-1], OrderCard), timeout=5000)
+        qtbot.waitUntil(lambda: carded(page), timeout=5000)
         assert len(ai.asked) == 1 and text in ai.asked[0][1]["content"]
         assert lines[-1].startswith("the AI read the message as: EURUSD buy now sl ")
         assert feed.reads.left(now) == feed.reads.limit - 1
@@ -131,7 +137,7 @@ def test_a_picture_signal_becomes_one_card(qtbot: QtBot, tmp_path: Path) -> None
         photo = ChannelMessage(GOLD.id, 7, now, "", photo=b"\xff\xd8\xff\xe0 a picture")
         found = feed.handle(photo)
         assert found is not None and found.reason == "a picture: the AI reads it"
-        qtbot.waitUntil(lambda: isinstance(page.chat.extras[-1], OrderCard), timeout=5000)
+        qtbot.waitUntil(lambda: carded(page), timeout=5000)
         content = ai.asked[0][1]["content"]
         assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
         assert lines[-1].endswith("(check the numbers on the card)")
