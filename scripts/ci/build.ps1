@@ -72,12 +72,14 @@ Invoke-Step "Source self-check" { python -m app --self-check }
 Invoke-Step "PyInstaller" {
     # numpy is only imported at C level inside MetaTrader5's compiled extension,
     # which PyInstaller's static analysis cannot see, so collect it explicitly.
+    # Telethon (the Telegram channel reader, phase 21c) is loaded with import_module.
     pyinstaller --noconfirm --clean --onedir --windowed `
         --name MT5TradingWorkstation `
         --paths "$root" `
         --hidden-import MetaTrader5 `
         --hidden-import keyring.backends.Windows `
         --hidden-import velopack `
+        --collect-submodules telethon `
         --collect-submodules MetaTrader5 `
         --collect-all numpy `
         --collect-all lightgbm `

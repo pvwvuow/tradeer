@@ -156,6 +156,25 @@ def test_a_saved_session_skips_the_login_and_a_missing_folder_says_so() -> None:
         wait_for(lambda: reader.state.status is ReaderStatus.OFF)
 
 
+def test_stopping_while_waiting_for_the_login_ends_the_thread() -> None:
+    telegram = FakeTelegram([Folder("AI Lab", (GOLD.id,))])
+    with temporary_store() as store:
+        reader = ChannelReader(
+            lambda: ON,
+            lambda s, saved: telegram,
+            FakeSecrets(),
+            ChannelRepository(store),
+        )
+        reader.start()
+        wait_for(lambda: reader.state.status is ReaderStatus.PHONE)
+        reader.stop()
+        assert reader.state.status is ReaderStatus.OFF
+        assert reader.start().status is ReaderStatus.CONNECTING
+        wait_for(lambda: reader.state.status is ReaderStatus.PHONE)
+        reader.stop()
+        assert reader.state.status is ReaderStatus.OFF
+
+
 def test_the_reader_says_why_it_does_not_start() -> None:
     with temporary_store() as store:
         repository = ChannelRepository(store)

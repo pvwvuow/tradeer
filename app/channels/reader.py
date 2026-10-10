@@ -134,6 +134,7 @@ class ChannelReader:
         self._thread: threading.Thread | None = None
         self._api: TelegramApi | None = None
         self._authorized: asyncio.Event | None = None  # made inside the loop
+        self._task: asyncio.Task[Any] | None = None
         self._stored = 0
 
     # State --------------------------------------------------------------------------------
@@ -183,10 +184,15 @@ class ChannelReader:
         return self.state
 
     def stop(self, timeout: float = 10.0) -> None:
-        loop, api = self._loop, self._api
-        if loop is not None and api is not None and loop.is_running():
-            with contextlib.suppress(Exception):
-                asyncio.run_coroutine_threadsafe(api.disconnect(), loop).result(timeout)
+        """Disconnect and end the reader thread, also while it waits for a login step."""
+        loop, api, task = self._loop, self._api, self._task
+        if loop is not None and loop.is_running():
+            if api is not None:
+                with contextlib.suppress(Exception):
+                    asyncio.run_coroutine_threadsafe(api.disconnect(), loop).result(timeout)
+            if task is not None:
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(task.cancel)
         thread, self._thread = self._thread, None
         if thread is not None:
             thread.join(timeout)
@@ -194,16 +200,20 @@ class ChannelReader:
     def _run(self) -> None:
         try:
             asyncio.run(self._main())
+        except asyncio.CancelledError:
+            self._set(ReaderStatus.OFF, "Telegram channels stopped.")
         except Exception as error:
             self._set(ReaderStatus.ERROR, plain_error(error))
             self._log("WARNING", f"Telegram channels stopped: {plain_error(error)}")
         finally:
             self._loop = None
+            self._task = None
             with contextlib.suppress(Exception):
                 self._repository.store.db.release()  # this thread's database connection
 
     async def _main(self) -> None:
         self._loop = asyncio.get_running_loop()
+        self._task = asyncio.current_task()
         self._authorized = asyncio.Event()
         settings = self._settings()
         if self._make_api is None:

@@ -12,6 +12,7 @@ license = { text = "Proprietary. All rights reserved." }
 # Exact pins for direct dependencies. Each later phase adds its own pinned libraries.
 # Phase 11 adds only lightgbm (it brings numpy and scipy): calibration, metrics and SHAP
 # values need no scikit-learn, shap or joblib (ADR 97). In-app updates use velopack (ADR 113).
+# The Telegram channel reader (phase 21c) uses Telethon, pure Python (it brings pyaes and rsa).
 dependencies = [
   "httpx==0.28.1",
   "keyring==25.7.0",
@@ -22,6 +23,7 @@ dependencies = [
   "pydantic==2.11.7",
   "pyqtgraph==0.14.0",
   "PySide6==6.10.3",
+  "telethon==1.44.0",
   "velopack==1.2.0",
 ]
 
