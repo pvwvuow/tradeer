@@ -6,7 +6,8 @@ from the risk manager, the checks (Why? shows them and the decision trace) and w
 expires, the context now (the trend, the structure, the spread, the next high-impact news
 and the bot's open trades on the same currencies) and the full check (phase 21b): the same
 geometry's base rate on 2 years of M15 history and how pasted signals did so far, each with
-its sample count. Nothing is sent until you press and hold Hold to send (1.2 s, 2 s when
+its sample count, then the AI's three-sentence note on those lines (21b3, only with the AI
+connection on). Nothing is sent until you press and hold Hold to send (1.2 s, 2 s when
 the order would be real); then every leg goes to the pipeline's approval queue and the
 execution engine checks the price, the spread and the limits again before it sends. The card
 only shows: the desk submits, approves, skips and runs the full check.
@@ -43,6 +44,7 @@ QUICK_NOTE = (
     "come from the app's own history. Nothing is sent until you hold the button."
 )
 CONTEXT_HEAD = "Context now:"
+NOTE_HEAD = "AI note (from the lines above only):"
 NO_HISTORY = "The full check needs the price history: connect to MT5."
 FULL_HEAD = "Same geometry on {days} days of M15 history (a base rate, not a forecast):"
 FULL_RATE = "TP{number} ({atr:.1f} ATR): {rate:.0f}% of {count} similar trades hit it first"
@@ -98,6 +100,9 @@ ORDER_FA: dict[str, str] = {
     "Skipped: nothing was sent.": "رد شد: چیزی ارسال نشد.",
     "Full check": "بررسی کامل",
     CONTEXT_HEAD: "وضعیت الان:",
+    NOTE_HEAD: "یادداشت AI (فقط از خط‌های بالا):",
+    "Writing the AI note...": "در حال نوشتن یادداشت AI...",
+    "AI note failed: {why}": "یادداشت AI نوشته نشد: {why}",
     "Checking the same geometry in the history...": "در حال بررسی همین هندسه در تاریخچه...",
     "Full check failed: {why}": "بررسی کامل نشد: {why}",
     NO_HISTORY: "بررسی کامل تاریخچه‌ی قیمت را لازم دارد: به MT5 وصل شوید.",
@@ -385,6 +390,7 @@ class OrderCard(LabCard):
         self.skipped = False
         self.state = "checking"
         self.full_state = ""  # "", running, done or failed
+        self.note_state = ""  # the same for the AI note
         self.state_tag = self.add_tag("CHECKING")
         self.real_tag = self.add_tag("REAL ORDER", "loss")
         body = QWidget()
@@ -428,6 +434,11 @@ class OrderCard(LabCard):
         self.full_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.full_label.hide()
         lines.addWidget(self.full_label)
+        self.note_label = lab_label("", "note", wrap=True)
+        self.note_label.setObjectName("AiOrderNote")
+        self.note_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.note_label.hide()
+        lines.addWidget(self.note_label)
         self.status = lab_label("", "text", wrap=True)
         self.status.setObjectName("AiOrderStatus")
         self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -519,6 +530,34 @@ class OrderCard(LabCard):
         self.full_label.setText(text)
         self.full_label.setVisible(bool(text))
         self.refresh()
+
+    def note_facts(self) -> list[str]:
+        """The lines the AI note may use: what the card shows (no lots, no money)."""
+        parts = (
+            self.title.text(),
+            self.prices.text(),
+            self.targets.text(),
+            self.checks_label.text(),
+            self.status.text(),
+            self.context_label.text(),
+            self.full_label.text(),
+        )
+        return [line for part in parts for line in part.splitlines() if line.strip()]
+
+    def note_running(self) -> None:
+        self.note_state = "running"
+        self._note_text(self.word("Writing the AI note..."))
+
+    def show_note(self, text: str, ok: bool) -> None:
+        self.note_state = "done" if ok else "failed"
+        if ok:
+            self._note_text(f"{self.word(NOTE_HEAD)}\n{text}")
+        else:
+            self._note_text(self.word("AI note failed: {why}").format(why=text))
+
+    def _note_text(self, text: str) -> None:
+        self.note_label.setText(text)
+        self.note_label.setVisible(bool(text))
 
     def mark_sent(self) -> None:
         self.sent = True
