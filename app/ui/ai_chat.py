@@ -233,7 +233,7 @@ def bubble(text: str) -> QWidget:
     font.setFamily(TEXT_FONT)
     font.setPointSizeF(px(15))
     metrics = QFontMetrics(font)
-    widest = max((metrics.horizontalAdvance(line) for line in text.split("\n")), default=0)
+    widest = max((metrics.horizontalAdvance(part) for part in text.split("\n")), default=0)
     label.setMaximumWidth(min(widest + BUBBLE_PADDING, BUBBLE_WIDTH))
     label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
     line.addWidget(label)
@@ -404,10 +404,15 @@ class PromptStrip(QWidget):
         bar.setValue(bar.value() + direction * max(viewport.width() - 60, 80))
 
     def _arrows(self) -> None:
+        """The arrows only when the prompts are wider than the whole strip (a fixed test, so
+        showing them never changes the answer), each one enabled while it can move."""
+        holder = self.area.widget()
+        needed = holder.minimumSizeHint().width() if holder is not None else 0
+        more = needed > self.width()
+        if more != self.back.isVisibleTo(self):
+            self.back.setVisible(more)
+            self.forward.setVisible(more)
         bar = self.area.horizontalScrollBar()
-        more = bar is not None and bar.maximum() > bar.minimum()
-        self.back.setVisible(more)
-        self.forward.setVisible(more)
         if bar is not None:
             self.back.setEnabled(bar.value() > bar.minimum())
             self.forward.setEnabled(bar.value() < bar.maximum())
