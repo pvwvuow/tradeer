@@ -1,6 +1,7 @@
 """The Signal desk's order card in the AI Lab (docs/SIGNAL_DESK.md 2.4, phase 21a3): a pasted
 signal becomes a card that the pipeline plans, sizes and checks, nothing is sent without the
-full hold, Skip dismisses every leg, and the header shows the trading mode."""
+full hold, Skip dismisses every leg, the full check counts the same geometry in the
+history (21b), and the header shows the trading mode."""
 
 from dataclasses import replace
 from pathlib import Path
@@ -15,21 +16,28 @@ from app.domain.modes import OperatingMode
 from app.domain.signals import Direction, OrderType
 from app.engine.signal_pipeline import SignalPipeline
 from app.ui.ai_lab_page import AiLabContext, AiLabPage
+from app.ui.backtest_page import BacktestContext
 from app.ui.lab_desk import LabDesk, is_signal
 from app.ui.signal_card import (
     HOLD_MS,
     REAL_HOLD_MS,
     OrderCard,
     card_state,
+    full_lines,
     side_text,
     size_line,
 )
+from tests.ui.test_ai_lab_page import backtest_context
 from tests.unit.signal_helpers import pipeline
 from tests.unit.test_ai_export import TRADES
 from tests.unit.test_signal_desk import buy_text, watching
 
 
-def lab(tmp_path: Path, mode: OperatingMode = OperatingMode.PAPER) -> AiLabContext:
+def lab(
+    tmp_path: Path,
+    mode: OperatingMode = OperatingMode.PAPER,
+    backtest: BacktestContext | None = None,
+) -> AiLabContext:
     execution = ExecutionSettingsSource(tmp_path)
     execution.save(ExecutionConfig(mode=mode))
     return AiLabContext(
@@ -37,6 +45,7 @@ def lab(tmp_path: Path, mode: OperatingMode = OperatingMode.PAPER) -> AiLabConte
         strategies=StrategySettingsSource(tmp_path),
         execution=execution,
         export_dir=tmp_path,
+        backtest=backtest,
     )
 
 
@@ -189,6 +198,35 @@ def test_a_real_order_says_so_and_needs_the_longer_hold(qtbot: QtBot, tmp_path: 
     assert page.never_tag.text == "REAL ORDERS: NEVER"
 
 
+def test_the_full_check_counts_the_same_geometry_in_the_history(
+    qtbot: QtBot,
+    tmp_path: Path,
+) -> None:
+    signals, now, price = watching()
+    page = AiLabPage(lab(tmp_path, backtest=backtest_context(tmp_path, None)))
+    qtbot.addWidget(page)
+    desk = LabDesk(page, signals)
+    card = pasted(page, buy_text(price))
+    signals.on_cycle(now + 1)
+    qtbot.waitUntil(lambda: card.full_state in ("done", "failed"), timeout=30_000)
+    text = card.full_label.text()
+    assert card.full_state == "done", text
+    assert text.startswith("Same geometry on ") and "a base rate, not a forecast" in text
+    assert "TP1 (" in text and "TP2 (" in text
+    assert "Pasted signals so far: too little data (0 closed)" in text
+    assert desk.full_check(card.request_id) is False  # it starts by itself only once
+    assert not card.full_button.isHidden()  # run it again by hand
+
+
+def test_without_the_history_the_full_check_says_so(qtbot: QtBot, tmp_path: Path) -> None:
+    page, desk, signals, now, price = desk_page(qtbot, tmp_path)
+    card = pasted(page, buy_text(price))
+    signals.on_cycle(now + 1)
+    qtbot.waitUntil(lambda: card.state == "waiting")
+    assert card.full_state == "failed"
+    assert "needs the price history" in card.full_label.text()
+
+
 def test_the_card_words() -> None:
     assert side_text(Direction.SHORT, OrderType.LIMIT) == "SELL LIMIT"
     assert side_text(Direction.LONG, None) == "BUY"
@@ -196,3 +234,4 @@ def test_the_card_words() -> None:
     assert card_state(None, ()) == "checking"
     assert card_state(None, (), skipped=True) == "skipped"
     assert size_line(()) == ""
+    assert full_lines(None, None, str) == []
