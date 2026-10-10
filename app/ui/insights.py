@@ -2,7 +2,8 @@
 report scheduler, the notification center with its watcher, the tray and the Telegram bot.
 
 `build_insights` makes the parts before the window exists; `Insights.attach` adds what needs
-the window (the tray toasts, the report timer and the AI Lab's optional AI connection).
+the window (the tray toasts, the report timer, the AI Lab's optional AI connection and its
+Signal desk, which plans pasted signals on the market watch's live quotes).
 Everything here only reads the engine's snapshots or uses the same public calls as the
 buttons.
 """
@@ -34,6 +35,7 @@ from app.journal.reports import REPORT_FOLDER, Period, ReportRepository
 from app.journal.scheduler import ReportService
 from app.journal.store import JournalRepository
 from app.mt5.connection import ConnectionService
+from app.mt5.models import AccountKind
 from app.notify.center import NotificationCenter
 from app.notify.events import EventKind, Notice
 from app.notify.remote import EngineRemote
@@ -50,6 +52,7 @@ from app.ui.ai_lab_page import AiLabPage
 from app.ui.analytics_page import AnalyticsContext
 from app.ui.dashboard_page import DashboardContext
 from app.ui.journal_page import JournalContext
+from app.ui.lab_desk import LabDesk
 from app.ui.notifications_page import NotificationsContext
 from app.ui.trade_history import TradeHistory
 
@@ -111,6 +114,9 @@ class Insights:
     timers: list[QTimer] = field(default_factory=list)
     stop_hooks: list[Callable[[], None]] = field(default_factory=list)
     llm: LlmContext | None = None
+    signals: SignalPipeline | None = None  # the AI Lab's Signal desk hands signals in here
+    real_account: Callable[[], bool] | None = None
+    desk: LabDesk | None = None
 
     def attach(self, window: QWidget) -> None:
         from app.ui.tray import TrayNotifier
@@ -125,6 +131,19 @@ class Insights:
         self.timers.append(timer)
         QTimer.singleShot(30_000, self.reports.run_due)
         self.attach_llm(window)
+        self.attach_desk(window)
+
+    def attach_desk(self, window: QWidget) -> LabDesk | None:
+        """The AI Lab's Signal desk: a pasted signal becomes an order card that waits for
+        your hold-to-send (docs/SIGNAL_DESK.md)."""
+        lab = window.findChild(AiLabPage)
+        if self.signals is None or not isinstance(lab, AiLabPage):
+            return None
+        if self.real_account is None:
+            self.desk = LabDesk(lab, self.signals)
+        else:
+            self.desk = LabDesk(lab, self.signals, self.real_account)
+        return self.desk
 
     def attach_llm(self, window: QWidget) -> bool:
         """Give the window's AI Lab the optional AI connection (still off until saved on)."""
@@ -196,6 +215,18 @@ def build_insights(
     def login() -> str | None:
         account = service.status.account
         return str(account.login) if account is not None else None
+
+    def real_account() -> bool:
+        account = service.status.account
+        return account is None or account.kind is not AccountKind.DEMO
+
+    def live_quote(symbol: str) -> tuple[float, float] | None:
+        found = watch.snapshot.quotes.get(symbol)
+        if found is None or not 0 < found.bid <= found.ask:
+            return None
+        return float(found.bid), float(found.ask)
+
+    pipeline.use_quotes(live_quote)
 
     settings = NotificationSettingsSource(profile_dir, lambda text: write("WARNING", text))
     center = NotificationCenter(lambda: settings.settings, log=write)
@@ -330,6 +361,8 @@ def build_insights(
             log=write_llm,
             record=record_llm,
         ),
+        signals=pipeline,
+        real_account=real_account,
     )
     apply_bot()
     return insights
