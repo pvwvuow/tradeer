@@ -138,7 +138,8 @@ def read_messages(
     if before:
         lines.append("Earlier messages of this channel, oldest first:")
         lines += [f"<<<\n{item}\n>>>" for item in before[-CONTEXT_MESSAGES:]]
-    lines += ["The message to read:", f"<<<\n{text.strip()[:MESSAGE_CHARACTERS * 2]}\n>>>"]
+    message = text.strip()[: MESSAGE_CHARACTERS * 2]
+    lines += ["The message to read:", f"<<<\n{message}\n>>>"]
     content: Any = "\n".join(lines)
     if picture:
         content = [
