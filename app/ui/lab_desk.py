@@ -15,7 +15,9 @@ loads 2 years of the symbol's M15 history (the Backtest page's loader and cache)
 how often the same geometry reached each target before the stop loss
 (`app.signals.base_rate`). One check runs at a time. With it come the context lines
 (`app.engine.desk_context`): the market watch's analysis card of the symbol, the next
-high-impact news and the bot's open trades on the same currencies (phase 21b2).
+high-impact news and the bot's open trades on the same currencies (phase 21b2). When the
+full check is over and the AI connection is on, the AI writes a three-sentence note from the
+card's lines only (`app.ai.desk_note`, phase 21b3); it has no way to send an order.
 
 The page's header shows the trading mode (PAPER, SEMI-AUTO, AUTO) and REAL ORDERS: ONLY
 WITH YOUR CONFIRM when a confirmed order would be real (Semi-auto or Auto on a real account).
@@ -34,6 +36,8 @@ from typing import Protocol
 
 from PySide6.QtCore import QObject, Qt, Signal
 
+from app.ai.desk_note import NOTE_TOKENS, clean_note, note_messages
+from app.ai.transport import AiCallError, AiClient, Message, plain_text
 from app.backtest.service import BacktestRequest
 from app.domain.modes import OperatingMode
 from app.domain.signals import SignalState
@@ -112,6 +116,7 @@ def history_rate(
 class LabDesk(QObject):
     snapshot = Signal(object)  # from the analysis thread, shown in the UI thread
     full_done = Signal(str, object)  # a request id and its BaseRate, or why it failed
+    note_done = Signal(str, str, bool)  # a request id, the note or why not, and if it worked
 
     def __init__(
         self,
@@ -130,10 +135,12 @@ class LabDesk(QObject):
         self.last: SignalsSnapshot | None = None
         self.checked: set[str] = set()  # cards whose full check has started
         self._full_lock = threading.Lock()
+        self.noted: set[str] = set()  # cards whose AI note was asked for
         self._next = page.chat.intercept
         page.chat.intercept = self.intercept
         self.snapshot.connect(self.show_snapshot, Qt.ConnectionType.QueuedConnection)
         self.full_done.connect(self.show_full, Qt.ConnectionType.QueuedConnection)
+        self.note_done.connect(self.show_note, Qt.ConnectionType.QueuedConnection)
         desk.add_listener(self.snapshot.emit)
         self.show_snapshot(desk.snapshot)
 
@@ -265,6 +272,7 @@ class LabDesk(QObject):
             geometry = Geometry.of(plan, card.legs[0].atr, time.time())
         if backtest is None or plan is None or geometry is None:
             card.full_note(self.word(NO_HISTORY))
+            self.ask_note(request_id)
             return False
         card.full_running()
         threading.Thread(
@@ -316,6 +324,43 @@ class LabDesk(QObject):
         card = self.cards.get(request_id)
         if card is not None and isinstance(outcome, BaseRate | str):
             card.show_full(outcome)
+            self.ask_note(request_id)
+
+    # The AI note -------------------------------------------------------------------------
+    def ask_note(self, request_id: str) -> bool:
+        """Ask the AI for the card's note once (True when it was asked)."""
+        card = self.cards.get(request_id)
+        if card is None or request_id in self.noted or card.result is None:
+            return False
+        found = self.page.llm_panel.make_client()
+        if isinstance(found, str):
+            return False  # the AI connection is off: the card has no note
+        self.noted.add(request_id)
+        messages = note_messages(card.parsed.text, card.note_facts(), persian=self.page.persian)
+        card.note_running()
+        threading.Thread(
+            target=self._note_work,
+            args=(request_id, found, messages),
+            name="signal-desk-note",
+            daemon=True,
+        ).start()
+        return True
+
+    def _note_work(self, request_id: str, client: AiClient, messages: list[Message]) -> None:
+        try:
+            text = clean_note(client.complete(messages, max_tokens=NOTE_TOKENS).text)
+            ok = bool(text)
+        except AiCallError as error:
+            text, ok = plain_text(error, client.settings.base_url), False
+        except Exception as error:
+            text, ok = f"{type(error).__name__}: {error}", False
+        with contextlib.suppress(RuntimeError):  # the page may be gone
+            self.note_done.emit(request_id, text, ok)
+
+    def show_note(self, request_id: str, text: str, ok: bool) -> None:
+        card = self.cards.get(request_id)
+        if card is not None:
+            card.show_note(text, ok)
 
     # The hold and Skip -------------------------------------------------------------------
     def send(self, request_id: str) -> bool:
