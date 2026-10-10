@@ -8,6 +8,10 @@ that breaks a limit is `RISK_REJECTED`. A signal within every limit waits for ap
 re-checks, sends and manages it; the engine's state changes (`SENT`, `FILLED`, `MANAGED`,
 `CLOSED`, `FAILED`) come back as `SignalUpdate`s. The UI asks to approve or dismiss a signal
 through a queue, so every database write happens in this one thread.
+
+The Signal desk (docs/SIGNAL_DESK.md) hands in pasted signals the same way (`submit`): each
+is planned against the newest analysis of its symbol, split into one leg per target and
+every leg runs the same features, probability, filters and risk as a strategy's signal.
 """
 
 from __future__ import annotations
@@ -24,23 +28,34 @@ from typing import Any, Protocol
 from app.analysis.bars import TF_SECONDS
 from app.analysis.indicators import atr, last
 from app.analysis.scanner import ScanEntry, rank
-from app.analysis.sessions import active_sessions
+from app.analysis.sessions import active_sessions, market_open
 from app.analysis.symbol import SymbolAnalysis
 from app.core.clock import BrokerClock
 from app.domain.probability import ProbabilityEstimate, baseline, cost_in_r, expected_value_r
-from app.domain.signals import TRANSITIONS, Signal, SignalRecord, SignalState
+from app.domain.signals import TRANSITIONS, OrderType, Signal, SignalRecord, SignalState
 from app.engine.currency_guard import shared_bet
 from app.engine.execution import SignalUpdate
 from app.engine.filters import FilterInput, FilterSettings, run_filters
+from app.engine.signal_desk import (
+    KEEP_RESULTS,
+    DeskRequest,
+    DeskResult,
+    desk_reason,
+    leg_shares,
+    summary,
+)
 from app.ml import features as model_features
 from app.ml.predictor import Prediction
 from app.mt5.models import SymbolSpec, SymbolTradeMode
 from app.observability.decision_trace import DecisionTrace
 from app.risk.risk_manager import RiskDecision
+from app.signals.plan import Market, OrderPlan, plan
+from app.signals.words import resolve_symbol
 from app.storage.ids import stable_id
 from app.storage.signal_store import TradeResult, config_id
 from app.strategies.base import EXAMPLE_NOTE, Evaluation, Strategy
 from app.strategies.context import MarketContext, build_context
+from app.strategies.manual_signal import GROUP_FEATURE, ManualSignal
 
 KEEP_SIGNALS = 200
 FRESH_GRACE_SECONDS = 120
@@ -62,6 +77,7 @@ LIVE_STATES = frozenset(
 
 Log = Callable[[str, str], None]
 Listener = Callable[["SignalsSnapshot"], None]
+Quote = Callable[[str], tuple[float, float] | None]  # the live bid and ask of a symbol
 
 
 class SignalStore(Protocol):
@@ -175,9 +191,21 @@ class SignalsSnapshot:
     message: str = "Waiting for the first closed bar"
     updated_at: float = 0.0
     approval_block: str = NO_EXECUTION_NOTE  # why Approve is disabled, "" when it works
+    desk: tuple[DeskResult, ...] = ()  # the Signal desk's newest results first
+    symbols: tuple[str, ...] = ()  # the analysed symbols (the Signal desk's choice)
 
     def pending(self) -> list[SignalRecord]:
         return [r for r in self.signals if r.signal.state is SignalState.PENDING_APPROVAL]
+
+
+@dataclass(frozen=True)
+class _Latest:
+    """The newest analysis of a symbol, for a signal that arrives between two bars."""
+
+    analysis: SymbolAnalysis
+    clock: BrokerClock
+    spec: SymbolSpec | None
+    spread: float
 
 
 @dataclass
@@ -216,6 +244,12 @@ def history_of(results: Sequence[TradeResult]) -> _History:
     return found
 
 
+def _same_group(signal: Signal, other: Signal) -> bool:
+    """Two legs of one Signal desk signal (one position per target): not duplicates."""
+    group = signal.features.get(GROUP_FEATURE)
+    return bool(group) and other.features.get(GROUP_FEATURE) == group
+
+
 def entry_atr(ctx: MarketContext, period: int = 14) -> float:
     bars = ctx.entry
     if len(bars) <= period:
@@ -234,10 +268,12 @@ class SignalPipeline:
         risk: RiskHook | None = None,
         executor: ExecutionHook | None = None,
         model: Callable[[], ProbabilityModel | None] | None = None,
+        quote: Quote | None = None,
         log: Log = _quiet,
         utc_now: Callable[[], float] = time.time,
     ) -> None:
         self._model = model or (lambda: None)
+        self._quote = quote
         self._strategies = strategies
         self._filters = filters
         self._store = store
@@ -253,6 +289,10 @@ class SignalPipeline:
         self._evaluated: dict[tuple[str, str, str], int] = {}  # strategy+hash+symbol -> bar
         self._dismiss: list[str] = []
         self._approve: list[str] = []
+        self._desk_queue: list[DeskRequest] = []
+        self._desk: dict[str, DeskResult] = {}
+        self._latest: dict[str, _Latest] = {}
+        self._manual = ManualSignal()
         self._store_failed = False
         self._snapshot = SignalsSnapshot()
 
@@ -281,6 +321,12 @@ class SignalPipeline:
         with self._lock:
             self._approve.append(signal_id)
 
+    def submit(self, request: DeskRequest) -> None:
+        """A Signal desk signal; planned, sized and checked on the next analysis cycle. Its
+        legs then wait for the user's confirmation like any pending signal."""
+        with self._lock:
+            self._desk_queue.append(request)
+
     # Analysis thread -------------------------------------------------------------------
     def load(self) -> int:
         """The newest saved signals, so the page and the expiry survive a restart."""
@@ -302,7 +348,11 @@ class SignalPipeline:
         with self._lock:
             queued, self._dismiss = self._dismiss, []
             approved, self._approve = self._approve, []
+            desks, self._desk_queue = self._desk_queue, []
         changed = False
+        for request in desks:
+            self._keep(self._desk_safe(request, moment))
+            changed = True
         for signal_id in queued:
             changed |= self._finish(signal_id, SignalState.USER_REJECTED, moment, "dismissed")
         for signal_id in approved:
@@ -339,6 +389,7 @@ class SignalPipeline:
     ) -> list[SignalRecord]:
         """Run every enabled strategy on the symbol's newest closed bar."""
         moment = self._now() if now is None else now
+        self._latest[analysis.symbol] = _Latest(analysis, clock, spec, spread)
         strategies = list(self._strategies())
         names = {strategy.name for strategy in strategies}
         self._scan = {key: entry for key, entry in self._scan.items() if key[1] in names}
@@ -426,7 +477,8 @@ class SignalPipeline:
         )
         trace.add("context", "data quality", analysis.quality.ok, detail=analysis.quality.text())
         trace.add("context", "session", None, value=ctx.session or "none")
-        trace.add("strategy", f"{strategy.title} {strategy.version}", True, detail=EXAMPLE_NOTE)
+        note = EXAMPLE_NOTE if strategy.example else strategy.description
+        trace.add("strategy", f"{strategy.title} {strategy.version}", True, detail=note)
         trace.extend(evaluation.steps(now))
         trace.add("strategy", "signal", True, value=signal.summary(), detail=signal.reason)
 
@@ -647,6 +699,7 @@ class SignalPipeline:
                 and other.symbol == signal.symbol
                 and other.direction is signal.direction
                 and other.id != signal.id
+                and not _same_group(other, signal)
             ):
                 return other
         return None
@@ -658,6 +711,7 @@ class SignalPipeline:
             if record.signal.state.open_position
             and record.signal.strategy == signal.strategy
             and record.signal.symbol == signal.symbol
+            and not _same_group(record.signal, signal)
         )
 
     def _same_side(self, signal: Signal) -> list[Signal]:
@@ -686,6 +740,109 @@ class SignalPipeline:
                 side = "buy" if other.direction.sign > 0 else "sell"
                 found.append(f"{other.strategy} {other.symbol} {side} ({bet})")
         return sorted(found)
+
+    # The Signal desk ----------------------------------------------------------------------
+    def _desk_safe(self, request: DeskRequest, now: float) -> DeskResult:
+        try:
+            return self._desk_one(request, now)
+        except Exception as error:
+            text = f"the signal could not be checked: {type(error).__name__}: {error}"
+            self._log("ERROR", f"Signal desk {request.id}: {text}")
+            return DeskResult(request.id, False, text, at=now)
+
+    def _desk_one(self, request: DeskRequest, now: float) -> DeskResult:
+        parsed = request.parsed
+        if not parsed.complete:
+            missing = ", ".join(parsed.missing)
+            return DeskResult(request.id, False, f"missing: {missing}", at=now)
+        symbol = resolve_symbol(parsed.symbol, tuple(self._latest))
+        latest = self._latest.get(symbol)
+        if latest is None:
+            why = f"{parsed.symbol} is not on the watchlist yet: add it on the Market page"
+            return DeskResult(request.id, False, why, at=now)
+        analysis, spec = latest.analysis, latest.spec
+        point = spec.point if spec is not None and spec.point > 0 else 10.0**-analysis.digits
+        strategy = self._manual
+        ctx = build_context(
+            analysis,
+            strategy.entry_timeframe,
+            clock=latest.clock,
+            now=now,
+            point=point,
+            spread=latest.spread,
+        )
+        bid, ask = self._bid_ask(analysis, latest.spread)
+        stops = spec.stops_level if spec is not None else 0
+        market = Market(bid, ask, entry_atr(ctx), analysis.digits, point, stops, market_open(now))
+        found = plan(replace(parsed, symbol=symbol), market)
+        if not found.ok:
+            return DeskResult(request.id, False, "; ".join(found.problems), found, at=now)
+        parent = self._legs(request, ctx, found, (1.0,), now)[0]
+        shares = self._shares(parent, len(found.tps), spec, latest.clock, now)
+        signals = self._legs(request, ctx, found, shares, now)
+        evaluation = strategy.checked(ctx, found, signals)
+        records = [
+            self._process(strategy, signal, evaluation, ctx, analysis, spec, now)
+            for signal in signals
+            if not self._known(signal.id)
+        ]
+        states = [record.signal.state.value for record in records]
+        ok, message = summary(states, [record.reject_reason for record in records])
+        self._log("INFO", f"Signal desk ({request.source}): {found.symbol}: {message}")
+        return DeskResult(request.id, ok, message, found, tuple(r.id for r in records), now)
+
+    def _legs(
+        self,
+        request: DeskRequest,
+        ctx: MarketContext,
+        found: OrderPlan,
+        shares: Sequence[float],
+        now: float,
+    ) -> tuple[Signal, ...]:
+        minutes = request.market_minutes
+        if found.order is not OrderType.MARKET:
+            minutes = request.pending_minutes
+        return self._manual.legs(
+            ctx,
+            found,
+            group=request.id,
+            shares=shares,
+            source=request.source,
+            reason=desk_reason(request),
+            created_at=now,
+            expires_at=now + 60.0 * minutes,
+        )
+
+    def _shares(
+        self,
+        parent: Signal,
+        targets: int,
+        spec: SymbolSpec | None,
+        clock: BrokerClock,
+        now: float,
+    ) -> tuple[float, ...]:
+        """The whole signal is sized once (as one trade), then split over its targets."""
+        if self._risk is None or spec is None:
+            return leg_shares(math.nan, targets, 0.0, 0.0)
+        decision = self._risk.evaluate(parent, spec, clock, now)
+        if not decision.ok:
+            return (1.0,)  # one leg, so the card shows the risk manager's reason once
+        return leg_shares(decision.volume, targets, spec.volume_min, spec.volume_step)
+
+    def _bid_ask(self, analysis: SymbolAnalysis, spread: float) -> tuple[float, float]:
+        if self._quote is not None:
+            with contextlib.suppress(Exception):
+                found = self._quote(analysis.symbol)
+                if found is not None:
+                    return found
+        gap = spread if math.isfinite(spread) and spread > 0 else 0.0
+        return analysis.price, analysis.price + gap
+
+    def _keep(self, result: DeskResult) -> None:
+        self._desk[result.request_id] = result
+        if len(self._desk) > KEEP_RESULTS:
+            oldest = min(self._desk.values(), key=lambda item: item.at)
+            del self._desk[oldest.request_id]
 
     def _finish(self, signal_id: str, state: SignalState, now: float, reason: str) -> bool:
         record = self._records.get(signal_id)
@@ -784,6 +941,8 @@ class SignalPipeline:
             message=message,
             updated_at=self._now(),
             approval_block=self._approval_block(),
+            desk=tuple(sorted(self._desk.values(), key=lambda item: item.at, reverse=True)),
+            symbols=tuple(sorted(self._latest)),
         )
         with self._lock:
             self._snapshot = snapshot
