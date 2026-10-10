@@ -105,7 +105,7 @@ def shadow(widget: QWidget, tokens: ThemeTokens) -> QGraphicsDropShadowEffect:
 
 
 def is_card(widget: QWidget) -> bool:
-    return widget.property("lab") == "card"
+    return bool(widget.property("lab") == "card")
 
 
 def settle(widget: QWidget, tokens: ThemeTokens) -> None:
