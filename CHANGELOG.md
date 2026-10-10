@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.38.0](https://github.com/pvwvuow/tradeer/compare/v0.37.1...v0.38.0) (2026-10-10)
+
+
+### Features
+
+* **ai-lab:** Signal desk order card with hold-to-send (21a3) ([#123](https://github.com/pvwvuow/tradeer/issues/123)) ([feab54d](https://github.com/pvwvuow/tradeer/commit/feab54d766c86001df38f0af72d1af5fca7859dd))
+* **signals:** parser, prefilter, order plan and legs for the Signal desk (21a1) ([#121](https://github.com/pvwvuow/tradeer/issues/121)) ([6af4a6d](https://github.com/pvwvuow/tradeer/commit/6af4a6d3585dce68af0f055742a4cf57321e4ad9))
+* **signals:** Signal desk in the pipeline: one leg per target, normal risk, Auto never sends (21a2) ([#122](https://github.com/pvwvuow/tradeer/issues/122)) ([b30e621](https://github.com/pvwvuow/tradeer/commit/b30e621e2e37db34a4a2c3f77bdb1231d1f5f047))
+
+
+### Documentation
+
+* Signal desk and Telegram channels spec (Phase 21) ([#119](https://github.com/pvwvuow/tradeer/issues/119)) ([69fcc79](https://github.com/pvwvuow/tradeer/commit/69fcc79790656e4e348e4abcb53ac3cef31db11b))
+
 ## [0.37.1](https://github.com/pvwvuow/tradeer/compare/v0.37.0...v0.37.1) (2026-10-10)
 
 
