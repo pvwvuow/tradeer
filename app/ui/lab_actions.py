@@ -4,7 +4,8 @@ the risk limits and a guide of the app, and it can propose changes (`app.ai.acti
 Every proposal becomes a card under the answer with Hold to apply, like a channel's settings
 card; nothing changes before the hold. The agent's tools run in its worker thread, so what
 needs the database (the channels) is read here in the UI thread when the question is asked,
-and the cards are made after the turn, in the UI thread too.
+and the cards are made after the turn, in the UI thread too. A channel signal that made no
+order card (a Paper trial) shows one line in the chat, so you see it was read.
 """
 
 from __future__ import annotations
@@ -17,14 +18,15 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Qt
 
 from app.ai.actions import NEVER, ActionData, Proposal, propose, schema_text
 from app.ai.agent import Tool
 from app.ai.doctor import Facts, LogLine, diagnose, report
 from app.ai.guide import TOPICS, guide
 from app.ai.lab_tools import failed_checks, private
-from app.channels.policy import ChannelMode, ChannelPolicy
+from app.channels.folder import ChannelMessage
+from app.channels.policy import Action, ChannelMode, ChannelPolicy
 from app.channels.reader import ChannelReader, ReaderStatus
 from app.channels.record import stats_of, trial_of
 from app.domain.modes import OperatingMode
@@ -35,8 +37,9 @@ from app.risk.risk_manager import RiskSnapshot
 from app.storage.channel_store import ChannelRepository, ChannelSource
 from app.ui.ai_lab_page import AiLabPage, log_reader
 from app.ui.channel_cards import HoldCard
-from app.ui.channel_feed import ChannelFeed
-from app.ui.lab_parts import apply_tree
+from app.ui.channel_feed import ChannelFeed, Seen
+from app.ui.lab_cards import note_card
+from app.ui.lab_parts import LabCard, apply_tree
 
 MAX_CARDS = 3  # proposals per answer
 LAST_SIGNALS = 5  # per channel
@@ -84,6 +87,9 @@ class LabActions(QObject):
         self._page_tools = page.chat.tools  # the page's own tools, then these
         page.chat.tools = self.chat_tools
         page.chat.turn_done.connect(self.after_turn)
+        self._noted: Seen | None = None
+        if feed is not None:  # after the feed's own slot: one line for a signal without a card
+            feed.arrived.connect(self.after_message, Qt.ConnectionType.QueuedConnection)
 
     def chat_tools(self) -> list[Tool]:
         return [*self._page_tools(), *self.tools()]
@@ -379,6 +385,28 @@ class LabActions(QObject):
         return "\n".join(lines)
 
     # The cards (UI thread) ----------------------------------------------------------------
+    def after_message(self, message: object) -> LabCard | None:
+        """Slot, after the feed handled a channel message: a signal that made no order card
+        (a Paper trial, a Live channel without a budget) shows one line in the chat, so you
+        see it was read."""
+        feed = self.feed
+        if feed is None or not feed.seen or not isinstance(message, ChannelMessage):
+            return None
+        seen = feed.seen[0]
+        twin = seen.reason.startswith("the same signal")
+        other = seen.at != message.date or seen is self._noted
+        if other or twin or seen.action is not Action.PAPER:
+            return None
+        self._noted = seen
+        page = self.page
+        text = f"Signal read, no order card: {seen.reason}. \u201c{seen.text}\u201d"
+        if page.persian:
+            text = f"سیگنال خوانده شد، کارت سفارش ساخته نشد: {seen.reason}. «{seen.text}»"
+        card = note_card("paste", seen.channel, text)
+        apply_tree(card, page.tokens)
+        page.chat.add_extra(card)
+        return card
+
     def after_turn(self, _turn: object) -> None:
         with self._lock:
             wanted = list(self._wanted)
