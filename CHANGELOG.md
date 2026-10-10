@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.0](https://github.com/pvwvuow/tradeer/compare/v0.39.0...v0.40.0) (2026-10-10)
+
+
+### Features
+
+* **ai-lab:** Signal desk context lines (21b2) ([#126](https://github.com/pvwvuow/tradeer/issues/126)) ([feaaf0c](https://github.com/pvwvuow/tradeer/commit/feaaf0c12e3383de75ae0f7c97b6968cb122665e))
+
 ## [0.39.0](https://github.com/pvwvuow/tradeer/compare/v0.38.0...v0.39.0) (2026-10-10)
 
 
