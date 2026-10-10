@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.1](https://github.com/pvwvuow/tradeer/compare/v0.37.0...v0.37.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **ui:** AI Lab polish: chart cards from short requests, Vazirmatn, inspector rows, one working line ([#117](https://github.com/pvwvuow/tradeer/issues/117)) ([e578db6](https://github.com/pvwvuow/tradeer/commit/e578db6d0c9c3e673087cf16dcda6a6b5b7a149f))
+
 ## [0.37.0](https://github.com/pvwvuow/tradeer/compare/v0.36.0...v0.37.0) (2026-10-09)
 
 
