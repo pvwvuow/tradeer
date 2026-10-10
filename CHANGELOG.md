@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.44.0](https://github.com/pvwvuow/tradeer/compare/v0.43.0...v0.44.0) (2026-10-10)
+
+
+### Features
+
+* **ai-lab:** a softer look ([#139](https://github.com/pvwvuow/tradeer/issues/139)) ([25d8918](https://github.com/pvwvuow/tradeer/commit/25d8918e5facb6c2e9e8bdaa0236e5bb2e110b1c))
+* **ai-lab:** app doctor, more tools and hold-to-apply proposals ([#135](https://github.com/pvwvuow/tradeer/issues/135)) ([6330e9c](https://github.com/pvwvuow/tradeer/commit/6330e9cbb3850189a2f00466c765c070ed8ff6b0))
+* **channels:** half signals wait for their rest ([#137](https://github.com/pvwvuow/tradeer/issues/137)) ([4c876f6](https://github.com/pvwvuow/tradeer/commit/4c876f65063503782bb99a64fb1aba4f7b84be0f))
+* **channels:** the AI reads unclear messages and pictures ([#138](https://github.com/pvwvuow/tradeer/issues/138)) ([3129423](https://github.com/pvwvuow/tradeer/commit/3129423672e0f9685066bfa96f649567b0a4ccf0))
+
+
+### Bug Fixes
+
+* **ai-lab:** channel notes in Persian; say when the AI connection is off ([#140](https://github.com/pvwvuow/tradeer/issues/140)) ([d827808](https://github.com/pvwvuow/tradeer/commit/d82780801aca930e8aeb6848ea9583ac5a927946))
+
 ## [0.43.0](https://github.com/pvwvuow/tradeer/compare/v0.42.0...v0.43.0) (2026-10-10)
 
 
