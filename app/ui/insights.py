@@ -3,7 +3,8 @@ report scheduler, the notification center with its watcher, the tray and the Tel
 
 `build_insights` makes the parts before the window exists; `Insights.attach` adds what needs
 the window (the tray toasts, the report timer, the AI Lab's optional AI connection and its
-Signal desk, which plans pasted signals on the market watch's live quotes).
+Signal desk, which plans pasted signals on the market watch's live quotes, and the Settings
+tab of the Telegram channel reader, phase 21c).
 Everything here only reads the engine's snapshots or uses the same public calls as the
 buttons.
 """
@@ -18,13 +19,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QTabWidget, QWidget
 
 from app.analytics.behavior import NewsEvent
 from app.analytics.llm_client import LlmContext, LlmSettingsSource, key_name
 from app.analytics.trades import TradeRecord, load_trades
 from app.calendar.store import CalendarStore
+from app.channels.reader import ChannelReader
+from app.channels.secrets import CredentialSecrets
+from app.channels.settings import ChannelSettingsSource
+from app.channels.telethon_api import api_factory
 from app.core.clock import BrokerClock
 from app.core.credentials import CredentialError, CredentialStore, read_password
 from app.engine.execution import ExecutionEngine
@@ -46,20 +51,24 @@ from app.observability.categories import LogCategory
 from app.observability.logger import LogPipeline, audit, get_logger
 from app.risk.risk_manager import RiskManager
 from app.storage.backtest_store import BacktestRepository
+from app.storage.channel_store import ChannelRepository
 from app.storage.runtime import StorageRuntime
 from app.strategies.registry import strategy_for_magic
 from app.ui.ai_lab_page import AiLabPage
 from app.ui.analytics_page import AnalyticsContext
+from app.ui.channels_page import ChannelsContext, ChannelsPage
 from app.ui.dashboard_page import DashboardContext
 from app.ui.journal_page import JournalContext
 from app.ui.lab_desk import LabDesk
-from app.ui.notifications_page import NotificationsContext
+from app.ui.notifications_page import NotificationsContext, NotificationsPage
+from app.ui.style import hand_cursors, name_controls
 from app.ui.trade_history import TradeHistory
 
 REPORT_CHECK_MS = 5 * 60 * 1000
 ERROR_LEVEL = 40
 TRADES_CACHE_SECONDS = 5.0
 DAY = 86_400.0
+CHANNELS_TAB = "Telegram channels"
 
 _log = get_logger(LogCategory.NOTIFY)
 _llm_log = get_logger(LogCategory.LLM)
@@ -117,6 +126,8 @@ class Insights:
     signals: SignalPipeline | None = None  # the AI Lab's Signal desk hands signals in here
     real_account: Callable[[], bool] | None = None
     desk: LabDesk | None = None
+    channels: ChannelsContext | None = None  # the Telegram channel reader (phase 21c)
+    channels_page: ChannelsPage | None = None
 
     def attach(self, window: QWidget) -> None:
         from app.ui.tray import TrayNotifier
@@ -132,6 +143,7 @@ class Insights:
         QTimer.singleShot(30_000, self.reports.run_due)
         self.attach_llm(window)
         self.attach_desk(window)
+        self.attach_channels(window)
 
     def attach_desk(self, window: QWidget) -> LabDesk | None:
         """The AI Lab's Signal desk: a pasted signal becomes an order card that waits for
@@ -154,6 +166,26 @@ class Insights:
         lab.attach_llm(self.llm)
         return True
 
+    def attach_channels(self, window: QWidget) -> ChannelsPage | None:
+        """Settings > Telegram channels, next to Notifications, and the reader started
+        when it is on (docs/SIGNAL_DESK.md 3.1)."""
+        tabs = window.findChild(QTabWidget, "SettingsTabs")
+        context = self.channels
+        if context is None or not isinstance(tabs, QTabWidget):
+            return None
+        page = ChannelsPage(context)
+        if window.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+            page.setLayoutDirection(Qt.LayoutDirection.LeftToRight)  # Settings stay English
+        after = tabs.findChild(NotificationsPage)
+        index = tabs.indexOf(after) + 1 if after is not None else tabs.count()
+        tabs.insertTab(max(0, index), page, CHANNELS_TAB)
+        name_controls(page)
+        hand_cursors(page)
+        self.channels_page = page
+        page.show_state(context.reader.start())
+        self.stop_hooks.append(context.reader.stop)
+        return page
+
     def stop(self) -> None:
         for timer in self.timers:
             timer.stop()
@@ -166,6 +198,26 @@ class Insights:
 def _offset(clock: Callable[[], BrokerClock | None]) -> float:
     found = clock()
     return found.offset_at(time.time()) * 3600.0 if found is not None else 0.0
+
+
+def build_channels(
+    profile: str,
+    profile_dir: Path,
+    storage: StorageRuntime,
+    credentials: CredentialStore,
+) -> ChannelsContext:
+    """The Telegram channel reader: off until it is turned on and saved on its page."""
+    source = ChannelSettingsSource(profile_dir, lambda text: write("WARNING", text))
+    secrets = CredentialSecrets(credentials, profile)
+    repository = ChannelRepository(storage.store)
+    reader = ChannelReader(
+        lambda: source.settings,
+        api_factory(secrets.api_hash, secrets.proxy_secret),
+        secrets,
+        repository,
+        log=write,
+    )
+    return ChannelsContext(source, secrets, reader, repository)
 
 
 def build_insights(
@@ -364,6 +416,7 @@ def build_insights(
         ),
         signals=pipeline,
         real_account=real_account,
+        channels=build_channels(profile, profile_dir, storage, credentials),
     )
     apply_bot()
     return insights
