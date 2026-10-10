@@ -8,11 +8,12 @@ channel in Telegram is how the list is managed; the app never joins or leaves an
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 TEXT_LIMIT = 4096  # one Telegram message holds at most 4096 characters
 PREVIEW_CHARACTERS = 120
+PHOTO_BYTES = 2_000_000  # a bigger picture is not downloaded (0.44.1)
 
 
 class PeerKind(StrEnum):
@@ -45,13 +46,17 @@ class Peer:
 
 @dataclass(frozen=True)
 class ChannelMessage:
-    """A message as the store keeps it: the text is data, never an instruction."""
+    """A message as the store keeps it: the text is data, never an instruction.
+
+    `photo` is the message's picture (at most `PHOTO_BYTES`, only for a channel that is
+    on), kept in memory until the AI has read it; it is never stored (0.44.1)."""
 
     channel_id: int
     message_id: int
     date: float  # UTC seconds
     text: str
     reply_to: int | None = None
+    photo: bytes = field(default=b"", repr=False, compare=False)
 
 
 def same_name(left: str, right: str) -> bool:

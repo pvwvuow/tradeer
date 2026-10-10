@@ -311,6 +311,10 @@ class LabActions(QObject):
                 f"{state.channels} channel(s) in it, {state.reading} on, {state.stored} "
                 "message(s) stored since the app started.",
             )
+        if self.feed is not None:
+            reads = self.feed.reads
+            left = reads.left(self.now())
+            lines.append(f"AI readings of unclear messages left today: {left} of {reads.limit}.")
         if not rows:
             lines.append("No channel in the folder yet (Settings > Telegram channels).")
         try:
