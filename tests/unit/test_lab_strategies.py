@@ -161,7 +161,8 @@ def test_the_lab_strategies_are_pure_and_wait_for_history() -> None:
 
 
 def test_every_strategy_has_its_own_magic_number_and_validated_params() -> None:
-    assert set(MAGIC_NUMBERS) == set(STRATEGIES)
+    # The Signal desk's manual signals trade with their own number but run on no bar.
+    assert set(MAGIC_NUMBERS) == set(STRATEGIES) | {"manual_signal"}
     assert len(set(MAGIC_NUMBERS.values())) == len(MAGIC_NUMBERS)
     assert MAGIC_NUMBERS["trend_pullback"] == 26_070_001  # never change an old number
     assert MAGIC_NUMBERS["london_breakout"] == 26_070_002

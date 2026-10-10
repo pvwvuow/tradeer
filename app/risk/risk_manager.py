@@ -170,6 +170,17 @@ def volume_rules(spec: SymbolSpec | None) -> VolumeRules:
     return VolumeRules(spec.volume_min, spec.volume_max, spec.volume_step)
 
 
+def risk_share(signal: Signal) -> float:
+    """The part of one trade's risk this signal may use: 1 for a normal signal, less for one
+    leg of a signal split over several targets (docs/SIGNAL_DESK.md 2.4)."""
+    raw = signal.features.get("risk_share", 1.0)
+    try:
+        share = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    return share if math.isfinite(share) and 0 < share <= 1 else 1.0
+
+
 def currencies(signal: Signal, spec: SymbolSpec | None) -> tuple[str, str]:
     base = spec.currency_margin if spec is not None else ""
     quote = spec.currency_profit if spec is not None else ""
@@ -292,7 +303,7 @@ class RiskManager:
             SizingInput(
                 capital=capital,
                 capital_basis=settings.capital_basis,
-                risk_percent=settings.risk_per_trade_percent,
+                risk_percent=settings.risk_per_trade_percent * risk_share(signal),
                 loss_per_lot=loss if loss is not None else math.nan,
                 commission_per_lot=commission,
                 volume=volume_rules(spec),
