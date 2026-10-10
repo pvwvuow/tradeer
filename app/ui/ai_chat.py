@@ -380,9 +380,9 @@ class TurnView(QFrame):
         answer_row.addWidget(self.mark, 0, Qt.AlignmentFlag.AlignTop)
         answer_row.addWidget(self.answer, 1)
         layout.addLayout(answer_row)
-        self.actions = QWidget()
-        self.actions.setObjectName("AiChatActions")
-        tools = QHBoxLayout(self.actions)
+        self.action_bar = QWidget()
+        self.action_bar.setObjectName("AiChatActions")
+        tools = QHBoxLayout(self.action_bar)
         tools.setContentsMargins(34, 0, 0, 0)
         tools.setSpacing(4)
         self.copy_button = CopyButton(self.answer.text, fa)
@@ -399,8 +399,8 @@ class TurnView(QFrame):
         tools.addWidget(self.retry_button)
         tools.addSpacing(8)
         tools.addWidget(self.cost, 1)
-        self.actions.hide()
-        layout.addWidget(self.actions)
+        self.action_bar.hide()
+        layout.addWidget(self.action_bar)
         self.lines: list[str] = []
         self.started = time.monotonic()
         self.done = False
@@ -443,7 +443,7 @@ class TurnView(QFrame):
         self.cost.setText(turn.cost_line())
         self.cost.show()
         self.copy_button.setVisible(bool(turn.answer))
-        self.actions.show()
+        self.action_bar.show()
 
     def fail(self, text: str) -> None:
         self._stop_loading()
@@ -451,7 +451,7 @@ class TurnView(QFrame):
         self.steps.setText("\n".join([*self.lines, f"\u2717 {text}"]))
         self.steps.show()
         self.copy_button.hide()
-        self.actions.show()
+        self.action_bar.show()
 
 
 class ChatInput(QPlainTextEdit):
