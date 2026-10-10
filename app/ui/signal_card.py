@@ -3,10 +3,12 @@
 A pasted signal becomes one card: the symbol, the side and the order kind, the entry, the
 stop loss with its distance in ATR, every target with its R, the lots and the money at risk
 from the risk manager, the checks (Why? shows them and the decision trace) and when it
-expires. Nothing is sent until you press and hold Hold to send (1.2 s, 2 s when the order
-would be real); then every leg goes to the pipeline's approval queue and the execution engine
-checks the price, the spread and the limits again before it sends. The card only shows: the
-page submits, approves and skips.
+expires, and the full check (phase 21b): the same geometry's base rate on 2 years of M15
+history and how pasted signals did so far, each with its sample count. Nothing is sent
+until you press and hold Hold to send (1.2 s, 2 s when the order would be real); then every
+leg goes to the pipeline's approval queue and the execution engine checks the price, the
+spread and the limits again before it sends. The card only shows: the desk submits,
+approves, skips and runs the full check.
 """
 
 from __future__ import annotations
@@ -20,8 +22,10 @@ from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
+from app.domain.probability import ProbabilityEstimate
 from app.domain.signals import Direction, OrderType, SignalRecord, SignalState
 from app.engine.signal_desk import DeskResult
+from app.signals.base_rate import BaseRate
 from app.signals.parse import ParsedSignal
 from app.signals.plan import OrderPlan
 from app.ui.lab_parts import RTL, LabCard, lab_button, lab_label, mono_label
@@ -34,9 +38,15 @@ TICK_MS = 30
 FILL_ALPHA = 150
 Words = Callable[[str], str]
 QUICK_NOTE = (
-    "Quick check: the price, the stops, the filters and the risk limits. No win chance yet "
-    "(the full check comes later). Nothing is sent until you hold the button."
+    "Checked: the price, the stops, the filters and the risk limits. The full check's numbers "
+    "come from the app's own history. Nothing is sent until you hold the button."
 )
+NO_HISTORY = "The full check needs the price history: connect to MT5."
+FULL_HEAD = "Same geometry on {days} days of M15 history (a base rate, not a forecast):"
+FULL_RATE = "TP{number} ({atr:.1f} ATR): {rate:.0f}% of {count} similar trades hit it first"
+FULL_FEW = "TP{number} ({atr:.1f} ATR): too little data ({count} similar trades)"
+SOURCE_RATE = "Pasted signals so far: {rate:.0f}% wins of {count} closed"
+SOURCE_FEW = "Pasted signals so far: too little data ({count} closed)"
 NO_ANALYSIS = (
     "no live analysis yet: connect to MT5, wait for the first closed bar and paste the signal "
     "again."
@@ -84,6 +94,15 @@ ORDER_FA: dict[str, str] = {
         "برای بررسی نهایی رفت: موتور قیمت، اسپرد و حدود را دوباره می‌سنجد و بعد سفارش را می‌گذارد."
     ),
     "Skipped: nothing was sent.": "رد شد: چیزی ارسال نشد.",
+    "Full check": "بررسی کامل",
+    "Checking the same geometry in the history...": "در حال بررسی همین هندسه در تاریخچه...",
+    "Full check failed: {why}": "بررسی کامل نشد: {why}",
+    NO_HISTORY: "بررسی کامل تاریخچه‌ی قیمت را لازم دارد: به MT5 وصل شوید.",
+    FULL_HEAD: "همین هندسه در {days} روز تاریخچه‌ی M15 (نرخ پایه، نه پیش‌بینی):",
+    FULL_RATE: "TP{number} ({atr:.1f} ATR): {rate:.0f}% از {count} معامله‌ی مشابه اول به آن رسید",
+    FULL_FEW: "TP{number} ({atr:.1f} ATR): داده کم است ({count} معامله‌ی مشابه)",
+    SOURCE_RATE: "سیگنال‌های چسبانده‌شده تا حالا: {rate:.0f}% برد از {count} بسته‌شده",
+    SOURCE_FEW: "سیگنال‌های چسبانده‌شده تا حالا: داده کم است ({count} بسته‌شده)",
     NO_ANALYSIS: (
         "هنوز تحلیل زنده‌ای نیست: به MT5 وصل شوید، صبر کنید اولین کندل بسته شود و سیگنال را "
         "دوباره بچسبانید."
@@ -92,8 +111,8 @@ ORDER_FA: dict[str, str] = {
         "این الان یک سفارش واقعی است: دوباره نگه دارید ({seconds:g} ثانیه)."
     ),
     QUICK_NOTE: (
-        "بررسی سریع: قیمت، حد ضرر و سود، فیلترها و حدود ریسک. هنوز شانس برد نیست (بررسی کامل "
-        "بعداً می‌آید). تا دکمه را نگه ندارید چیزی ارسال نمی‌شود."
+        "بررسی شد: قیمت، حد ضرر و سود، فیلترها و حدود ریسک. عددهای بررسی کامل از تاریخچه‌ی "
+        "خود برنامه می‌آیند. تا دکمه را نگه ندارید چیزی ارسال نمی‌شود."
     ),
     "waiting for approval": "منتظر تأیید شما",
     "filtered out": "فیلتر شد",
@@ -217,6 +236,32 @@ def leg_lines(legs: Sequence[SignalRecord], word: Words) -> str:
     return "\n".join(lines)
 
 
+def full_lines(
+    found: BaseRate | None,
+    source: ProbabilityEstimate | None,
+    word: Words,
+) -> list[str]:
+    """The full check's lines: the base rate per target and this source's record, each with
+    its sample count (no percent under the minimum)."""
+    lines: list[str] = []
+    if found is not None:
+        lines.append(word(FULL_HEAD).format(days=found.days))
+        for number, target in enumerate(found.targets, start=1):
+            rate = target.rate
+            values = {"number": number, "atr": target.tp_atr, "count": target.samples}
+            if rate is None:
+                lines.append(word(FULL_FEW).format(**values))
+            else:
+                lines.append(word(FULL_RATE).format(rate=rate * 100, **values))
+    if source is not None:
+        if source.value is None:
+            lines.append(word(SOURCE_FEW).format(count=source.samples))
+        else:
+            rate = source.value * 100
+            lines.append(word(SOURCE_RATE).format(rate=rate, count=source.samples))
+    return lines
+
+
 def why_text(plan: OrderPlan | None, legs: Sequence[SignalRecord]) -> str:
     """The plan's checks, then the first leg's decision trace (like the Signals page)."""
     lines: list[str] = []
@@ -311,6 +356,7 @@ class OrderCard(LabCard):
     held = Signal()  # the hold is complete: the page approves every waiting leg
     skip = Signal()
     edit = Signal()
+    full = Signal()  # run the full check (the base rate on the history)
 
     def __init__(
         self,
@@ -335,6 +381,7 @@ class OrderCard(LabCard):
         self.sent = False
         self.skipped = False
         self.state = "checking"
+        self.full_state = ""  # "", running, done or failed
         self.state_tag = self.add_tag("CHECKING")
         self.real_tag = self.add_tag("REAL ORDER", "loss")
         body = QWidget()
@@ -355,8 +402,12 @@ class OrderCard(LabCard):
         self.why_button = lab_button(word("Why?"), "link")
         self.why_button.setObjectName("AiOrderWhy")
         self.why_button.clicked.connect(self.toggle_why)
+        self.full_button = lab_button(word("Full check"), "link")
+        self.full_button.setObjectName("AiOrderFullCheck")
+        self.full_button.clicked.connect(self.full.emit)
         checks.addWidget(self.checks_label)
         checks.addWidget(self.why_button)
+        checks.addWidget(self.full_button)
         checks.addStretch(1)
         lines.addLayout(checks)
         self.why = lab_label("", "note", wrap=True)
@@ -364,6 +415,11 @@ class OrderCard(LabCard):
         self.why.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.why.hide()
         lines.addWidget(self.why)
+        self.full_label = lab_label("", "note", wrap=True)
+        self.full_label.setObjectName("AiOrderFull")
+        self.full_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.full_label.hide()
+        lines.addWidget(self.full_label)
         self.status = lab_label("", "text", wrap=True)
         self.status.setObjectName("AiOrderStatus")
         self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -427,6 +483,29 @@ class OrderCard(LabCard):
         self.block = block
         self.refresh(currency=currency, note=note, now=now)
 
+    def full_running(self) -> None:
+        self.full_state = "running"
+        self._full_text(self.word("Checking the same geometry in the history..."))
+
+    def show_full(self, outcome: BaseRate | str) -> None:
+        """The full check's answer, or why it could not run."""
+        if isinstance(outcome, str):
+            self.full_state = "failed"
+            self._full_text(self.word("Full check failed: {why}").format(why=outcome))
+            return
+        self.full_state = "done"
+        source = self.legs[0].probability if self.legs else None
+        self._full_text("\n".join(full_lines(outcome, source, self.word)))
+
+    def full_note(self, text: str) -> None:
+        self.full_state = "failed"
+        self._full_text(text)
+
+    def _full_text(self, text: str) -> None:
+        self.full_label.setText(text)
+        self.full_label.setVisible(bool(text))
+        self.refresh()
+
     def mark_sent(self) -> None:
         self.sent = True
         self.refresh()
@@ -486,6 +565,8 @@ class OrderCard(LabCard):
         trace = why_text(plan, self.legs)
         self.why.setText(trace)
         self.why_button.setVisible(bool(trace))
+        planned = plan is not None and self.state not in ("checking", "refused")
+        self.full_button.setVisible(planned and self.full_state != "running")
         self.checks_label.setVisible(bool(checks))
         self.status.setText(self._status(note))
         self.expires.setText(self._expiry(now))

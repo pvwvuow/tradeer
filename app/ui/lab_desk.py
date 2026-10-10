@@ -10,6 +10,11 @@ Nothing is sent until the user holds Hold to send: then every waiting leg goes t
 pipeline's approval queue (`approve`), where the execution engine checks the price, the
 spread and the limits again. Skip dismisses the legs. The AI never sends an order.
 
+The full check (phase 21b) starts by itself once a card waits for you: in a worker thread it
+loads 2 years of the symbol's M15 history (the Backtest page's loader and cache) and counts
+how often the same geometry reached each target before the stop loss
+(`app.signals.base_rate`). One check runs at a time.
+
 The page's header shows the trading mode (PAPER, SEMI-AUTO, AUTO) and REAL ORDERS: ONLY
 WITH YOUR CONFIRM when a confirmed order would be real (Semi-auto or Auto on a real account).
 """
@@ -18,23 +23,28 @@ from __future__ import annotations
 
 import contextlib
 import re
+import threading
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Protocol
 
 from PySide6.QtCore import QObject, Qt, Signal
 
+from app.backtest.service import BacktestRequest
 from app.domain.modes import OperatingMode
 from app.domain.signals import SignalState
 from app.engine.signal_desk import DeskRequest, new_request
 from app.engine.signal_pipeline import SignalsSnapshot
 from app.observability.logger import audit
+from app.signals.base_rate import HISTORY_DAYS, TIMEFRAME, BaseRate, Geometry, base_rate
 from app.signals.parse import ParsedSignal, parse
 from app.signals.prefilter import looks_like_signal
 from app.ui.ai_lab_page import AiLabPage
+from app.ui.backtest_page import BacktestContext
 from app.ui.lab_parts import apply_tree
-from app.ui.signal_card import NO_ANALYSIS, OrderCard, order_words
+from app.ui.signal_card import NO_ANALYSIS, NO_HISTORY, OrderCard, order_words
 
 QUESTION = re.compile(r"[?\u061f]|\bwhy\b|چرا", re.IGNORECASE)
 NEVER_TAG = "REAL ORDERS: NEVER"
@@ -68,8 +78,36 @@ def is_signal(text: str, symbols: tuple[str, ...] = ()) -> bool:
     return looks_like_signal(text, symbols) or (bool(symbols) and looks_like_signal(text))
 
 
+def _quiet_note(text: str) -> None:
+    return None
+
+
+def history_rate(
+    backtest: BacktestContext,
+    symbol: str,
+    geometry: Geometry,
+    today: datetime | None = None,
+) -> BaseRate:
+    """The base rate of `geometry` on the last 2 years of `symbol`'s M15 bars."""
+    day = (today or datetime.now(UTC)).date()
+    request = BacktestRequest(
+        symbol=symbol,
+        start=day - timedelta(days=HISTORY_DAYS),
+        end=day,
+        monte_carlo_runs=0,
+    )
+    history, _notes = backtest.load(request, _quiet_note)
+    bars = history.bars.get(TIMEFRAME)
+    if bars is None or not len(bars):
+        raise ValueError(f"no {TIMEFRAME} history of {symbol}")
+    spec = history.spec
+    point = spec.point if spec.point > 0 else 10.0**-spec.digits
+    return base_rate(bars, geometry, point)
+
+
 class LabDesk(QObject):
     snapshot = Signal(object)  # from the analysis thread, shown in the UI thread
+    full_done = Signal(str, object)  # a request id and its BaseRate, or why it failed
 
     def __init__(
         self,
@@ -84,9 +122,12 @@ class LabDesk(QObject):
         self.word = order_words(page.persian)
         self.cards: dict[str, OrderCard] = {}
         self.last: SignalsSnapshot | None = None
+        self.checked: set[str] = set()  # cards whose full check has started
+        self._full_lock = threading.Lock()
         self._next = page.chat.intercept
         page.chat.intercept = self.intercept
         self.snapshot.connect(self.show_snapshot, Qt.ConnectionType.QueuedConnection)
+        self.full_done.connect(self.show_full, Qt.ConnectionType.QueuedConnection)
         desk.add_listener(self.snapshot.emit)
         self.show_snapshot(desk.snapshot)
 
@@ -141,6 +182,7 @@ class LabDesk(QObject):
         card.edit.connect(partial(self.page.chat.set_text, parsed.text))
         card.held.connect(partial(self.send, request.id))
         card.skip.connect(partial(self.skip, request.id))
+        card.full.connect(partial(self.full_check, request.id, True))
         card.destroyed.connect(partial(self._forget, request.id))
         tokens = self.page.tokens
         apply_tree(card, tokens)
@@ -195,6 +237,57 @@ class LabDesk(QObject):
                 currency=currency,
                 note=note,
             )
+            if card.state == "waiting" and key not in self.checked:
+                self.full_check(key)
+
+    # The full check ----------------------------------------------------------------------
+    def full_check(self, request_id: str, again: bool = False) -> bool:
+        """Start the card's full check in a worker thread (True when it started)."""
+        card = self.cards.get(request_id)
+        if card is None or card.full_state == "running":
+            return False
+        if request_id in self.checked and not again:
+            return False
+        self.checked.add(request_id)
+        result = card.result
+        context = self.page.context
+        backtest = context.backtest if context is not None else None
+        plan = result.plan if result is not None else None
+        geometry = None
+        if plan is not None and card.legs:
+            geometry = Geometry.of(plan, card.legs[0].atr, time.time())
+        if backtest is None or plan is None or geometry is None:
+            card.full_note(self.word(NO_HISTORY))
+            return False
+        card.full_running()
+        threading.Thread(
+            target=self._full_work,
+            args=(request_id, backtest, plan.symbol, geometry),
+            name="signal-desk-full-check",
+            daemon=True,
+        ).start()
+        return True
+
+    def _full_work(
+        self,
+        request_id: str,
+        backtest: BacktestContext,
+        symbol: str,
+        geometry: Geometry,
+    ) -> None:
+        try:
+            with self._full_lock:  # one at a time: the history loads are heavy
+                found: BaseRate | str = history_rate(backtest, symbol, geometry)
+        except Exception as error:
+            found = f"{type(error).__name__}: {error}"
+            self._log(f"Signal desk: full check of {symbol} failed: {found}")
+        with contextlib.suppress(RuntimeError):  # the page may be gone
+            self.full_done.emit(request_id, found)
+
+    def show_full(self, request_id: str, outcome: object) -> None:
+        card = self.cards.get(request_id)
+        if card is not None and isinstance(outcome, BaseRate | str):
+            card.show_full(outcome)
 
     # The hold and Skip -------------------------------------------------------------------
     def send(self, request_id: str) -> bool:
