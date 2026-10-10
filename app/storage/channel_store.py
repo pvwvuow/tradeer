@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.channels.folder import ChannelMessage, Peer, clean_text
+from app.channels.policy import ChannelMoney, ChannelPolicy, policy_from_json
 from app.storage.repositories import Store
 from app.storage.signal_store import epoch, iso_time
 
@@ -135,6 +136,39 @@ class ChannelRepository:
                 (int(enabled), iso_time(now), channel_id),
             )
             return cursor.rowcount > 0
+
+    def source(self, channel_id: int) -> ChannelSource | None:
+        rows = self.store.db.query("SELECT * FROM tg_channels WHERE channel_id = ?", (channel_id,))
+        return _source(rows[0]) if rows else None
+
+    def policy(self, channel_id: int) -> ChannelPolicy:
+        """The channel's own settings (phase 21d); the defaults are a Paper trial."""
+        text = self.store.db.scalar(
+            "SELECT settings_json FROM tg_channels WHERE channel_id = ?",
+            (channel_id,),
+        )
+        return policy_from_json(str(text or "{}"))
+
+    def set_policy(self, channel_id: int, policy: ChannelPolicy, now: float) -> bool:
+        with self.store.db.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE tg_channels SET settings_json = ?, updated_at = ? WHERE channel_id = ?",
+                (policy.to_json(), iso_time(now), channel_id),
+            )
+            return cursor.rowcount > 0
+
+    def money(self, magic: int, day_start: float) -> ChannelMoney:
+        """The net result of the channel's closed trades (its magic), all and since
+        `day_start`."""
+        rows = self.store.db.query(
+            "SELECT COALESCE(SUM(net_profit), 0) AS closed, "
+            "COALESCE(SUM(CASE WHEN close_time >= ? THEN net_profit ELSE 0 END), 0) AS today "
+            "FROM trades WHERE magic = ? AND close_time IS NOT NULL AND net_profit IS NOT NULL",
+            (iso_time(day_start), magic),
+        )
+        if not rows:
+            return ChannelMoney()
+        return ChannelMoney(float(rows[0]["closed"] or 0.0), float(rows[0]["today"] or 0.0))
 
     def read_ids(self) -> set[int]:
         """The channels whose messages are stored: on and still in the folder."""

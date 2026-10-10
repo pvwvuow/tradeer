@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from app.strategies import manual_signal
 from app.strategies.base import Strategy, StrategyInfo
 from app.strategies.channel_breakout import ChannelBreakout
 from app.strategies.ema_momentum import EmaMomentum
@@ -35,7 +36,8 @@ OFF_BY_DEFAULT: frozenset[str] = frozenset(
 # or change a number: old positions and history are matched by it. 26_070_098 is the demo
 # test's (app.domain.history.TEST_MAGIC). 26_070_006 is kept for the AI Desk's `ai_analyst`
 # (docs/AI_DESK.md). The Signal desk's manual signals are not in STRATEGIES (they have no
-# rules to run on a bar) but their orders need a magic number like every bot order.
+# rules to run on a bar) but their orders need a magic number like every bot order. Each
+# Telegram channel has its own from 26_071_001 (`channel:<magic>`, docs/SIGNAL_DESK.md 3.4).
 MAGIC_NUMBERS: dict[str, int] = {
     TrendPullback.name: 26_070_001,
     LondonBreakout.name: 26_070_002,
@@ -51,6 +53,8 @@ def strategy_for_magic(magic: int) -> str:
     for name, number in MAGIC_NUMBERS.items():
         if number == magic:
             return name
+    if magic in manual_signal.CHANNEL_MAGICS:
+        return manual_signal.channel_strategy(magic)
     return ""
 
 
