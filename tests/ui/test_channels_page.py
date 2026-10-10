@@ -1,4 +1,5 @@
-"""Settings > Telegram channels (docs/SIGNAL_DESK.md 3.1 and 3.2, phase 21c3)."""
+"""Settings > Telegram channels (docs/SIGNAL_DESK.md 3.1 and 3.2, phase 21c3) and each
+channel's own settings (3.4, phase 21d)."""
 
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
 from app.channels.folder import ChannelMessage, Peer, PeerKind
+from app.channels.policy import ChannelMode
 from app.channels.reader import ChannelReader, ReaderStatus
 from app.channels.secrets import CredentialSecrets
 from app.channels.settings import ChannelSettingsSource, ProxyKind
@@ -81,3 +83,36 @@ def test_without_a_reader_the_page_says_so(qtbot: QtBot) -> None:
     qtbot.addWidget(page)
     assert "not available" in page.status.text()
     assert not page.save_button.isEnabled() and not page.save()
+
+
+def test_each_channel_has_its_own_settings(qtbot: QtBot, tmp_path: Path) -> None:
+    with temporary_store() as store:
+        context = context_for(store, tmp_path)
+        repository = context.repository
+        repository.sync_folder([GOLD], 100.0)
+        page = ChannelsPage(context)
+        qtbot.addWidget(page)
+        assert not page.policy_button.isEnabled()
+        page.channels.setCurrentRow(0)
+        assert page.show_policy() is not None and page.policy_button.isEnabled()
+        assert page.policy_title.text().startswith("Gold Room (magic 26071001)")
+        assert page.risk.text() == "2" and page.max_open.text() == "2"
+        assert page.policy_status.text() == "no budget yet"
+        page.mode.setCurrentIndex(page.mode.findData(ChannelMode.LIVE.value))
+        assert not page.save_policy() and "Live needs a budget" in page.policy_status.text()
+        page.budget.setText("1,000")
+        page.risk.setText("abc")
+        assert not page.save_policy() and "risk percent is a number" in page.policy_status.text()
+        page.risk.setText("50")
+        assert not page.save_policy() and "out of range" in page.policy_status.text()
+        page.risk.setText("1.5")
+        page.symbols.setText("xauusd, eurusd")
+        page.aliases.setText("gold=xauusd")
+        assert page.save_policy()
+        policy = repository.policy(GOLD.id)
+        assert policy.mode is ChannelMode.LIVE and policy.budget == 1000.0
+        assert policy.risk_percent == 1.5 and policy.symbols == ("XAUUSD", "EURUSD")
+        assert policy.aliases == {"GOLD": "XAUUSD"}
+        assert page.policy_status.text().startswith("Saved. budget 1,000.00")
+        page.show_channels()  # a reader update keeps the selected channel
+        assert page.selected_channel() == GOLD.id
