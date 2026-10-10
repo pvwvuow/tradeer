@@ -37,7 +37,7 @@ def stats_of(
     trades: list[Trade] = []
     for profit, r, slippage, group in repository.channel_trades(source.magic):
         signal = by_request.get(group)
-        latency = None
+        latency: float | None = None
         if signal is not None and group in opened:
             latency = opened[group] - signal.date
         trades.append(Trade(profit, r, slippage, latency))
