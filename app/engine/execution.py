@@ -60,7 +60,7 @@ from app.mt5.models import SymbolSpec
 from app.risk.risk_manager import RiskDecision
 from app.storage.signal_store import iso_time
 from app.storage.trade_store import STATE_KEY, TradeRepository, bot_trade_id
-from app.strategies.manual_signal import needs_confirmation
+from app.strategies.manual_signal import needs_confirmation, with_channels
 
 CLOSE_SYNC_CYCLES = 30  # cycles to wait for the closing deal before closing without it
 KEEP_MESSAGES = 30
@@ -149,6 +149,7 @@ class PositionView:
     pending: bool
     best_r: float = 0.0
     worst_r: float = 0.0
+    signal_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -209,7 +210,7 @@ class ExecutionEngine:
             self._brokers["paper"] = paper
         if live is not None:
             self._brokers["live"] = live
-        self._magics = dict(magics)
+        self._magics = with_channels(magics)  # a channel's signals are manual signals too
         self._strategy_of = {number: name for name, number in self._magics.items()}
         self._risk = risk
         self._store = store
@@ -227,6 +228,7 @@ class ExecutionEngine:
         self._lock = threading.Lock()
         self._listeners: list[Listener] = []
         self._closes: list[tuple[str, int]] = []
+        self._stops: list[tuple[str, int, float | None]] = []  # a channel's follow-ups
         self._kills: list[str] = []
         self._tracked: dict[tuple[str, int], Tracked] = {}
         self._loaded_for: str | None = None
@@ -256,6 +258,12 @@ class ExecutionEngine:
         """Close one bot position on the next cycle (the UI asked for a confirmation)."""
         with self._lock:
             self._closes.append((mode, int(ticket)))
+
+    def request_stop(self, mode: str, ticket: int, sl: float | None = None) -> None:
+        """Move a bot position's stop loss on the next cycle: to `sl`, or to the entry when
+        None (a channel's follow-up the user confirmed). Never to a wider stop."""
+        with self._lock:
+            self._stops.append((mode, int(ticket), sl))
 
     def request_kill(self, reason: str = "kill switch pressed") -> None:
         """Close every bot position, cancel every bot order, stop new entries."""
@@ -477,10 +485,13 @@ class ExecutionEngine:
         with self._lock:
             kills, self._kills = self._kills, []
             closes, self._closes = self._closes, []
+            stops, self._stops = self._stops, []
         for reason in kills:
             updates += self._kill(reason, moment)
         for mode, ticket in closes:
             self._close_one(mode, ticket, "closed by you", moment)
+        for mode, ticket, sl in stops:
+            self._stop_one(mode, ticket, sl, moment)
         if self._paper_step is not None and "paper" in self._brokers:
             for line in self._paper_step():
                 self._message(line)
@@ -874,6 +885,18 @@ class ExecutionEngine:
             why = f"Close of {ticket} refused: not a bot position this app manages"
             self._message(why, "WARNING")
             return
+        if tracked.pending:  # a pending order is cancelled
+            orders = broker.orders(self._magics.values()) or []
+            order = next((o for o in orders if o.ticket == ticket), None)
+            if order is None:
+                return
+            cancelled = broker.cancel(order)
+            self._record_attempts(tracked.signal_id, cancelled)
+            level = "INFO" if cancelled.ok else "WARNING"
+            self._message(f"Cancel {tracked.symbol} {ticket}: {cancelled.text}", level)
+            if cancelled.ok:
+                self._event(tracked, "cancel_request", now, reason=reason)
+            return
         positions = broker.positions(self._magics.values()) or []
         position = next((p for p in positions if p.ticket == ticket), None)
         if position is None:
@@ -884,6 +907,34 @@ class ExecutionEngine:
         self._message(f"Close {tracked.symbol} {ticket}: {result.text}", level)
         if result.ok:
             self._event(tracked, "close_request", now, reason=reason)
+
+    def _stop_one(self, mode: str, ticket: int, sl: float | None, now: float) -> None:
+        broker = self._brokers.get(mode)
+        tracked = self._tracked.get((mode, ticket))
+        if broker is None or tracked is None or tracked.pending:
+            self._message(f"Stop change of {ticket} refused: no open bot position", "WARNING")
+            return
+        positions = broker.positions(self._magics.values()) or []
+        position = next((p for p in positions if p.ticket == ticket), None)
+        if position is None:
+            return
+        target = position.price_open if sl is None else sl
+        long = position.direction is Direction.LONG
+        tighter = position.sl <= 0 or (target > position.sl if long else target < position.sl)
+        if not tighter:
+            why = f"Stop change of {tracked.symbol} {ticket} refused: {target:g} is not tighter"
+            self._message(why, "WARNING")
+            return
+        result = broker.modify(position, target, position.tp)
+        self._record_attempts(tracked.signal_id, result)
+        if not result.ok:
+            self._message(f"SL change of {ticket} failed: {result.text}", "WARNING")
+            return
+        reason = "break-even (the channel said so)" if sl is None else "new SL (the channel)"
+        self._event(tracked, "modify_sl", now, old=position.sl, new=target, reason=reason)
+        tracked.sl = target
+        tracked.break_even_done |= sl is None
+        self._message(f"{tracked.symbol} {ticket}: SL to {target:g} ({reason})")
 
     # Persistence -------------------------------------------------------------------------
     def _ensure_loaded(self) -> None:
@@ -1058,6 +1109,7 @@ class ExecutionEngine:
                 pending=t.pending,
                 best_r=t.best_r,
                 worst_r=t.worst_r,
+                signal_id=t.signal_id,
             )
             for t in self._tracked.values()
         )
