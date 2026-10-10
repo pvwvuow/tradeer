@@ -68,7 +68,7 @@ TOPICS: dict[str, str] = {
     ),
     "notifications": (
         "Settings > Notifications: the Telegram bot (token and chat id) sends notices and "
-        "reports. 'WinError 10060' or 'getaddrinfo failed' means api.telegram.org is not "
+        "reports. 'WinError 10060' or 'getaddrinfo failed' means Telegram's servers are not "
         "reachable: turn on the VPN as a system proxy. The bot is separate from the "
         "channel reader."
     ),
