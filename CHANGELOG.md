@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.42.0](https://github.com/pvwvuow/tradeer/compare/v0.41.0...v0.42.0) (2026-10-10)
+
+
+### Features
+
+* **channels:** Settings &gt; Telegram channels page and login (21c3) ([#132](https://github.com/pvwvuow/tradeer/issues/132)) ([d182d20](https://github.com/pvwvuow/tradeer/commit/d182d206ace77967d5ea32c7af091eb3b833c7fc))
+* **channels:** Telegram channel settings, store and read-only reader (21c1+21c2) ([#130](https://github.com/pvwvuow/tradeer/issues/130)) ([3e054e6](https://github.com/pvwvuow/tradeer/commit/3e054e624a51390135e6bcc5ff6f91a2be47b1c1))
+
 ## [0.41.0](https://github.com/pvwvuow/tradeer/compare/v0.40.0...v0.41.0) (2026-10-10)
 
 
