@@ -288,3 +288,39 @@ class LabDesk(QObject):
         card = self.cards.get(request_id)
         if card is not None and isinstance(outcome, BaseRate | str):
             card.show_full(outcome)
+
+    # The hold and Skip -------------------------------------------------------------------
+    def send(self, request_id: str) -> bool:
+        """The hold is complete: every waiting leg goes to the approval queue, where the
+        engine checks the price, the spread and the limits again before it sends."""
+        card = self.cards.get(request_id)
+        if card is None or card.state != "waiting":
+            return False
+        if self.real_orders() and not card.real:
+            card.set_real(True)
+            card.warn_real()
+            return False
+        block = self.last.approval_block if self.last is not None else "no signals yet"
+        if block:
+            card.show_result(None, card.legs, block)
+            return False
+        waiting = [leg for leg in card.legs if leg.signal.state is SignalState.PENDING_APPROVAL]
+        if not waiting:
+            return False
+        for leg in waiting:
+            self.desk.approve(leg.id)
+            audit("signal approved", before=leg.signal.state.value, after=leg.id)
+        card.mark_sent()
+        self._log(f"Signal desk: {len(waiting)} legs confirmed with a hold")
+        return True
+
+    def skip(self, request_id: str) -> bool:
+        card = self.cards.get(request_id)
+        if card is None:
+            return False
+        for leg in card.legs:
+            if leg.signal.state is SignalState.PENDING_APPROVAL:
+                self.desk.dismiss(leg.id)
+                audit("signal dismissed", before=leg.signal.state.value, after=leg.id)
+        card.mark_skipped()
+        return True
