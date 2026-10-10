@@ -39,6 +39,7 @@ from app.storage.channel_store import ChannelRepository, ChannelSource
 from app.ui.ai_lab_page import AiLabPage, log_reader
 from app.ui.channel_cards import HoldCard
 from app.ui.channel_feed import ChannelFeed, Seen
+from app.ui.feed_words import feed_line_fa
 from app.ui.lab_cards import note_card
 from app.ui.lab_parts import LabCard, apply_tree
 
@@ -315,6 +316,12 @@ class LabActions(QObject):
             reads = self.feed.reads
             left = reads.left(self.now())
             lines.append(f"AI readings of unclear messages left today: {left} of {reads.limit}.")
+            client = self.feed.ai()
+            if isinstance(client, str):
+                lines.append(
+                    "The AI connection is off, so unclear messages and pictures of the "
+                    f"channels are not read (only the free parser reads signals): {client}",
+                )
         if not rows:
             lines.append("No channel in the folder yet (Settings > Telegram channels).")
         try:
@@ -422,9 +429,10 @@ class LabActions(QObject):
         return card
 
     def note(self, title: str, text: str) -> LabCard:
-        """Slot: a line of the channel feed (a half signal waits, joined, stayed incomplete)."""
+        """Slot: a line of the channel feed (a half signal waits, joined, stayed incomplete),
+        in Persian when the app is."""
         page = self.page
-        card = note_card("paste", title, text)
+        card = note_card("paste", title, feed_line_fa(text) if page.persian else text)
         apply_tree(card, page.tokens)
         page.chat.add_extra(card)
         return card
