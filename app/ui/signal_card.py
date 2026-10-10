@@ -81,8 +81,7 @@ ORDER_FA: dict[str, str] = {
     "Sending is off: {why}": "ارسال خاموش است: {why}",
     "Sent for the final check: the engine checks the price, the spread and the limits again, "
     "then places the order.": (
-        "برای بررسی نهایی رفت: موتور قیمت، اسپرد و حدود را دوباره می‌سنجد و بعد سفارش را "
-        "می‌گذارد."
+        "برای بررسی نهایی رفت: موتور قیمت، اسپرد و حدود را دوباره می‌سنجد و بعد سفارش را می‌گذارد."
     ),
     "Skipped: nothing was sent.": "رد شد: چیزی ارسال نشد.",
     NO_ANALYSIS: (
