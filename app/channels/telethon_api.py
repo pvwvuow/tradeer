@@ -3,6 +3,9 @@
 Telethon is an optional dependency: without it `api_factory` gives None and the page says
 how to install it. It is loaded with `import_module`, so the rest of the app never needs it.
 Read only: no method here posts, joins, leaves, reacts or marks anything as read.
+
+0.44.1: the picture of a new message of a channel that is on (`want_photos`) is downloaded
+into memory when it is at most `PHOTO_BYTES`, so the AI can read a signal posted as a photo.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from importlib import import_module
 from importlib.util import find_spec
 from typing import Any
 
-from app.channels.folder import ChannelMessage, Folder, Peer, PeerKind
+from app.channels.folder import PHOTO_BYTES, ChannelMessage, Folder, Peer, PeerKind
 from app.channels.reader import ApiFactory
 from app.channels.settings import ChannelSettings, ProxyKind, ProxyPlan, proxy_plan
 
@@ -28,6 +31,10 @@ def _title(value: object) -> str:
     """A folder title: a plain string, or TextWithEntities in newer Telegram layers."""
     text = getattr(value, "text", value)
     return str(text or "")
+
+
+def _nobody(_chat_id: int) -> bool:
+    return False
 
 
 def proxy_options(proxy: ProxyPlan | None) -> dict[str, Any]:
@@ -62,6 +69,20 @@ def peer_kind(entity: object) -> PeerKind:
     return PeerKind.USER
 
 
+async def photo_of(message: Any, wanted: bool) -> bytes:
+    """The message's picture, or b"" (none, too big, not wanted, or not downloaded)."""
+    if not wanted or getattr(message, "photo", None) is None:
+        return b""
+    size = getattr(getattr(message, "file", None), "size", 0) or 0
+    if not isinstance(size, int) or size > PHOTO_BYTES:
+        return b""
+    try:
+        data = await message.download_media(file=bytes)
+    except Exception:
+        return b""
+    return data if isinstance(data, bytes) and 0 < len(data) <= PHOTO_BYTES else b""
+
+
 class TelethonApi:
     def __init__(
         self,
@@ -85,6 +106,11 @@ class TelethonApi:
         self._inputs: dict[int, Any] = {}
         self._phone = ""
         self._code_hash = ""
+        self._photos: Callable[[int], bool] = _nobody
+
+    def want_photos(self, wanted: Callable[[int], bool]) -> None:
+        """The chats whose pictures are downloaded (the channels that are on)."""
+        self._photos = wanted
 
     async def connect(self) -> None:
         await self._client.connect()
@@ -134,7 +160,7 @@ class TelethonApi:
             found.append(Peer(peer_id, str(title), peer_kind(entity), str(username)))
         return found
 
-    def _message(self, event: Any) -> ChannelMessage:
+    def _message(self, event: Any, photo: bytes = b"") -> ChannelMessage:
         message = event.message
         return ChannelMessage(
             channel_id=int(event.chat_id),
@@ -142,6 +168,7 @@ class TelethonApi:
             date=float(message.date.timestamp()),
             text=str(message.message or ""),
             reply_to=getattr(message, "reply_to_msg_id", None),
+            photo=photo,
         )
 
     def listen(
@@ -152,7 +179,11 @@ class TelethonApi:
     ) -> None:
         async def on_new(event: Any) -> None:
             if event.chat_id is not None:
-                new(self._message(event))
+                try:
+                    wanted = self._photos(int(event.chat_id))
+                except Exception:
+                    wanted = False
+                new(self._message(event, await photo_of(event.message, wanted)))
 
         async def on_edit(event: Any) -> None:
             if event.chat_id is not None:
