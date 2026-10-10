@@ -18,4 +18,9 @@ def test_the_feed_lines_read_in_persian() -> None:
     assert feed_line_fa(read) == f"AI عکس را این‌طور خواند: {signal} (عددها را روی کارت چک کنید)"
     wrong = "the stop loss or a target is on the wrong side for a sell"
     assert feed_line_fa(wrong) == "حد ضرر یا تارگت برای فروش در سمت اشتباه است"
+    refused = "the AI could not read a picture (does the model read images?): HTTP 400: no"
+    paused = f"{refused}; pictures go to the AI again in 6 hours"
+    short = "AI نتوانست عکس را بخواند (مدل شما عکس می‌خواند؟)"
+    assert feed_line_fa(refused) == short
+    assert feed_line_fa(paused) == f"{short}؛ تا 6 ساعت عکسی برای AI فرستاده نمی‌شود"
     assert feed_line_fa("something new") == "something new"
