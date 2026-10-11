@@ -28,6 +28,7 @@ from app.analytics.behavior import NewsEvent
 from app.analytics.llm_client import LlmContext, LlmSettingsSource, key_name
 from app.analytics.trades import TradeRecord, load_trades
 from app.calendar.store import CalendarStore
+from app.channels.overview import Overview, build_overview
 from app.channels.reader import ChannelReader
 from app.channels.secrets import CredentialSecrets
 from app.channels.settings import ChannelSettingsSource
@@ -60,13 +61,15 @@ from app.strategies.registry import strategy_for_magic
 from app.ui.ai_lab_page import AiLabPage
 from app.ui.analytics_page import AnalyticsContext
 from app.ui.bot_cards import CardActions
+from app.ui.channel_budgets import DashboardBudgets, RiskBudgets, insert_after
 from app.ui.channel_feed import ChannelFeed
 from app.ui.channels_page import ChannelsContext, ChannelsPage
-from app.ui.dashboard_page import DashboardContext
+from app.ui.dashboard_page import DashboardContext, DashboardPage
 from app.ui.journal_page import JournalContext
 from app.ui.lab_actions import LabActions
 from app.ui.lab_desk import LabDesk
 from app.ui.notifications_page import NotificationsContext, NotificationsPage
+from app.ui.risk_page import RiskPage
 from app.ui.shell import persian_digits
 from app.ui.signal_inbox import CHAT_TAB, LabTabs, SignalInbox, mount
 from app.ui.style import hand_cursors, name_controls
@@ -141,6 +144,7 @@ class Insights:
     actions: LabActions | None = None  # the AI Lab chat's channels, trades, doctor, proposals
     inbox: SignalInbox | None = None  # the AI Lab's Telegram signals tab (0.47.0)
     card_handlers: list[CardHandler] = field(default_factory=list)  # bot buttons (0.47.0)
+    budgets: list[QWidget] = field(default_factory=list)  # channel budget blocks (0.48.0)
 
     def attach(self, window: QWidget) -> None:
         from app.ui.tray import TrayNotifier
@@ -160,6 +164,7 @@ class Insights:
         self.attach_feed()
         self.attach_actions(window)
         self.attach_channels(window)
+        self.attach_budgets(window)
 
     def attach_desk(self, window: QWidget) -> LabDesk | None:
         """The AI Lab's Signal desk: a pasted signal becomes an order card that waits for
@@ -261,6 +266,42 @@ class Insights:
         self.stop_hooks.append(context.reader.stop)
         return page
 
+    def attach_budgets(self, window: QWidget) -> int:
+        """The money given to the Telegram channels on the Dashboard (a side block under the
+        risk limits) and on the Risk page (a table under the limit usage), phase 22g. The
+        number of blocks placed."""
+        channels = self.channels
+        if channels is None:
+            return 0
+        repository = channels.repository
+
+        def overview() -> Overview:
+            return build_overview(repository, time.time())
+
+        def currency() -> str:
+            getter = self.dashboard.risk
+            snapshot = getter() if getter is not None else None
+            usage = snapshot.usage if snapshot is not None else None
+            return usage.currency if usage is not None else ""
+
+        placed = 0
+        dashboard = window.findChild(DashboardPage)
+        if dashboard is not None:
+            side = DashboardBudgets(overview, currency, dashboard.persian)
+            side.section.clicked.connect(lab_opener(dashboard))
+            if insert_after(dashboard, "LimitTradesize", side):
+                self.stop_hooks.append(side.timer.stop)
+                self.budgets.append(side)
+                placed += 1
+        risk = window.findChild(RiskPage)
+        if risk is not None:
+            table = RiskBudgets(overview, currency)
+            if insert_after(risk, "RiskUsage", table):
+                self.stop_hooks.append(table.timer.stop)
+                self.budgets.append(table)
+                placed += 1
+        return placed
+
     def stop(self) -> None:
         for timer in self.timers:
             timer.stop()
@@ -268,6 +309,15 @@ class Insights:
             bot.stop()
         for hook in self.stop_hooks:
             hook()
+
+
+def lab_opener(page: DashboardPage) -> Callable[[], None]:
+    """A click that opens the AI Lab from the Dashboard (`go` is set by the window later)."""
+
+    def open_lab() -> None:
+        page.go("ai_lab")
+
+    return open_lab
 
 
 def count_text(count: int, fa: bool) -> str:
