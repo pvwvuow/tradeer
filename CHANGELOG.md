@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.0](https://github.com/pvwvuow/tradeer/compare/v0.48.0...v0.49.0) (2026-10-11)
+
+
+### Features
+
+* **channels:** the AI reads what the parser does not: a lone symbol, two labelled prices, pieces together (22h) ([#150](https://github.com/pvwvuow/tradeer/issues/150)) ([01943e6](https://github.com/pvwvuow/tradeer/commit/01943e65f8b7def7c7946decd95f04055b83b75c))
+
 ## [0.48.0](https://github.com/pvwvuow/tradeer/compare/v0.47.0...v0.48.0) (2026-10-11)
 
 
