@@ -13,8 +13,8 @@ def test_a_short_message_that_only_names_the_pair_is_a_part() -> None:
     assert piece("XAUUSD")[0] is Piece.PART
     assert piece("XAUUSD TP1 hit")[0] is not Piece.PART  # news of an earlier trade
     assert piece("XAUUSD +120 pips today")[0] is not Piece.PART  # the channel's own claim
-    long = piece("XAUUSD analysis for the week: a long and quiet range is expected")[0]
-    assert long is Piece.OTHER
+    wordy = piece("XAUUSD analysis for the week: a quiet and narrow range is expected")[0]
+    assert wordy is Piece.OTHER  # too many words to be only a name
     assert piece("Join our VIP group today")[0] is Piece.OTHER
 
 
