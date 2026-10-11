@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.0](https://github.com/pvwvuow/tradeer/compare/v0.45.0...v0.46.0) (2026-10-11)
+
+
+### Features
+
+* **ai-lab:** edit a question; the up arrow brings back the last one ([#144](https://github.com/pvwvuow/tradeer/issues/144)) ([75e284b](https://github.com/pvwvuow/tradeer/commit/75e284b38e22fa7e416f5a316a7e5433a61dc32c))
+
 ## [0.45.0](https://github.com/pvwvuow/tradeer/compare/v0.44.0...v0.45.0) (2026-10-10)
 
 
