@@ -724,7 +724,7 @@ class ChannelFeed(QObject):
         if not actions:
             card.status.setText("Nothing to do here: change it on the Positions page if you want.")
         card.held.connect(partial(self._apply, card, steps, text))
-        self._show(card)
+        self._show(card, title)
         return card
 
     def _apply(self, card: FollowUpCard, steps: list[Callable[[], None]], text: str) -> None:
@@ -772,11 +772,17 @@ class ChannelFeed(QObject):
         card.finish(card.word("Saved."))
         return True
 
-    def _show(self, card: HoldCard) -> None:
+    def _show(self, card: HoldCard, channel: str = "") -> None:
+        """A follow-up goes to the Telegram signals tab when there is one (0.47.0); a
+        settings card answers your own chat message, so it stays in the chat."""
         tokens = self.desk.page.tokens
         apply_tree(card, tokens)
         card.apply_tokens(tokens)
-        self.desk.page.chat.add_extra(card)
+        inbox = self.desk.inbox
+        if inbox is not None and channel:
+            inbox.add_card(card, channel)
+        else:
+            self.desk.page.chat.add_extra(card)
         self.extras.append(card)
 
     # Shadow results (docs/SIGNAL_DESK.md 3.5) ---------------------------------------------
