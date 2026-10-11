@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.0](https://github.com/pvwvuow/tradeer/compare/v0.47.0...v0.48.0) (2026-10-11)
+
+
+### Features
+
+* **channels:** the money given to the channels on the Dashboard and the Risk page (22g) ([#148](https://github.com/pvwvuow/tradeer/issues/148)) ([bc72579](https://github.com/pvwvuow/tradeer/commit/bc72579affa76f02e04c19a0a6ae13f73cc82501))
+
 ## [0.47.0](https://github.com/pvwvuow/tradeer/compare/v0.46.0...v0.47.0) (2026-10-11)
 
 

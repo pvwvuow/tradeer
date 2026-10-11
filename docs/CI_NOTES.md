@@ -16,3 +16,4 @@
   skipped all of them.
 - 11 October 2026, release PR #147 (0.47.0): a release PR is opened with the workflow's own
   token, so CI does not start on it; this docs commit starts it.
+- 11 October 2026, release PR #149 (0.48.0): same; this docs commit starts CI.
