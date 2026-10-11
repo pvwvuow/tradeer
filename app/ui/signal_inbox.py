@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.ai.usage_store import short_tokens
 from app.ui.channel_cards import HoldCard
 from app.ui.lab_parts import LTR, apply_tree, lab_button, lab_label
 from app.ui.lab_soft import fade_in
@@ -60,6 +61,10 @@ INBOX_FA: dict[str, str] = {
         "اینجا می‌آیند."
     ),
     "{waiting} waiting for you \u00b7 {today} today": "{waiting} منتظر شما \u00b7 {today} امروز",
+    "AI: {reads} reading(s) \u00b7 {tokens} tokens": "AI: {reads} خواندن \u00b7 {tokens} توکن",
+    "The AI's readings of unclear channel messages today": (
+        "خواندن‌های امروز AI از پیام‌های نامفهوم کانال‌ها"
+    ),
 }
 KIND_TAGS = {ORDER: "ORDER", FOLLOW: "FOLLOW-UP", NOTE: "NOTE"}
 
@@ -152,6 +157,11 @@ class SignalInbox(QFrame):
             self.filter_buttons[key] = button
             bar.addWidget(button)
         bar.addStretch(1)
+        self.ai_line = lab_label("", "muted")
+        self.ai_line.setObjectName("InboxAiSpend")
+        self.ai_line.setToolTip(self.word("The AI's readings of unclear channel messages today"))
+        self.ai_line.hide()
+        bar.addWidget(self.ai_line)
         self.summary = lab_label("", "muted")
         self.summary.setObjectName("InboxSummary")
         bar.addWidget(self.summary)
@@ -343,6 +353,18 @@ class SignalInbox(QFrame):
             self.waiting = waiting
             self.counted.emit(waiting)
         return waiting
+
+    def set_ai_spend(self, reads: int, tokens: int, cost: float) -> str:
+        """Today's AI readings of channel messages: how many, the tokens and the cost."""
+        text = self.word("AI: {reads} reading(s) \u00b7 {tokens} tokens").format(
+            reads=reads,
+            tokens=short_tokens(tokens),
+        )
+        if cost > 0:
+            text += f" \u00b7 ${cost:.4f}"
+        self.ai_line.setText(text)
+        self.ai_line.setVisible(reads > 0)
+        return text
 
     def apply_tokens(self, tokens: ThemeTokens) -> None:
         self.tokens = tokens
