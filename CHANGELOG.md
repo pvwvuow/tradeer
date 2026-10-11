@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.0](https://github.com/pvwvuow/tradeer/compare/v0.44.0...v0.45.0) (2026-10-10)
+
+
+### Features
+
+* **ai-lab:** a chat like ChatGPT; answers drawn as reports ([#142](https://github.com/pvwvuow/tradeer/issues/142)) ([46a9c8c](https://github.com/pvwvuow/tradeer/commit/46a9c8c9dfd0742a797d8e95c7f21ca05d854abb))
+
 ## [0.44.0](https://github.com/pvwvuow/tradeer/compare/v0.43.0...v0.44.0) (2026-10-10)
 
 
