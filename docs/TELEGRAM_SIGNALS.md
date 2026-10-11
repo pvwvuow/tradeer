@@ -78,10 +78,26 @@ word, not an icon). Now (`app/ui/chat_controls.py`):
   tied to a decision. The bot's text is English.
 - Code: `app/notify/bot_text.py` (pure), `app/notify/telegram.py`, `app/ui/bot_cards.py`.
 
+## 22g. The channels' money on the main pages (0.48.0)
+
+- **Dashboard**: a side block "Telegram channels" under the risk limits. One line per channel
+  that is on and has a budget: what it is worth now (its budget plus what its closed trades
+  made) over its budget, and what it made today; "daily stop" or "drawdown stop" when one of
+  its limits was reached; a total first when there are several. The tooltip has the mode,
+  the closed result and the risk of one trade. With no budget given the block is hidden. It
+  links to the AI Lab.
+- **Risk page**: a table "Telegram channel budgets" under the limit usage with the channel,
+  its mode (Live or Paper trial), budget, worth now, today, risk per trade and stop. The
+  account limits above still apply on top of every channel.
+- Read every 30 seconds from the channel store and the closed trades of each channel's
+  magic number (`app/channels/overview.py`, pure; `app/ui/channel_budgets.py`). The blocks are
+  added by `Insights.attach_budgets`, so the two pages themselves are untouched.
+
 ## Next
 
 - **22e, the rest**: the desk note's tokens, and the readings per channel on the channels
   page.
-- **22f, quicker detection**: fewer waits for drafts, more formats read without the AI.
-- **22g, budgets in the main pages**: the money given to the channels, their open risk and
-  their profit on the Dashboard, Risk and Analytics pages.
+- **22f, quicker detection**: a message is handled the moment the reader gets it (no
+  polling); a half signal waits only for the rest of its own pieces. Every card's
+  `latency` (message to card) is saved in `tg_signals`; the next step needs a real log with
+  slow signals to find what to cut.
