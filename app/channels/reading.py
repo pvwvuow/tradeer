@@ -31,10 +31,11 @@ from app.signals.parse import parse
 from app.signals.words import normalise, resolve_symbol, tokens
 
 Message = Mapping[str, Any]  # one chat message; the content is a text or text and a picture
-DAILY_READS = 40
+DAILY_READS = 100
 READ_TOKENS = 300
 CONTEXT_MESSAGES = 5
 MESSAGE_CHARACTERS = 1200
+LABELS = frozenset({"sl", "tp", "entry"})  # a price with its label ("SL 4180")
 KINDS = ("signal", "part", "update", "result", "teaser", "other")
 ORDERS = ("market", "limit", "stop")
 CLAIM_REASON = "the channel's own result claim (not checked), not a signal"
@@ -58,7 +59,10 @@ SYSTEM = (
     "channel's own profit or loss claim; teaser: it says a signal is coming; other: anything "
     "else (ads, chatter, analysis without a trade). Use only numbers written in the messages, "
     "never invent or round one. Gold is XAUUSD, silver XAGUSD. why: at most 12 words. A "
-    "picture with the message is part of it: read the trade from the picture too."
+    "picture with the message is part of it: read the trade from the picture too. A channel "
+    "often gives a trade in pieces: the symbol in one message, the side or the prices in "
+    "the next ones. Put the earlier messages and this one together: when they make a whole "
+    "trade, answer signal with all of it."
 )
 
 SCHEMA: dict[str, Any] = {
@@ -107,12 +111,15 @@ def unclear(
     aliases: Mapping[str, str] | None = None,
 ) -> bool:
     """Worth an AI reading: the parser found a symbol or a side and enough prices for a
-    whole signal, but could not make one of them."""
+    whole signal, or at least two prices (one with its label), but could not make one of
+    them."""
     parsed = parse(text, symbols, aliases)
     if parsed.complete or is_claim(text):
         return False
     named = bool(parsed.symbol) or parsed.direction is not None
-    return named and len(numbers(text)) >= 3
+    count = len(numbers(text))
+    labelled = any(item.label in LABELS for item in tokens(normalise(text)))
+    return (named and count >= 3) or (count >= 2 and (named or labelled))
 
 
 def image_url(picture: bytes) -> str:
