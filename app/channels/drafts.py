@@ -15,7 +15,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
+from app.channels.reading import is_claim
 from app.signals.parse import ParsedSignal, parse
+from app.signals.prefilter import Kind, classify
 from app.signals.words import normalise, tokens
 
 DRAFT_MINUTES = 15.0
@@ -29,15 +31,24 @@ TEASER = re.compile(
     re.IGNORECASE,
 )
 FIELDS = frozenset({"sl", "tp", "entry"})
+NAME_WORDS = 4  # a message that only names the pair is short ("EURUSD", "Gold signal")
 Aliases = Mapping[str, str] | None
 
 
 class Piece(StrEnum):
     COMPLETE = "complete"  # a whole signal in one message
-    PART = "part"  # a symbol and a side, something else missing
+    PART = "part"  # a symbol and a side, or only a short message naming the symbol
     TEASER = "teaser"  # "get ready", "wait, I will complete it"
     FILLER = "filler"  # prices with their labels, no side: the rest of a draft
     OTHER = "other"
+
+
+def names_only(text: str, symbols: tuple[str, ...], aliases: Aliases) -> bool:
+    """A short message that names the pair and nothing else ("EURUSD"): the channel gives
+    the rest in the next messages. An update ("XAUUSD TP1 hit") or a result claim is not one."""
+    if len(text.split()) > NAME_WORDS or is_claim(text):
+        return False
+    return classify(text, symbols, aliases) is not Kind.UPDATE
 
 
 def piece(
@@ -53,6 +64,8 @@ def piece(
         return Piece.PART, parsed
     if TEASER.search(text) or TEASER.search(normalise(text)):
         return Piece.TEASER, parsed
+    if parsed.symbol and names_only(text, symbols, aliases):
+        return Piece.PART, parsed
     items = tokens(normalise(text))
     labelled = any(item.label in FIELDS for item in items)
     if labelled and any(item.number is not None for item in items):
