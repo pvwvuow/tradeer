@@ -28,6 +28,7 @@ import math
 from dataclasses import asdict, dataclass
 
 from app.core.ui_prefs import ThemeName
+from app.ui import arrows
 
 PT_PER_PX = 0.75  # 96 dpi: 1 px is 0.75 pt
 
@@ -325,20 +326,11 @@ QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
 """
 
 
-def _arrow_rules(tokens: ThemeTokens) -> str:
-    """Drop-down and spin box arrows as small triangles (no image files needed)."""
+def _triangle_rules(tokens: ThemeTokens) -> str:
+    """Drop-down and spin box arrows as CSS triangles: only when the chevron pictures
+    cannot be written (some Windows set-ups paint these as black boxes)."""
     t = tokens
     return f"""
-QComboBox {{
-    padding-right: 30px;
-}}
-QComboBox::drop-down {{
-    subcontrol-origin: padding;
-    subcontrol-position: center right;
-    width: 28px;
-    border: none;
-    background: transparent;
-}}
 QComboBox::down-arrow {{
     width: 0px;
     height: 0px;
@@ -348,25 +340,6 @@ QComboBox::down-arrow {{
 }}
 QComboBox::down-arrow:on, QComboBox::down-arrow:hover {{
     border-top-color: {t.accent};
-}}
-QAbstractSpinBox {{
-    padding-right: 24px;
-}}
-QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
-    subcontrol-origin: border;
-    width: 22px;
-    border: none;
-    background: transparent;
-}}
-QAbstractSpinBox::up-button {{
-    subcontrol-position: top right;
-}}
-QAbstractSpinBox::down-button {{
-    subcontrol-position: bottom right;
-}}
-QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
-    background-color: {t.hover};
-    border-radius: {RADIUS_SMALL}px;
 }}
 QAbstractSpinBox::up-arrow {{
     width: 0px;
@@ -389,6 +362,99 @@ QAbstractSpinBox::down-arrow:hover {{
     border-top-color: {t.accent};
 }}
 """
+
+
+def _arrow_boxes(tokens: ThemeTokens) -> str:
+    """The room of the drop-down's and the spin box's arrows."""
+    t = tokens
+    return f"""
+QComboBox {{
+    padding-right: 30px;
+}}
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    width: 28px;
+    border: none;
+    background: transparent;
+}}
+QAbstractSpinBox {{
+    padding-right: 24px;
+}}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
+    subcontrol-origin: border;
+    width: 22px;
+    border: none;
+    background: transparent;
+}}
+QAbstractSpinBox::up-button {{
+    subcontrol-position: top right;
+}}
+QAbstractSpinBox::down-button {{
+    subcontrol-position: bottom right;
+}}
+QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
+    background-color: {t.hover};
+    border-radius: {RADIUS_SMALL}px;
+}}
+"""
+
+
+def _chevron_rules(tokens: ThemeTokens) -> str | None:
+    """0.47.0: the arrows as chevron pictures in the theme's colours (`app.ui.arrows`);
+    None when they cannot be written."""
+    t = tokens
+    files = {
+        (direction, tone): arrows.arrow_file(color, direction)
+        for direction in ("down", "up")
+        for tone, color in (
+            ("rest", t.text_secondary),
+            ("hover", t.accent),
+            ("off", t.border_strong),
+        )
+    }
+    if any(path is None for path in files.values()):
+        return None
+    url = {key: arrows.qss_url(path) for key, path in files.items() if path is not None}
+    size = f"width: {arrows.WIDTH}px;\n    height: {arrows.HEIGHT}px;"
+    return f"""
+QComboBox::down-arrow {{
+    image: url({url[("down", "rest")]});
+    {size}
+}}
+QComboBox::down-arrow:on, QComboBox::down-arrow:hover {{
+    image: url({url[("down", "hover")]});
+}}
+QAbstractSpinBox::up-arrow {{
+    image: url({url[("up", "rest")]});
+    {size}
+}}
+QAbstractSpinBox::down-arrow {{
+    image: url({url[("down", "rest")]});
+    {size}
+}}
+QAbstractSpinBox::up-arrow:hover {{
+    image: url({url[("up", "hover")]});
+}}
+QAbstractSpinBox::down-arrow:hover {{
+    image: url({url[("down", "hover")]});
+}}
+QAbstractSpinBox::up-arrow:disabled, QAbstractSpinBox::up-arrow:off {{
+    image: url({url[("up", "off")]});
+}}
+QAbstractSpinBox::down-arrow:disabled, QAbstractSpinBox::down-arrow:off {{
+    image: url({url[("down", "off")]});
+}}
+QComboBox::down-arrow:disabled {{
+    image: url({url[("down", "off")]});
+}}
+"""
+
+
+def _arrow_rules(tokens: ThemeTokens) -> str:
+    """Drop-down and spin box arrows: chevrons, or triangles when there is no picture."""
+    chevrons = _chevron_rules(tokens)
+    return _arrow_boxes(tokens) + (chevrons if chevrons is not None else _triangle_rules(tokens))
 
 
 def _kpi_rule(role: str, color: str) -> str:
@@ -658,11 +724,24 @@ QComboBox QAbstractItemView {{
     background-color: {t.card};
     color: {t.text};
     border: 1px solid {t.border_strong};
-    border-radius: {RADIUS_CONTROL}px;
+    border-radius: 0px;
     padding: 4px;
     selection-background-color: {t.accent_soft};
     selection-color: {t.text};
     outline: 0;
+}}
+QComboBox QAbstractItemView::item {{
+    min-height: 26px;
+    padding: 4px 10px;
+    border-radius: {RADIUS_SMALL}px;
+}}
+QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected {{
+    background-color: {t.accent_soft};
+    color: {t.text};
+}}
+QComboBoxPrivateContainer {{
+    background-color: {t.card};
+    border: none;
 }}
 QCheckBox, QRadioButton {{
     background: transparent;
@@ -885,8 +964,15 @@ QMenu {{
     background-color: {t.card};
     color: {t.text};
     border: 1px solid {t.border_strong};
-    border-radius: {RADIUS_CONTROL}px;
+    border-radius: 0px;
     padding: 4px;
+}}
+QMenu::item:disabled {{
+    color: {t.text_secondary};
+}}
+QMenu::indicator {{
+    width: 14px;
+    height: 14px;
 }}
 QMenu::item {{
     padding: 7px {SPACE_XL}px;
@@ -918,7 +1004,7 @@ QToolTip {{
     background-color: {t.card};
     color: {t.text};
     border: 1px solid {t.border_strong};
-    border-radius: {RADIUS_SMALL}px;
+    border-radius: 0px;
     padding: 6px {SPACE_WIDE}px;
 }}
 """
