@@ -233,6 +233,6 @@ def test_polling_reads_updates_and_notices_go_to_every_chat() -> None:
     assert telegram.poll_once(timeout=0) == 1
     assert fake.sent[-1][1].startswith("Commands")
     telegram.notify(Notice(EventKind.LIMIT_HIT, "daily loss 3%"))
-    assert fake.sent[-1] == (42, "Trading stopped by a limit\ndaily loss 3%")
+    assert fake.sent[-1] == (42, "\U0001f6d1 <b>Trading stopped by a limit</b>\ndaily loss 3%")
     with pytest.raises(TelegramError, match="Unauthorized"):
         TelegramApi("x", fake).me()

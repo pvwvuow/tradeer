@@ -23,6 +23,9 @@ A Telegram channel in Live (phase 21d, `app.ui.channel_feed`) brings its signals
 through `take` with a `CardSource`: the card says which channel sent it, the legs are booked
 to the channel's own strategy and magic and sized with its budget, and it is a quick card
 (the full check only when you press it). It waits for the same hold as a pasted one.
+0.47.0: with the Telegram signals tab (`app.ui.signal_inbox`, `inbox`), a channel's card
+goes there instead of the open chat, so a new chat no longer takes it away.
+A channel card's first answer is told to `on_settled` listeners once (the Telegram bot).
 
 The page's header shows the trading mode (PAPER, SEMI-AUTO, AUTO) and REAL ORDERS: ONLY
 WITH YOUR CONFIRM when a confirmed order would be real (Semi-auto or Auto on a real account).
@@ -59,6 +62,7 @@ from app.ui.ai_lab_page import AiLabPage
 from app.ui.backtest_page import BacktestContext
 from app.ui.lab_parts import apply_tree
 from app.ui.signal_card import NO_ANALYSIS, NO_HISTORY, OrderCard, order_words
+from app.ui.signal_inbox import SignalInbox
 
 QUESTION = re.compile(r"[?\u061f]|\bwhy\b|چرا", re.IGNORECASE)
 NEVER_TAG = "REAL ORDERS: NEVER"
@@ -161,6 +165,10 @@ class LabDesk(QObject):
         self._full_lock = threading.Lock()
         self.noted: set[str] = set()  # cards whose AI note was asked for
         self.quick: set[str] = set()  # quick cards: the full check waits for its button
+        self.inbox: SignalInbox | None = None  # the Telegram signals tab (0.47.0)
+        self.channel_requests: set[str] = set()  # cards of channel signals (0.47.0)
+        self.announced: set[str] = set()  # channel cards whose first answer was told
+        self.on_settled: list[Callable[[str, OrderCard], None]] = []  # told once per card
         self._next = page.chat.intercept
         page.chat.intercept = self.intercept
         self.snapshot.connect(self.show_snapshot, Qt.ConnectionType.QueuedConnection)
@@ -227,6 +235,8 @@ class LabDesk(QObject):
         )
         card.request_id = request.id
         self.cards[request.id] = card
+        if origin.source != PASTED.source:
+            self.channel_requests.add(request.id)
         if origin.quick:
             self.quick.add(request.id)
         card.edit.connect(partial(self.page.chat.set_text, parsed.text))
@@ -237,7 +247,10 @@ class LabDesk(QObject):
         tokens = self.page.tokens
         apply_tree(card, tokens)
         card.apply_tokens(tokens)
-        self.page.chat.add_extra(card)
+        if self.inbox is not None and origin.source != PASTED.source:
+            self.inbox.add_order(card, origin.label, parsed.text or text)
+        else:
+            self.page.chat.add_extra(card)
         self.desk.submit(request)
         self._log(f"Signal desk: {origin.label} {parsed.summary()}")
         return card
@@ -245,6 +258,8 @@ class LabDesk(QObject):
     def _forget(self, request_id: str, *_: object) -> None:
         self.cards.pop(request_id, None)
         self.quick.discard(request_id)
+        self.channel_requests.discard(request_id)
+        self.announced.discard(request_id)
 
     def _log(self, message: str) -> None:
         context = self.page.context
@@ -290,6 +305,19 @@ class LabDesk(QObject):
             )
             if card.state == "waiting" and key not in self.checked and key not in self.quick:
                 self.full_check(key)
+            fresh = key in self.channel_requests and key not in self.announced
+            if fresh and card.state != "checking":
+                self.announced.add(key)
+                self._settled(key, card)
+
+    def _settled(self, request_id: str, card: OrderCard) -> None:
+        """A channel card got the desk's first answer (waiting, refused, sent...): the
+        listeners (the Telegram bot) are told once. A listener's failure stops nothing."""
+        for listener in list(self.on_settled):
+            try:
+                listener(request_id, card)
+            except Exception as error:
+                self._log(f"Signal desk: a listener failed: {type(error).__name__}")
 
     # The full check ----------------------------------------------------------------------
     def full_check(self, request_id: str, again: bool = False) -> bool:

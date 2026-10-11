@@ -100,8 +100,9 @@ def test_the_chart_card_stands_where_the_answer_put_it(qtbot: QtBot, tmp_path: P
     qtbot.waitUntil(lambda: not chat.busy and len(chat.views) == 2, timeout=10_000)
     assert chat.views[-1].question.text() == "How am I doing overall?"
     assert chat.down.objectName() == "AiChatDown"
-    chat.views[0].question_edit.click()
-    assert chat.input.toPlainText() == "How am I doing overall?"
-    chat.input.clear()
+    assert not hasattr(chat.views[0], "question_edit")  # no Edit button (0.47.0)
+    copy = chat.views[0].question_copy
+    assert copy.isHidden() and copy.sizePolicy().retainSizeWhenHidden()
+    assert chat.findChild(QWidget, "AiChatHint") is not None
     qtbot.keyClick(chat.input, Qt.Key.Key_Up)
     assert chat.input.toPlainText() == "How am I doing overall?"

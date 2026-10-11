@@ -6,7 +6,8 @@ card; nothing changes before the hold. The agent's tools run in its worker threa
 needs the database (the channels) is read here in the UI thread when the question is asked,
 and the cards are made after the turn, in the UI thread too. A channel signal that made no
 order card (a Paper trial) shows one line in the chat, so you see it was read, and so does
-a half signal that waits for its rest (0.44.0).
+a half signal that waits for its rest (0.44.0). 0.47.0: those lines go to the Telegram
+signals tab when the AI Lab has it.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from functools import partial
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt
+from PySide6.QtWidgets import QWidget
 
 from app.ai.actions import NEVER, ActionData, Proposal, propose, schema_text
 from app.ai.agent import Tool
@@ -41,7 +43,7 @@ from app.ui.channel_cards import HoldCard
 from app.ui.channel_feed import ChannelFeed, Seen
 from app.ui.feed_words import feed_line_fa
 from app.ui.lab_cards import note_card
-from app.ui.lab_parts import LabCard, apply_tree
+from app.ui.lab_parts import apply_tree
 
 MAX_CARDS = 3  # proposals per answer
 LAST_SIGNALS = 5  # per channel
@@ -406,10 +408,10 @@ class LabActions(QObject):
         return "\n".join(lines)
 
     # The cards (UI thread) ----------------------------------------------------------------
-    def after_message(self, message: object) -> LabCard | None:
+    def after_message(self, message: object) -> QWidget | None:
         """Slot, after the feed handled a channel message: a signal that made no order card
-        (a Paper trial, a Live channel without a budget) shows one line in the chat, so you
-        see it was read."""
+        (a Paper trial, a Live channel without a budget) shows one line, so you see it was
+        read: in the Telegram signals tab when there is one (0.47.0), else in the chat."""
         feed = self.feed
         if feed is None or not feed.seen or not isinstance(message, ChannelMessage):
             return None
@@ -423,16 +425,19 @@ class LabActions(QObject):
         text = f"Signal read, no order card: {seen.reason}. \u201c{seen.text}\u201d"
         if page.persian:
             text = f"سیگنال خوانده شد، کارت سفارش ساخته نشد: {seen.reason}. «{seen.text}»"
-        card = note_card("paste", seen.channel, text)
-        apply_tree(card, page.tokens)
-        page.chat.add_extra(card)
-        return card
+        return self._line(seen.channel, text)
 
-    def note(self, title: str, text: str) -> LabCard:
+    def note(self, title: str, text: str) -> QWidget:
         """Slot: a line of the channel feed (a half signal waits, joined, stayed incomplete),
         in Persian when the app is."""
+        return self._line(title, feed_line_fa(text) if self.page.persian else text)
+
+    def _line(self, channel: str, text: str) -> QWidget:
+        inbox = self.feed.desk.inbox if self.feed is not None else None
+        if inbox is not None:
+            return inbox.note(channel, text).frame
         page = self.page
-        card = note_card("paste", title, feed_line_fa(text) if page.persian else text)
+        card = note_card("paste", channel, text)
         apply_tree(card, page.tokens)
         page.chat.add_extra(card)
         return card

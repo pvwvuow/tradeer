@@ -16,8 +16,8 @@ import contextlib
 import math
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPaintEvent, QPen
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -46,12 +46,14 @@ from app.ai.answer_blocks import (
     parse,
     tone_of,
 )
+from app.ui.chat_controls import icon_pixmap
 from app.ui.lab_charts import BarChart, Line, LineChart, Meter
 from app.ui.lab_parts import LTR, RTL, StepDot, apply_tree, lab_button, lab_label
 from app.ui.shell import Painted
 from app.ui.theme import DEFAULT, NUMBER_FONT, ThemeTokens, mix, number_family, px
 
 COPIED_MS = 1500
+ICON_PX = 14
 TILE_COLUMNS = 4
 DONUT_SIZE = 132
 LINE_TONES = ("ink", "muted", "profit", "loss", "warning")
@@ -240,7 +242,8 @@ def copy_text(text: str) -> bool:
 
 
 class CopyButton(QPushButton):
-    """A quiet "Copy" that says "Copied" for a moment after a click."""
+    """A quiet Copy with the copy icon; a check mark and "Copied" for a moment after a
+    click (0.47.0: the icon, as in every chat app)."""
 
     def __init__(self, payload: Callable[[], str], fa: bool = False, name: str = "Copy") -> None:
         word = view_words(fa)
@@ -248,22 +251,34 @@ class CopyButton(QPushButton):
         self.word = word
         self.name = name
         self.payload = payload
+        self.tokens: ThemeTokens = DEFAULT
         self.setProperty("lab", "copy")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAccessibleName(word(name))
         self.setToolTip(word(name))
+        self.setIconSize(QSize(ICON_PX, ICON_PX))
+        self._show_icon("copy")
         self.clicked.connect(self.copy)
         self.last = ""
+
+    def apply_tokens(self, tokens: ThemeTokens) -> None:
+        self.tokens = tokens
+        self._show_icon("check" if self.text() != self.word(self.name) else "copy")
+
+    def _show_icon(self, name: str) -> None:
+        self.setIcon(QIcon(icon_pixmap(name, self.tokens.text_secondary, ICON_PX)))
 
     def copy(self) -> str:
         self.last = self.payload()
         if copy_text(self.last):
-            self.setText("\u2713 " + self.word("Copied"))
+            self.setText(self.word("Copied"))
+            self._show_icon("check")
             QTimer.singleShot(COPIED_MS, self._back)
         return self.last
 
     def _back(self) -> None:
         self.setText(self.word(self.name))
+        self._show_icon("copy")
 
 
 def set_direction(label: QLabel, text: str) -> None:

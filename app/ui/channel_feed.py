@@ -17,6 +17,11 @@ pass, and then goes the normal way. A result claim ("+120 pips today") is never 
 0.44.1: a message with a picture and no whole signal in its text goes to the AI with the
 picture; the card then says the numbers came from a picture. A model that refuses pictures
 gets none for 6 hours (`PICTURE_PAUSE`), so the daily readings are not spent on it.
+0.47.0 (phase 22b): every channel signal is also told to the Telegram bot (`alerts`): one
+that became a card when the desk first answered, one that did not (a Paper trial, a
+duplicate, a refusal) at once; see `app.ui.bot_cards`.
+0.47.0: every reading is logged with what the AI answered, the time and the tokens, and its
+tokens and cost go to the AI Lab's usage (kind `channel`) and to the Telegram signals tab.
 
 Phase 21d2 and 21e: every parsed signal is saved (`tg_signals`) and followed as a shadow
 trade in a worker thread every 10 minutes; the same signal from a second channel within 15
@@ -41,6 +46,7 @@ from typing import Protocol
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 from app.ai.transport import AiCallError, AiClient, Message, plain_text
+from app.ai.usage_store import UsageRecord, short_tokens
 from app.analysis.bars import Bars
 from app.backtest.service import BacktestRequest
 from app.channels.chat_settings import Change, read_change
@@ -72,6 +78,7 @@ from app.channels.shadow_follow import BarSource, follow_signals
 from app.channels.stats import Card, duplicate_of
 from app.channels.updates import LINK_SECONDS, Earlier, Update, UpdateKind, link, read_update
 from app.domain.signals import Direction, SignalState
+from app.notify.bot_text import SignalAlert
 from app.observability.logger import audit
 from app.risk.budget import budget_features
 from app.signals.prefilter import Kind, classify
@@ -80,9 +87,11 @@ from app.signals.words import resolve_symbol
 from app.storage.channel_store import ChannelRepository, ChannelSignal, ChannelSource
 from app.strategies.manual_signal import channel_strategy
 from app.ui.backtest_page import BacktestContext
+from app.ui.bot_cards import alert_from_card, alert_from_parsed
 from app.ui.channel_cards import FollowUpCard, HoldCard, SettingsCard
 from app.ui.lab_desk import CardSource, LabDesk
 from app.ui.lab_parts import apply_tree
+from app.ui.signal_card import OrderCard
 
 KEEP_SEEN = 50
 DRAFT_CHECK_MS = 60 * 1000  # incomplete drafts are expired this often (0.44.0)
@@ -92,6 +101,7 @@ READING = "; the AI reads it now"
 KEEP_ASKED = 500
 PICTURE_PAUSE = 6 * 3600  # no pictures to a model that refused one
 PICTURE_PAUSED = "; pictures go to the AI again in 6 hours"
+RAW_CHARS = 400  # characters of the AI's answer in the log
 REFUSED_CODES = frozenset({400, 413, 415, 422})  # a refused request, not a network problem
 WAITING = frozenset({SignalState.PENDING_APPROVAL})
 ON_THEIR_WAY = frozenset({SignalState.SENT, SignalState.FILLED, SignalState.MANAGED})
@@ -183,6 +193,51 @@ class Reading:
     outcome: ReadResult | str  # the reading, or why it failed
     picture: bool = False  # the AI read the message's picture too
     refused: bool = False  # the service refused the request with the picture
+    model: str = ""
+    input_tokens: int = 0
+    cached_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = math.nan  # USD; NaN when no price is set
+    seconds: float = 0.0
+    raw: str = ""  # the AI's answer as it came, shortened (for the log)
+
+
+@dataclass
+class AiSpend:
+    """The AI's readings of channel messages today (UTC), for the Telegram signals tab."""
+
+    day: float = 0.0
+    reads: int = 0
+    tokens: int = 0
+    cost: float = 0.0
+
+    def text(self) -> str:
+        cost = f" \u00b7 ${self.cost:.4f}" if self.cost > 0 else ""
+        return f"AI today: {self.reads} reading(s) \u00b7 {short_tokens(self.tokens)} tokens{cost}"
+
+
+def _count(source: object, name: str) -> int:
+    value = getattr(source, name, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def spent(reading: Reading, answer: object, seconds: float) -> Reading:
+    """The reading with what the call cost: the model, the tokens, the price, the time and
+    the answer as it came (an answer without these, as in a test, costs nothing)."""
+    usage = getattr(answer, "usage", None)
+    cost = getattr(answer, "cost", math.nan)
+    model = getattr(answer, "model", "")
+    text = getattr(answer, "text", "")
+    return replace(
+        reading,
+        model=model if isinstance(model, str) else "",
+        input_tokens=_count(usage, "input_tokens"),
+        cached_tokens=_count(usage, "cached_tokens"),
+        output_tokens=_count(usage, "output_tokens"),
+        cost=float(cost) if isinstance(cost, int | float) and cost > 0 else math.nan,
+        seconds=seconds,
+        raw=" ".join(text.split())[:RAW_CHARS] if isinstance(text, str) else "",
+    )
 
 
 @dataclass
@@ -209,6 +264,7 @@ class ChannelFeed(QObject):
         log: Log = _quiet,
         utc_now: Callable[[], float] = time.time,
         ai: Callable[[], AiClient | str] | None = None,
+        usage: Callable[[UsageRecord], None] | None = None,
     ) -> None:
         super().__init__(desk)
         self.desk = desk
@@ -230,6 +286,10 @@ class ChannelFeed(QObject):
         self.reads = ReadCap()
         self.asked: set[tuple[int, int]] = set()  # (channel, message) read by the AI
         self.pictures_off_until = 0.0  # a model that refused a picture gets none until then
+        self.usage = usage if usage is not None else desk.page.record_usage
+        self.spend = AiSpend()
+        self.alerts: list[Callable[[SignalAlert], None]] = []  # the Telegram bot (0.47.0)
+        desk.on_settled.append(self._card_settled)
         self.read_done.connect(self.show_read, Qt.ConnectionType.QueuedConnection)
         self.arrived.connect(self.handle, Qt.ConnectionType.QueuedConnection)
         self.edited.connect(self.handle_edit, Qt.ConnectionType.QueuedConnection)
@@ -352,10 +412,27 @@ class ChannelFeed(QObject):
                 ),
                 now,
             )
+        if kind is Kind.SIGNAL and parsed.direction is not None and found.action is not Action.CARD:
+            why = found.reason[:1].upper() + found.reason[1:]
+            self.tell(alert_from_parsed(parsed, source.title, symbol, why))
         if kind is not Kind.NOISE:
             self.log("INFO", f"Telegram channel {source.title}: {found.reason}")
         self._remember(source, message, found)
         return found
+
+    # The Telegram bot (phase 22b) ---------------------------------------------------------
+    def tell(self, alert: SignalAlert) -> None:
+        """A signal to every sink (the bot); a sink that fails stops nothing."""
+        for sink in list(self.alerts):
+            try:
+                sink(alert)
+            except Exception as error:
+                self.log("WARNING", f"Telegram signal message failed: {type(error).__name__}")
+
+    def _card_settled(self, request_id: str, card: OrderCard) -> None:
+        """The desk answered a channel's card for the first time: tell the bot."""
+        names = self.sources.get(request_id)
+        self.tell(alert_from_card(card, " + ".join(names) if names else "channel"))
 
     # Half signals (docs/AI_LAB_V3.md section 1) -------------------------------------------
     def _waiting(
@@ -505,16 +582,23 @@ class ChannelFeed(QObject):
     ) -> None:
         outcome: ReadResult | str
         refused = False
+        started = time.monotonic()
+        answer: object = None
         try:
-            answer = client.complete(messages, schema=SCHEMA, max_tokens=READ_TOKENS)
-            found = parse_reply(answer.json_text or answer.text)
+            reply = client.complete(messages, schema=SCHEMA, max_tokens=READ_TOKENS)
+            answer = reply
+            found = parse_reply(reply.json_text or reply.text)
             outcome = found if found is not None else "the AI's answer could not be read"
         except AiCallError as error:
             outcome = plain_text(error, client.settings.base_url)
             refused = picture and error.code in REFUSED_CODES
         except Exception as error:
             outcome = f"{type(error).__name__}: {error}"
-        reading = Reading(channel_id, message, texts, outcome, picture, refused)
+        reading = spent(
+            Reading(channel_id, message, texts, outcome, picture, refused),
+            answer,
+            time.monotonic() - started,
+        )
         with contextlib.suppress(RuntimeError):  # the window may be closing
             self.read_done.emit(reading)
 
@@ -526,6 +610,7 @@ class ChannelFeed(QObject):
         if source is None or not source.enabled:
             return None
         message, outcome = reading.message, reading.outcome
+        self.account(source, reading)
         if isinstance(outcome, str):
             what = "a picture (does the model read images?)" if reading.picture else "a message"
             why = f"the AI could not read {what}: {outcome}"
@@ -568,6 +653,48 @@ class ChannelFeed(QObject):
             reply_to=message.reply_to,
         )
         return self.handle(whole, joined=True)
+
+    def account(self, source: ChannelSource, reading: Reading) -> None:
+        """One reading in the log (what the AI answered, how long, how many tokens), in the
+        AI Lab's usage (kind `channel`) and in today's AI line of the Telegram signals tab."""
+        what = " with its picture" if reading.picture else ""
+        tokens = f"{reading.input_tokens}+{reading.output_tokens} tokens"
+        cost = f", ${reading.cost:.4f}" if math.isfinite(reading.cost) else ""
+        model = f"{reading.model}, " if reading.model else ""
+        answer = reading.raw or (reading.outcome if isinstance(reading.outcome, str) else "")
+        self.log(
+            "INFO",
+            f"Telegram channel {source.title}: the AI read message {reading.message.message_id}"
+            f"{what} in {reading.seconds:.1f} s ({model}{tokens}{cost}): {answer}",
+        )
+        if not reading.model:
+            return  # the call failed before an answer: nothing was spent
+        now = self.now()
+        try:
+            self.usage(
+                UsageRecord(
+                    now,
+                    "channel",
+                    reading.model,
+                    reading.input_tokens,
+                    reading.cached_tokens,
+                    reading.output_tokens,
+                    1,
+                    reading.cost,
+                ),
+            )
+        except Exception as error:
+            self.log("WARNING", f"Telegram channel AI usage not written: {error}")
+        today = day_start(now)
+        if self.spend.day != today:
+            self.spend = AiSpend(today)
+        self.spend.reads += 1
+        self.spend.tokens += reading.input_tokens + reading.output_tokens
+        if math.isfinite(reading.cost):
+            self.spend.cost += reading.cost
+        inbox = self.desk.inbox
+        if inbox is not None:
+            inbox.set_ai_spend(self.spend.reads, self.spend.tokens, self.spend.cost)
 
     def _symbol(self, text: str, symbols: tuple[str, ...], aliases: dict[str, str]) -> str:
         parsed = self.desk.parse_text(text, aliases)
@@ -724,7 +851,7 @@ class ChannelFeed(QObject):
         if not actions:
             card.status.setText("Nothing to do here: change it on the Positions page if you want.")
         card.held.connect(partial(self._apply, card, steps, text))
-        self._show(card)
+        self._show(card, title)
         return card
 
     def _apply(self, card: FollowUpCard, steps: list[Callable[[], None]], text: str) -> None:
@@ -772,11 +899,17 @@ class ChannelFeed(QObject):
         card.finish(card.word("Saved."))
         return True
 
-    def _show(self, card: HoldCard) -> None:
+    def _show(self, card: HoldCard, channel: str = "") -> None:
+        """A follow-up goes to the Telegram signals tab when there is one (0.47.0); a
+        settings card answers your own chat message, so it stays in the chat."""
         tokens = self.desk.page.tokens
         apply_tree(card, tokens)
         card.apply_tokens(tokens)
-        self.desk.page.chat.add_extra(card)
+        inbox = self.desk.inbox
+        if inbox is not None and channel:
+            inbox.add_card(card, channel)
+        else:
+            self.desk.page.chat.add_extra(card)
         self.extras.append(card)
 
     # Shadow results (docs/SIGNAL_DESK.md 3.5) ---------------------------------------------
