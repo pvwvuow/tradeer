@@ -18,3 +18,6 @@
   token, so CI does not start on it; this docs commit starts it.
 - 11 October 2026, release PR #149 (0.48.0): same; this docs commit starts CI.
 - 11 October 2026, release PR #151 (0.49.0): same; this docs commit starts CI.
+- 11 October 2026, PR #152 (22i): the Windows `ci` job failed only because an xdist worker
+  crashed in `test_window_polish.py::test_a_page_fades_in_and_the_effect_goes_away`, a test
+  this PR does not touch; Linux ran the same suite green. Run again with this commit.

@@ -3,19 +3,27 @@
 Until 0.46 a channel's order card, its follow-ups and the feed's lines went into whichever
 chat was open, and a new chat took them away. Now the AI Lab has two tabs, Chat and Telegram
 signals (`LabTabs`): every channel card and line goes to the second one (`SignalInbox`),
-newest first, and stays there for the whole session. The tab and the sidebar's AI Lab show
-how many wait for you. Review in chat asks the AI about one signal in the chat, only when
-you press it. A signal you paste in the chat stays in the chat.
+newest first. The tab and the sidebar's AI Lab show how many wait for you. Review in chat
+asks the AI about one signal in the chat, only when you press it. A signal you paste in the
+chat stays in the chat.
+
+0.49.1: the tab remembers. Its lines and cards are kept in the local database
+(`app.storage.inbox_store`, `attach_history`), so after the app was closed and opened again
+they are back, as history: a card cannot come back alive, its order was planned against the
+price of that moment, and the row says how it ended (or that it was not finished when the app
+was closed).
 
 Nothing here sends anything: the cards keep their own hold buttons.
 """
 
 from __future__ import annotations
 
+import contextlib
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -39,6 +47,10 @@ from app.ui.signal_card import OrderCard
 from app.ui.theme import DEFAULT, ThemeTokens
 
 KEEP = 200  # entries kept; the oldest finished ones go first
+TEXT_CHARS = 1500  # characters of an entry kept in the history
+OPEN_STATES = frozenset({"", "checking", "waiting", "sending"})  # not over yet
+NOT_FINISHED = "not finished when the app was closed"
+EARLIER = "From an earlier session"
 COUNT_MS = 1000
 ORDER, FOLLOW, NOTE = "order", "follow", "note"
 FILTERS = ("all", "waiting", "notes")
@@ -52,6 +64,8 @@ INBOX_FA: dict[str, str] = {
     "Notes": "یادداشت‌ها",
     "Clear finished": "پاک کردن تمام‌شده‌ها",
     "Review in chat": "بررسی در چت",
+    EARLIER: "از اجرای قبلی",
+    NOT_FINISHED: "با بستن برنامه نیمه‌کاره ماند",
     "ORDER": "سفارش",
     "FOLLOW-UP": "پیگیری",
     "NOTE": "یادداشت",
@@ -108,8 +122,61 @@ def finished(widget: QWidget) -> bool:
     return True
 
 
-def clock(at: float) -> str:
-    return datetime.fromtimestamp(at).strftime("%H:%M")
+def clock(at: float, now: float | None = None) -> str:
+    """The time of an entry: HH:MM today, MM-DD HH:MM on another day."""
+    moment = datetime.fromtimestamp(at)
+    if now is not None and moment.date() != datetime.fromtimestamp(now).date():
+        return moment.strftime("%m-%d %H:%M")
+    return moment.strftime("%H:%M")
+
+
+def card_state(card: QWidget) -> str:
+    """How a card stands, as one word for the history."""
+    if isinstance(card, OrderCard):
+        return str(card.state)
+    if isinstance(card, HoldCard):
+        if card.done:
+            return "done"
+        return "waiting" if card.hold_button.isEnabled() else "nothing to do"
+    return ""
+
+
+def card_text(card: QWidget) -> str:
+    """What a card says (its labels), for the history."""
+    parts = [label.text().strip() for label in card.findChildren(QLabel)]
+    return " | ".join(part for part in parts if part)[:TEXT_CHARS]
+
+
+class HistoryRow(Protocol):
+    @property
+    def id(self) -> int: ...
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def channel(self) -> str: ...
+
+    @property
+    def at(self) -> float: ...
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def state(self) -> str: ...
+
+
+class History(Protocol):
+    """Where the tab keeps its entries (`app.storage.inbox_store.InboxStore`)."""
+
+    def add(self, kind: str, channel: str, at: float, text: str, state: str = "") -> int: ...
+
+    def set_state(self, row_id: int, state: str) -> bool: ...
+
+    def delete(self, ids: Iterable[int]) -> int: ...
+
+    def recent(self, limit: int) -> Sequence[HistoryRow]: ...
 
 
 @dataclass
@@ -121,6 +188,8 @@ class Entry:
     card: QWidget | None  # None: a note line
     head: QHBoxLayout
     review: QPushButton | None = None
+    row_id: int = 0  # its row in the history, 0 when it is not kept
+    saved: str = ""  # the state last written to the history
 
 
 class SignalInbox(QFrame):
@@ -141,6 +210,7 @@ class SignalInbox(QFrame):
         self.entries: list[Entry] = []
         self.filter = "all"
         self.waiting = 0
+        self.history: History | None = None  # the local database (0.49.1)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(12)
@@ -208,7 +278,7 @@ class SignalInbox(QFrame):
     # Adding -----------------------------------------------------------------------------
     def add_order(self, card: OrderCard, channel: str, text: str) -> Entry:
         """A channel's order card; Review in chat asks the AI about its text."""
-        entry = self._add(ORDER, channel, card)
+        entry = self._add(ORDER, channel, card, text=text)
         review = lab_button(self.word("Review in chat"), "link")
         review.setObjectName("InboxReview")
         question = review_question(channel, text, self.fa)
@@ -226,7 +296,55 @@ class SignalInbox(QFrame):
         line = lab_label(text, "text", wrap=True)
         line.setObjectName("InboxNote")
         line.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        return self._add(NOTE, channel, None, line)
+        return self._add(NOTE, channel, None, line, text=text)
+
+    def attach_history(self, history: History) -> int:
+        """Keep the entries in `history` from now on and show the earlier ones, newest first,
+        as history (a card does not come back alive). The number shown."""
+        self.history = history
+        try:
+            rows = list(history.recent(KEEP))
+        except Exception:
+            return 0
+        for row in rows:  # oldest first: each one goes on top
+            self._restore(row)
+        return len(rows)
+
+    def _restore(self, row: HistoryRow) -> Entry:
+        line = lab_label(row.text, "text", wrap=True)
+        line.setObjectName("InboxNote")
+        line.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        state = NOT_FINISHED if row.state in OPEN_STATES else row.state
+        foot = self.word(EARLIER) + (f" \u00b7 {self.word(state)}" if state else "")
+        mark = lab_label(foot, "muted")
+        mark.setObjectName("InboxEarlier")
+        return self._add(row.kind, row.channel, None, line, at=row.at, extra=mark, row_id=row.id)
+
+    def _keep(self, kind: str, channel: str, at: float, text: str, state: str) -> int:
+        """Write one entry to the history; a failing database never breaks the tab."""
+        if self.history is None:
+            return 0
+        try:
+            return int(self.history.add(kind, channel, at, text[:TEXT_CHARS], state))
+        except Exception:
+            return 0
+
+    def _sync_states(self) -> None:
+        """Write the new state of a card to the history when it changed."""
+        history = self.history
+        if history is None:
+            return
+        for entry in self.entries:
+            card = entry.card
+            if card is None or not entry.row_id:
+                continue
+            state = card_state(card)
+            if state and state != entry.saved:
+                entry.saved = state
+                try:
+                    history.set_state(entry.row_id, state)
+                except Exception:
+                    entry.saved = ""
 
     def _add(
         self,
@@ -234,8 +352,14 @@ class SignalInbox(QFrame):
         channel: str,
         card: QWidget | None,
         line: QLabel | None = None,
+        *,
+        text: str = "",
+        at: float | None = None,
+        extra: QWidget | None = None,
+        row_id: int = 0,
     ) -> Entry:
-        at = self.now()
+        restored = row_id > 0
+        at = self.now() if at is None else at
         frame = QFrame()
         frame.setObjectName("InboxEntry")
         frame.setProperty("inbox", "note" if card is None else "entry")
@@ -253,7 +377,7 @@ class SignalInbox(QFrame):
         tag.setProperty("kind", kind)
         name = lab_label(channel, "channel")
         name.setObjectName("InboxChannel")
-        when = lab_label(clock(at), "mono")
+        when = lab_label(clock(at, self.now()), "mono")
         when.setLayoutDirection(LTR)
         head.addWidget(tag)
         head.addWidget(name)
@@ -263,16 +387,25 @@ class SignalInbox(QFrame):
         shown: QWidget | None = card if card is not None else line
         if shown is not None:
             layout.addWidget(shown)
+        if extra is not None:
+            layout.addWidget(extra)
         apply_tree(frame, self.tokens)
         if card is not None:
             apply = getattr(card, "apply_tokens", None)
             if callable(apply):
                 apply(self.tokens)
-        entry = Entry(kind, channel, at, frame, card, head)
+        entry = Entry(kind, channel, at, frame, card, head, row_id=row_id)
+        if not restored:
+            shown_text = text or (card_text(card) if card is not None else "")
+            entry.saved = card_state(card) if card is not None else ""
+            entry.row_id = self._keep(kind, channel, at, shown_text, entry.saved)
         self.entries.insert(0, entry)
         self.rows.insertWidget(0, frame)
         self.empty.setVisible(False)
         self._show(entry)
+        if restored:
+            self._trim()
+            return entry
         fade_in(frame, self.tokens)
         self._trim()
         self.recount()
@@ -316,6 +449,9 @@ class SignalInbox(QFrame):
     def clear_finished(self) -> int:
         """Remove the notes and the cards that are over (sent, skipped, expired, refused)."""
         gone = [e for e in self.entries if e.card is None or finished(e.card)]
+        if self.history is not None:
+            with contextlib.suppress(Exception):
+                self.history.delete(e.row_id for e in gone if e.row_id)
         for entry in gone:
             self._remove(entry)
         self.empty.setVisible(not self.entries)
@@ -332,6 +468,7 @@ class SignalInbox(QFrame):
 
     def recount(self) -> int:
         """Timer: the cards waiting for you; `counted` when the number changed."""
+        self._sync_states()
         waiting = len(self.waiting_cards())
         day = datetime.fromtimestamp(self.now()).date()
         today = sum(

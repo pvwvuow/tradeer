@@ -56,6 +56,7 @@ from app.observability.logger import LogPipeline, audit, get_logger
 from app.risk.risk_manager import RiskManager
 from app.storage.backtest_store import BacktestRepository
 from app.storage.channel_store import ChannelRepository
+from app.storage.inbox_store import InboxStore
 from app.storage.runtime import StorageRuntime
 from app.strategies.registry import strategy_for_magic
 from app.ui.ai_lab_page import AiLabPage
@@ -181,7 +182,8 @@ class Insights:
 
     def attach_inbox(self, window: QWidget) -> SignalInbox | None:
         """The AI Lab's Telegram signals tab, next to the chat, and its count of cards that
-        wait for you on the sidebar's AI Lab (0.47.0)."""
+        wait for you on the sidebar's AI Lab (0.47.0). Its entries are kept in the local
+        database, so they are back after a restart (0.49.1)."""
         desk = self.desk
         if desk is None or self.channels is None:
             return None
@@ -192,6 +194,7 @@ class Insights:
             inbox.deleteLater()
             return None
         inbox.review.connect(partial(review_in_chat, tabs, page))
+        inbox.attach_history(InboxStore(self.channels.repository.store))  # kept across starts
         badge = getattr(window, "set_nav_badge", None)
         if callable(badge):
             fa = page.persian
