@@ -22,8 +22,13 @@ tables, callouts, charts, next steps), with Copy and Retry under it. Chart cards
 placed with an `app-chart` block stand inside the answer. A round button jumps to the latest
 message, and the message box grows with its text.
 
-0.45.1: Edit under your message puts it back in the message box; the up arrow in an empty
-box brings back your last question.
+0.45.1: the up arrow in an empty box brings back your last question.
+
+0.47.0 (`app.ui.chat_controls`, docs/TELEGRAM_SIGNALS.md): the controls are icons, as in
+every chat app: Copy, Regenerate and the two thumbs under an answer, a copy icon under your
+message that keeps its room, a round send button that turns into a stop square (Esc stops
+too). No Edit button, no file clip, no fixed PAPER ONLY tag in the message box. Every turn,
+failure and thumb is one line of the log (category llm).
 """
 
 from __future__ import annotations
@@ -50,14 +55,15 @@ from PySide6.QtWidgets import (
 from app.ai.agent import Limits, Step, Tool, Turn, run_turn
 from app.ai.chat_store import Chat, ChatStore, start_chat
 from app.ai.transport import AiCallError, AiClient, Completion, Message, plain_text
+from app.observability.categories import LogCategory
+from app.observability.logger import get_logger
 from app.ui.answer_view import (
     AnswerView,
     ChartSlot,
-    CopyButton,
-    action_button,
     answer_qss,
     persian,
 )
+from app.ui.chat_controls import CopyIconButton, IconButton, RoundSendButton, control_words
 from app.ui.lab_parts import (
     CHAT_WIDTH,
     LTR,
@@ -65,7 +71,6 @@ from app.ui.lab_parts import (
     TYPING_MS,
     ComposerBox,
     LabIcon,
-    SendButton,
     Skeleton,
     apply_tree,
     lab_button,
@@ -74,7 +79,6 @@ from app.ui.lab_parts import (
 )
 from app.ui.lab_soft import TILE_WIDTH, AiMark, fade_in, soft_qss
 from app.ui.theme import DEFAULT, ThemeTokens, mix, px
-from app.ui.v2 import Tag
 
 Job = Callable[[], None]
 ClientFactory = Callable[[], AiClient | str]
@@ -125,9 +129,14 @@ CHAT_FA: dict[str, str] = {
     "Retry": "دوباره",
     "Ask the same question again": "همین سؤال را دوباره بپرس",
     "Jump to the latest message": "رفتن به آخرین پیام",
-    "Edit": "ویرایش",
-    "Edit this question": "ویرایش این سؤال",
+    "Asking {model}...": "در حال پرسیدن از {model}...",
+    "Show or hide the steps": "نمایش یا پنهان کردن مراحل",
+    "NEW CHAT": "گفتگوی تازه",
+    "Enter sends \u00b7 Shift+Enter: new line": "Enter ارسال \u00b7 Shift+Enter خط جدید",
 }
+LOG_QUESTION = 300  # characters of the question and the answer in the log
+LOG_ANSWER = 600
+_log = get_logger(LogCategory.LLM)
 FA_DIGITS = str.maketrans("0123456789", "".join(chr(0x06F0 + digit) for digit in range(10)))
 
 
@@ -217,6 +226,35 @@ QPushButton[lab="down"]:hover {{
     background-color: {t.hover};
 }}
 """
+
+
+def short(text: str, limit: int) -> str:
+    """One line of at most `limit` characters, for the log."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1] + "\u2026"
+
+
+def turn_line(turn: Turn, question: str) -> str:
+    """A chat turn in one log line (0.47.0): the model, the time, the tools, the tokens,
+    the cost, the question and the start of the answer (no key, no account number)."""
+    seconds = sum(step.seconds for step in turn.steps)
+    titles = ", ".join(step.title for step in turn.steps) or "no tools"
+    usage = turn.usage
+    tokens = f"{usage.input_tokens}+{usage.output_tokens} tokens"
+    cost = f", ${turn.cost:.4f}" if turn.cost > 0 else ""
+    stopped = f", {turn.stopped}" if turn.stopped else ""
+    return (
+        f"AI Lab chat: {turn.model}, {seconds:.1f} s, {turn.tool_steps} step(s) ({titles}), "
+        f"{tokens}{cost}{stopped} | Q: {short(question, LOG_QUESTION)} | "
+        f"A: {short(turn.answer, LOG_ANSWER)}"
+    )
+
+
+def log_turn(turn: Turn, question: str) -> None:
+    try:
+        _log.log("INFO", "{}", turn_line(turn, question))
+    except Exception:  # a log line never breaks the chat
+        return
 
 
 def _start_thread(job: Job) -> None:
@@ -331,10 +369,10 @@ class TileGrid(QWidget):
 
 class TurnView(QFrame):
     """One question: the bubble, the folded steps, the loading bars, the answer drawn as a
-    report, then Copy, Retry and the cost."""
+    report, then the icons (Copy, Regenerate, the thumbs) and the cost."""
 
     retry = Signal()
-    edit = Signal()
+    rated = Signal(str)  # "good" or "bad": the thumbs under the answer (0.47.0)
 
     def __init__(self, question: str, parent: QWidget | None = None, fa: bool = False) -> None:
         super().__init__(parent)
@@ -351,14 +389,12 @@ class TurnView(QFrame):
         mine = QHBoxLayout()
         mine.setContentsMargins(0, 0, 0, 0)
         mine.addStretch(1)
-        self.question_copy = CopyButton(lambda: question, fa)
+        self.question_copy = CopyIconButton(lambda: question, fa, "Copy message")
         self.question_copy.setObjectName("AiChatQuestionCopy")
+        keep = self.question_copy.sizePolicy()
+        keep.setRetainSizeWhenHidden(True)  # nothing jumps when the mouse passes
+        self.question_copy.setSizePolicy(keep)
         self.question_copy.hide()
-        self.question_edit = action_button("\u270e " + word("Edit"), word("Edit this question"))
-        self.question_edit.setObjectName("AiChatQuestionEdit")
-        self.question_edit.clicked.connect(lambda _checked=False: self.edit.emit())
-        self.question_edit.hide()
-        mine.addWidget(self.question_edit)
         mine.addWidget(self.question_copy)
         layout.addLayout(mine)
         meta = QHBoxLayout()
@@ -367,7 +403,7 @@ class TurnView(QFrame):
         self.meta = lab_button(chat_words(fa)("Working..."), "link")
         self.meta.setObjectName("AiChatMeta")
         self.meta.setCheckable(True)
-        self.meta.setToolTip("Show or hide the steps")
+        self.meta.setToolTip(word("Show or hide the steps"))
         self.meta.toggled.connect(self._fold)
         meta.addWidget(self.meta_icon)
         meta.addWidget(self.meta)
@@ -394,40 +430,56 @@ class TurnView(QFrame):
         self.action_bar = QWidget()
         self.action_bar.setObjectName("AiChatActions")
         tools = QHBoxLayout(self.action_bar)
-        tools.setContentsMargins(34, 0, 0, 0)
-        tools.setSpacing(4)
-        self.copy_button = CopyButton(self.answer.text, fa)
+        tools.setContentsMargins(30, 0, 0, 0)
+        tools.setSpacing(2)
+        control = control_words(fa)
+        self.copy_button = CopyIconButton(self.answer.text, fa, "Copy answer")
         self.copy_button.setObjectName("AiChatCopy")
-        again = word("Ask the same question again")
-        self.retry_button = action_button("\u21bb " + word("Retry"), again)
+        self.retry_button = IconButton("retry", control("Regenerate"))
         self.retry_button.setObjectName("AiChatRetry")
         self.retry_button.clicked.connect(lambda _checked=False: self.retry.emit())
+        self.good_button = IconButton("thumb_up", control("Good answer"))
+        self.good_button.setObjectName("AiChatGood")
+        self.bad_button = IconButton("thumb_down", control("Bad answer"))
+        self.bad_button.setObjectName("AiChatBad")
+        for button, rating in ((self.good_button, "good"), (self.bad_button, "bad")):
+            button.setCheckable(True)
+            button.clicked.connect(lambda _checked=False, r=rating: self._rate(r))
         self.cost = _text("", "note")
         self.cost.setObjectName("AiChatCost")
         self.cost.setLayoutDirection(LTR)
         self.cost.hide()
         tools.addWidget(self.copy_button)
         tools.addWidget(self.retry_button)
-        tools.addSpacing(8)
+        tools.addWidget(self.good_button)
+        tools.addWidget(self.bad_button)
+        tools.addSpacing(10)
         tools.addWidget(self.cost, 1)
         self.action_bar.hide()
         layout.addWidget(self.action_bar)
         self.lines: list[str] = []
         self.started = time.monotonic()
         self.done = False
+        self.rating = ""
 
     def _fold(self, shown: bool) -> None:
         self.steps.setVisible(shown and bool(self.steps.text()))
 
+    def _rate(self, rating: str) -> None:
+        """A thumb: one of the two at most; the rating goes to the log (`rated`)."""
+        good, bad = self.good_button, self.bad_button
+        chosen, other = (good, bad) if rating == "good" else (bad, good)
+        other.setChecked(False)
+        self.rating = rating if chosen.isChecked() else ""
+        self.rated.emit(self.rating or "none")
+
     def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 (Qt name)
         super().enterEvent(event)
         self.question_copy.show()
-        self.question_edit.show()
 
     def leaveEvent(self, event: QEvent) -> None:  # noqa: N802 (Qt name)
         super().leaveEvent(event)
         self.question_copy.hide()
-        self.question_edit.hide()
 
     def add_step(self, step: Step) -> None:
         self.lines.append(f"{STEP_DOT}  {step.line()}")
@@ -463,7 +515,8 @@ class TurnView(QFrame):
         self.meta.setText("\u2717 " + text)
         self.steps.setText("\n".join([*self.lines, f"\u2717 {text}"]))
         self.steps.show()
-        self.copy_button.hide()
+        for button in (self.copy_button, self.good_button, self.bad_button):
+            button.hide()  # a failed turn has nothing to copy or to rate: only Regenerate
         self.action_bar.show()
 
 
@@ -474,8 +527,13 @@ class ChatInput(QPlainTextEdit):
     submitted = Signal()
     focused = Signal(bool)
     recall = Signal()
+    escaped = Signal()  # Esc stops the AI while it works (0.47.0)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 (Qt name)
+        if event.key() == Qt.Key.Key_Escape:
+            event.accept()
+            self.escaped.emit()
+            return
         if event.key() == Qt.Key.Key_Up and not self.toPlainText():
             event.accept()
             self.recall.emit()
@@ -506,13 +564,10 @@ class PromptStrip(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
-        self.back = lab_button("\u2039", "arrow")
-        self.forward = lab_button("\u203a", "arrow")
-        for button, name in ((self.back, "Earlier prompts"), (self.forward, "More prompts")):
+        self.back = IconButton("chevron_left", "Earlier prompts", size=ARROW_SIZE, icon_size=16)
+        self.forward = IconButton("chevron_right", "More prompts", size=ARROW_SIZE, icon_size=16)
+        for button in (self.back, self.forward):
             button.setObjectName("AiChatQuickArrow")
-            button.setAccessibleName(name)
-            button.setToolTip(name)
-            button.setFixedSize(ARROW_SIZE, ARROW_SIZE)
         self.area = QScrollArea()
         self.area.setFrameShape(QFrame.Shape.NoFrame)
         self.area.setWidgetResizable(True)
@@ -593,6 +648,7 @@ def centred(widget: QWidget) -> QWidget:
 class ChatPanel(QWidget):
     turn_done = Signal(object)  # the finished Turn (the page records its usage and charts)
     chat_changed = Signal(str)  # the saved chat's id ("" for a new, unsaved chat)
+    rated = Signal(str, str)  # a thumb under an answer: the rating and the question (0.47.0)
 
     def __init__(
         self,
@@ -653,12 +709,10 @@ class ChatPanel(QWidget):
         holder.addWidget(centred(column), 1)
         self.transcript.setWidget(body)
         outer.addWidget(self.transcript, 1)
-        self.down = lab_button("\u2193", "down")
+        jump = word("Jump to the latest message")
+        self.down = IconButton("arrow_down", jump, size=DOWN_SIZE, round_=True, outlined=True)
         self.down.setObjectName("AiChatDown")
         self.down.setParent(self.transcript)
-        self.down.setFixedSize(DOWN_SIZE, DOWN_SIZE)
-        self.down.setAccessibleName(word("Jump to the latest message"))
-        self.down.setToolTip(word("Jump to the latest message"))
         self.down.clicked.connect(self._to_bottom)
         self.down.hide()
         scroll = self.transcript.verticalScrollBar()
@@ -712,8 +766,9 @@ class ChatPanel(QWidget):
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-        cap = lab_label("NEW CHAT", "cap")
-        cap.setLayoutDirection(LTR)
+        cap = lab_label(word("NEW CHAT"), "cap")
+        if not self.fa:
+            cap.setLayoutDirection(LTR)
         layout.addWidget(cap)
         layout.addWidget(lab_label(word("What shall we look at?"), "welcome", wrap=True))
         sub = "From charts and tables to the comparison of an AI suggestion. Pick one or write."
@@ -749,27 +804,25 @@ class ChatPanel(QWidget):
         self.input.setFrameShape(QFrame.Shape.NoFrame)
         self.input.submitted.connect(self.send)
         self.input.recall.connect(self.recall_last)
+        self.input.escaped.connect(self.stop)
         self.input.textChanged.connect(self._typed)
         self.input.focused.connect(self._focus)
         box.addWidget(self.input)
         tools = QHBoxLayout()
         tools.setSpacing(10)
-        self.attach = LabIcon("clip", 18)
-        self.attach.setToolTip(word("Attaching files comes later."))
-        self.attach.setAccessibleName(word("Attach a file"))
-        self.paper_tag = Tag("PAPER ONLY", "neutral")
-        self.stop_button = lab_button(word("Stop"), "link")
+        self.hint = lab_label(word("Enter sends \u00b7 Shift+Enter: new line"), "note")
+        self.hint.setObjectName("AiChatHint")
+        self.stop_button = lab_button(word("Stop"), "link")  # the round button stops too
         self.stop_button.setObjectName("AiChatStop")
         self.stop_button.clicked.connect(self.stop)
-        self.send_button = SendButton()
+        self.stop_button.hide()
+        self.send_button = RoundSendButton()
         self.send_button.setObjectName("AiChatSend")
         self.send_button.setToolTip(word("Send"))
         self.send_button.setAccessibleName(word("Send"))
         self.send_button.clicked.connect(self._send_or_stop)
-        tools.addWidget(self.attach)
-        tools.addWidget(self.paper_tag)
+        tools.addWidget(self.hint)
         tools.addStretch(1)
-        tools.addWidget(self.stop_button)
         tools.addWidget(self.send_button)
         box.addLayout(tools)
         return self.composer
@@ -918,14 +971,14 @@ class ChatPanel(QWidget):
         client: AiClient = found
         view = TurnView(question, fa=self.fa)
         view.retry.connect(lambda text=question: self.retry(text))
-        view.edit.connect(lambda text=question: self.set_text(text))
+        view.rated.connect(lambda rating, text=question: self._rated(rating, text))
         apply_tree(view, self.tokens)
         self.views.append(view)
         self._append(view)
         self._busy = True
         self._cancel.clear()
         self.composer.set_state("busy")
-        self.status.setText(f"Asking {client.settings.model}...")
+        self.status.setText(self.word("Asking {model}...").format(model=client.settings.model))
         self._update()
         tools = list(self.tools())
         history = list(self.turns)
@@ -960,6 +1013,12 @@ class ChatPanel(QWidget):
         self.start_job(job)
         return True
 
+    def _rated(self, rating: str, question: str) -> None:
+        """A thumb under an answer: into the log, so bad answers can be found later."""
+        line = f"AI Lab chat feedback: {rating} | Q: {short(question, LOG_QUESTION)}"
+        _log.log("INFO", "{}", line)
+        self.rated.emit(rating, question)
+
     def retry(self, question: str) -> bool:
         """Ask a question again (Retry under an answer)."""
         return self.ask(question)
@@ -991,7 +1050,7 @@ class ChatPanel(QWidget):
         for turn in chat.turns:
             view = TurnView(turn.question, fa=self.fa)
             view.retry.connect(lambda text=turn.question: self.retry(text))
-            view.edit.connect(lambda text=turn.question: self.set_text(text))
+            view.rated.connect(lambda rating, text=turn.question: self._rated(rating, text))
             for step in turn.steps:
                 view.add_step(step)
             view.finish(turn)
@@ -1033,8 +1092,11 @@ class ChatPanel(QWidget):
         self._idle()
         if isinstance(turn, Turn):
             self.turns.append(turn)
+            question = ""
             if self.views:
                 self.views[-1].finish(turn)
+                question = self.views[-1].question.text()
+            log_turn(turn, question)
             self.status.setText(turn.stopped.capitalize() if turn.stopped else "")
             self._save(turn)
             self._placing = True
@@ -1061,8 +1123,12 @@ class ChatPanel(QWidget):
 
     def show_failure(self, text: str) -> None:
         self._idle()
+        question = ""
         if self.views:
             self.views[-1].fail(text)
+            question = self.views[-1].question.text()
+        line = f"AI Lab chat failed: {text} | Q: {short(question, LOG_QUESTION)}"
+        _log.log("WARNING", "{}", line)
         self.status.setText(f"The AI request failed: {text}")
         self._update()
 
@@ -1093,7 +1159,7 @@ class ChatPanel(QWidget):
         self.send_button.set_look(bool(self.input.toPlainText().strip()), busy)
         self.send_button.setToolTip(self.word("Stop") if busy else self.word("Send"))
         self.stop_button.setEnabled(busy)
-        self.stop_button.setVisible(busy)
+        self.send_button.setAccessibleName(self.word("Stop") if busy else self.word("Send"))
         self.new_button.setEnabled(not busy)
         for button in [*self.example_buttons, *self.suggestion_buttons]:
             button.setEnabled(not busy)
