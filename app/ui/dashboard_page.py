@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 from app.analysis.structure import Trend
 from app.analytics.stats import compute_stats, equity_curve
 from app.analytics.trades import TradeRecord
+from app.channels.overview import Overview
 from app.domain.modes import OperatingMode
 from app.domain.signals import Direction, OrderType, SignalRecord, SignalState
 from app.engine.execution import ExecutionSnapshot, PositionView
@@ -57,6 +58,7 @@ from app.engine.signal_pipeline import SignalsSnapshot
 from app.mt5.models import Quote
 from app.risk.risk_manager import RiskSnapshot
 from app.strategies.registry import STRATEGIES
+from app.ui.channel_budgets import DashboardBudgets
 from app.ui.navigation import page_by_id
 from app.ui.pages import PageHeader
 from app.ui.shell import Segmented, ticker_symbol
@@ -90,6 +92,7 @@ from app.ui.v2 import (
 
 POLL_MS = 2_000
 TRADES_SECONDS = 60.0
+CHANNELS_SECONDS = 30.0
 DAY = 86_400.0
 SIDE_WIDTH = 332
 COLUMN_GAP = 28
@@ -168,7 +171,7 @@ COUNTED_FA = {"waiting": "در صف", "refused": "رد شده", "ready": "آما
 DASH_FA: dict[str, str] = {
     "Dashboard": "داشبورد",
     "Balance": "موجودی",
-    "Equity": "اکوییتی",
+    "Equity": "اکویتی",
     "Today": "امروز",
     "Not known yet": "هنوز معلوم نیست",
     "Equity curve": "منحنی سرمایه",
@@ -195,6 +198,11 @@ DASH_FA: dict[str, str] = {
     "Cloud sync": "همگام‌سازی ابری",
     "Update": "به‌روزرسانی",
     "Go to Risk": "رفتن به ریسک",
+    "Telegram channels": "کانال‌های تلگرام",
+    "Open the AI Lab": "باز کردن AI Lab",
+    "All channels": "همه‌ی کانال‌ها",
+    "daily stop": "توقف روزانه",
+    "drawdown stop": "توقف افت سرمایه",
     "Checklist": "چک‌لیست",
     "Open the Risk page": "باز کردن صفحه‌ی ریسک",
     "Open the Health page": "باز کردن صفحه‌ی سلامت",
@@ -266,6 +274,8 @@ class DashboardContext:
     go_live: Callable[[], str] | None = None
     # The Go-Live checklist; when not given, the desk behind `go_live` gives it.
     go_live_checklist: Callable[[], GoLiveChecklist] | None = None
+    # The money given to the Telegram channels (phase 22g); None until the window sets it.
+    channels: Callable[[], Overview] | None = None
 
 
 def _utc(seconds: float) -> str:
@@ -553,6 +563,7 @@ class DashboardPage(QWidget):
         self.go: Callable[[str], None] = lambda page_id: None
         self._trades_at = -math.inf
         self._go_live_at = -math.inf
+        self._channels_at = -math.inf
         self._signals_snapshot: SignalsSnapshot | None = None
         self._quotes: Mapping[str, Quote] = {}
         self._equity_seen: list[float] = []
@@ -613,6 +624,7 @@ class DashboardPage(QWidget):
         main.addStretch(1)
         self._build_sessions(side)
         self._build_limits(side)
+        self._build_channels(side)
         self._build_health(side)
         self._build_go_live(side)
         self._build_direction(side)
@@ -768,6 +780,11 @@ class DashboardPage(QWidget):
             self.bar_values[name] = value
             self.bar_tags[name] = tag
 
+    def _build_channels(self, column: QVBoxLayout) -> None:
+        self.channel_budgets = DashboardBudgets(self.t)
+        self.channel_budgets.section.clicked.connect(lambda: self.go("ai_lab"))
+        column.addWidget(self.channel_budgets)
+
     def _build_health(self, column: QVBoxLayout) -> None:
         box = self._block(column)
         section = Section(self.t("System health"), link=self.t("Open the Health page"))
@@ -849,6 +866,9 @@ class DashboardPage(QWidget):
         if abs(moment - self._go_live_at) >= TRADES_SECONDS:
             self._go_live_at = moment
             self._show_go_live()
+        if abs(moment - self._channels_at) >= CHANNELS_SECONDS:
+            self._channels_at = moment
+            self._show_channels()
         if context.market is not None:
             market = context.market()
             self._quotes = market.quotes
@@ -871,6 +891,17 @@ class DashboardPage(QWidget):
         desk = getattr(context.go_live, "__self__", None)  # the GoLiveDesk of `readiness`
         found = getattr(desk, "checklist", None)
         return cast(Callable[[], GoLiveChecklist], found) if callable(found) else None
+
+    def _show_channels(self) -> None:
+        """The money given to the Telegram channels (hidden while none has a budget)."""
+        source = self.context.channels
+        if source is None:
+            return
+        try:
+            found = source()
+        except Exception:
+            found = Overview()
+        self.channel_budgets.set_overview(found, self._currency)
 
     def _show_go_live(self) -> None:
         source = self._checklist_source()
