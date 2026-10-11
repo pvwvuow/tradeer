@@ -14,3 +14,5 @@
   minutes with parallel tests (5 to 6 minutes on #87 and #86). Run again. Three hangs in a
   day on docs-only commits: the CI version 2 `changes` job (scripts/ci/workflows) would have
   skipped all of them.
+- 11 October 2026, release PR #147 (0.47.0): a release PR is opened with the workflow's own
+  token, so CI does not start on it; this docs commit starts it.

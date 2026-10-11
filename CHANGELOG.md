@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.0](https://github.com/pvwvuow/tradeer/compare/v0.46.0...v0.47.0) (2026-10-11)
+
+
+### Features
+
+* **ai-lab:** Telegram signals tab, bot buttons, chat icons, arrows, logs and tokens (22a-22e) ([#146](https://github.com/pvwvuow/tradeer/issues/146)) ([0fed287](https://github.com/pvwvuow/tradeer/commit/0fed2872d1630b363fa49860b71dd634c1f47d19))
+
 ## [0.46.0](https://github.com/pvwvuow/tradeer/compare/v0.45.0...v0.46.0) (2026-10-11)
 
 
