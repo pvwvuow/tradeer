@@ -59,11 +59,27 @@ word, not an icon). Now (`app/ui/chat_controls.py`):
   Usage panel counts them) and to today's line on the Telegram signals tab ("AI: 3
   reading(s) · 2.1k tokens · $0.0040").
 
+## 22b. The Telegram bot (0.47.0)
+
+- Every message is HTML now: a bold headline (BUY LIMIT XAUUSD), the channel, one fixed-width
+  line per price (Entry, SL, TP1 with its R), the lots and the money at risk, and one line
+  for what happens next. Text from outside is escaped. Notices (trade opened, limit hit...)
+  have an icon and a bold title too.
+- Each channel signal is its own message. A card that waits for you ("Waiting for your
+  approval, expires 11:40") carries **Approve** and **Skip** buttons. Everything else only
+  tells: an order that went out by itself (Auto), a signal the checks refused (with the
+  reason), a Paper trial, a duplicate. Cards are told once, when the desk first answers.
+- A button works like a command. The chat must be on the list and unlocked with `/pin`;
+  a locked chat gets a pop-up and nothing happens. The press is answered on the app's UI
+  thread (8 s wait), does what the hold and Skip do (the engine still checks the price, the
+  spread and the limits again) and is audit-logged. On a real account Approve asks once more
+  ("Yes, send the REAL order" or Cancel). A card that is no longer waiting says so.
+- These messages ignore quiet hours and the per-kind settings of Notifications: they are
+  tied to a decision. The bot's text is English.
+- Code: `app/notify/bot_text.py` (pure), `app/notify/telegram.py`, `app/ui/bot_cards.py`.
+
 ## Next
 
-- **22b, the bot**: neater messages (HTML), a notice for every channel signal; an approval
-  card gets Approve and Skip buttons in the bot (inline keyboard, `callback_query`), an info
-  only message when no approval is needed.
 - **22e, the rest**: the desk note's tokens, and the readings per channel on the channels
   page.
 - **22f, quicker detection**: fewer waits for drafts, more formats read without the AI.
