@@ -17,6 +17,9 @@ pass, and then goes the normal way. A result claim ("+120 pips today") is never 
 0.44.1: a message with a picture and no whole signal in its text goes to the AI with the
 picture; the card then says the numbers came from a picture. A model that refuses pictures
 gets none for 6 hours (`PICTURE_PAUSE`), so the daily readings are not spent on it.
+0.47.0 (phase 22b): every channel signal is also told to the Telegram bot (`alerts`): one
+that became a card when the desk first answered, one that did not (a Paper trial, a
+duplicate, a refusal) at once; see `app.ui.bot_cards`.
 0.47.0: every reading is logged with what the AI answered, the time and the tokens, and its
 tokens and cost go to the AI Lab's usage (kind `channel`) and to the Telegram signals tab.
 
@@ -75,6 +78,7 @@ from app.channels.shadow_follow import BarSource, follow_signals
 from app.channels.stats import Card, duplicate_of
 from app.channels.updates import LINK_SECONDS, Earlier, Update, UpdateKind, link, read_update
 from app.domain.signals import Direction, SignalState
+from app.notify.bot_text import SignalAlert
 from app.observability.logger import audit
 from app.risk.budget import budget_features
 from app.signals.prefilter import Kind, classify
@@ -83,9 +87,11 @@ from app.signals.words import resolve_symbol
 from app.storage.channel_store import ChannelRepository, ChannelSignal, ChannelSource
 from app.strategies.manual_signal import channel_strategy
 from app.ui.backtest_page import BacktestContext
+from app.ui.bot_cards import alert_from_card, alert_from_parsed
 from app.ui.channel_cards import FollowUpCard, HoldCard, SettingsCard
 from app.ui.lab_desk import CardSource, LabDesk
 from app.ui.lab_parts import apply_tree
+from app.ui.signal_card import OrderCard
 
 KEEP_SEEN = 50
 DRAFT_CHECK_MS = 60 * 1000  # incomplete drafts are expired this often (0.44.0)
@@ -282,6 +288,8 @@ class ChannelFeed(QObject):
         self.pictures_off_until = 0.0  # a model that refused a picture gets none until then
         self.usage = usage if usage is not None else desk.page.record_usage
         self.spend = AiSpend()
+        self.alerts: list[Callable[[SignalAlert], None]] = []  # the Telegram bot (0.47.0)
+        desk.on_settled.append(self._card_settled)
         self.read_done.connect(self.show_read, Qt.ConnectionType.QueuedConnection)
         self.arrived.connect(self.handle, Qt.ConnectionType.QueuedConnection)
         self.edited.connect(self.handle_edit, Qt.ConnectionType.QueuedConnection)
@@ -404,10 +412,27 @@ class ChannelFeed(QObject):
                 ),
                 now,
             )
+        if kind is Kind.SIGNAL and parsed.direction is not None and found.action is not Action.CARD:
+            why = found.reason[:1].upper() + found.reason[1:]
+            self.tell(alert_from_parsed(parsed, source.title, symbol, why))
         if kind is not Kind.NOISE:
             self.log("INFO", f"Telegram channel {source.title}: {found.reason}")
         self._remember(source, message, found)
         return found
+
+    # The Telegram bot (phase 22b) ---------------------------------------------------------
+    def tell(self, alert: SignalAlert) -> None:
+        """A signal to every sink (the bot); a sink that fails stops nothing."""
+        for sink in list(self.alerts):
+            try:
+                sink(alert)
+            except Exception as error:
+                self.log("WARNING", f"Telegram signal message failed: {type(error).__name__}")
+
+    def _card_settled(self, request_id: str, card: OrderCard) -> None:
+        """The desk answered a channel's card for the first time: tell the bot."""
+        names = self.sources.get(request_id)
+        self.tell(alert_from_card(card, " + ".join(names) if names else "channel"))
 
     # Half signals (docs/AI_LAB_V3.md section 1) -------------------------------------------
     def _waiting(
