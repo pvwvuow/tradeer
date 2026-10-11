@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QWidget
 from pytestqt.qtbot import QtBot
@@ -100,3 +100,8 @@ def test_the_chart_card_stands_where_the_answer_put_it(qtbot: QtBot, tmp_path: P
     qtbot.waitUntil(lambda: not chat.busy and len(chat.views) == 2, timeout=10_000)
     assert chat.views[-1].question.text() == "How am I doing overall?"
     assert chat.down.objectName() == "AiChatDown"
+    chat.views[0].question_edit.click()
+    assert chat.input.toPlainText() == "How am I doing overall?"
+    chat.input.clear()
+    qtbot.keyClick(chat.input, Qt.Key.Key_Up)
+    assert chat.input.toPlainText() == "How am I doing overall?"

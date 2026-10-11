@@ -21,6 +21,9 @@ line in a soft bubble (Copy on hover); the answer is drawn as a report (`AnswerV
 tables, callouts, charts, next steps), with Copy and Retry under it. Chart cards the agent
 placed with an `app-chart` block stand inside the answer. A round button jumps to the latest
 message, and the message box grows with its text.
+
+0.45.1: Edit under your message puts it back in the message box; the up arrow in an empty
+box brings back your last question.
 """
 
 from __future__ import annotations
@@ -122,6 +125,8 @@ CHAT_FA: dict[str, str] = {
     "Retry": "دوباره",
     "Ask the same question again": "همین سؤال را دوباره بپرس",
     "Jump to the latest message": "رفتن به آخرین پیام",
+    "Edit": "ویرایش",
+    "Edit this question": "ویرایش این سؤال",
 }
 FA_DIGITS = str.maketrans("0123456789", "".join(chr(0x06F0 + digit) for digit in range(10)))
 
@@ -329,6 +334,7 @@ class TurnView(QFrame):
     report, then Copy, Retry and the cost."""
 
     retry = Signal()
+    edit = Signal()
 
     def __init__(self, question: str, parent: QWidget | None = None, fa: bool = False) -> None:
         super().__init__(parent)
@@ -348,6 +354,11 @@ class TurnView(QFrame):
         self.question_copy = CopyButton(lambda: question, fa)
         self.question_copy.setObjectName("AiChatQuestionCopy")
         self.question_copy.hide()
+        self.question_edit = action_button("\u270e " + word("Edit"), word("Edit this question"))
+        self.question_edit.setObjectName("AiChatQuestionEdit")
+        self.question_edit.clicked.connect(lambda _checked=False: self.edit.emit())
+        self.question_edit.hide()
+        mine.addWidget(self.question_edit)
         mine.addWidget(self.question_copy)
         layout.addLayout(mine)
         meta = QHBoxLayout()
@@ -411,10 +422,12 @@ class TurnView(QFrame):
     def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 (Qt name)
         super().enterEvent(event)
         self.question_copy.show()
+        self.question_edit.show()
 
     def leaveEvent(self, event: QEvent) -> None:  # noqa: N802 (Qt name)
         super().leaveEvent(event)
         self.question_copy.hide()
+        self.question_edit.hide()
 
     def add_step(self, step: Step) -> None:
         self.lines.append(f"{STEP_DOT}  {step.line()}")
@@ -455,12 +468,18 @@ class TurnView(QFrame):
 
 
 class ChatInput(QPlainTextEdit):
-    """The composer's text: Enter sends, Shift+Enter starts a new line."""
+    """The composer's text: Enter sends, Shift+Enter starts a new line, the up arrow in an
+    empty box asks for the last question."""
 
     submitted = Signal()
     focused = Signal(bool)
+    recall = Signal()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 (Qt name)
+        if event.key() == Qt.Key.Key_Up and not self.toPlainText():
+            event.accept()
+            self.recall.emit()
+            return
         enter = event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
         shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         if enter and not shift:
@@ -729,6 +748,7 @@ class ChatPanel(QWidget):
         self.input.setFixedHeight(INPUT_MIN)
         self.input.setFrameShape(QFrame.Shape.NoFrame)
         self.input.submitted.connect(self.send)
+        self.input.recall.connect(self.recall_last)
         self.input.textChanged.connect(self._typed)
         self.input.focused.connect(self._focus)
         box.addWidget(self.input)
@@ -766,6 +786,13 @@ class ChatPanel(QWidget):
         cursor = self.input.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.input.setTextCursor(cursor)
+
+    def recall_last(self) -> bool:
+        """The last question back in the message box (the up arrow), to change and send."""
+        if self._busy or not self.views:
+            return False
+        self.set_text(self.views[-1].question.text())
+        return True
 
     def _show_welcome(self, shown: bool) -> None:
         """The welcome with its suggestions, or the quick prompts once the chat began."""
@@ -891,6 +918,7 @@ class ChatPanel(QWidget):
         client: AiClient = found
         view = TurnView(question, fa=self.fa)
         view.retry.connect(lambda text=question: self.retry(text))
+        view.edit.connect(lambda text=question: self.set_text(text))
         apply_tree(view, self.tokens)
         self.views.append(view)
         self._append(view)
@@ -963,6 +991,7 @@ class ChatPanel(QWidget):
         for turn in chat.turns:
             view = TurnView(turn.question, fa=self.fa)
             view.retry.connect(lambda text=turn.question: self.retry(text))
+            view.edit.connect(lambda text=turn.question: self.set_text(text))
             for step in turn.steps:
                 view.add_step(step)
             view.finish(turn)
