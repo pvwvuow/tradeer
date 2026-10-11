@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.1](https://github.com/pvwvuow/tradeer/compare/v0.49.0...v0.49.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **channels:** the Telegram signals tab keeps its entries after the app is closed (22i) ([#152](https://github.com/pvwvuow/tradeer/issues/152)) ([a8770b5](https://github.com/pvwvuow/tradeer/commit/a8770b5cd35e4ba63844e303b74c84b43f4e1415))
+
 ## [0.49.0](https://github.com/pvwvuow/tradeer/compare/v0.48.0...v0.49.0) (2026-10-11)
 
 

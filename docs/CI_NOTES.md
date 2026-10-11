@@ -21,3 +21,4 @@
 - 11 October 2026, PR #152 (22i): the Windows `ci` job failed only because an xdist worker
   crashed in `test_window_polish.py::test_a_page_fades_in_and_the_effect_goes_away`, a test
   this PR does not touch; Linux ran the same suite green. Run again with this commit.
+- 11 October 2026, release PR #153 (0.49.1): same as #151; this docs commit starts CI.
