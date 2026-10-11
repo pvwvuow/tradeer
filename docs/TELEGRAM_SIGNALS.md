@@ -93,6 +93,23 @@ word, not an icon). Now (`app/ui/chat_controls.py`):
   magic number (`app/channels/overview.py`, pure; `app/ui/channel_budgets.py`). The blocks are
   added by `Insights.attach_budgets`, so the two pages themselves are untouched.
 
+## 22h. The AI reads what the parser does not (0.48.1)
+
+The owner wrote only "EURUSD" in a test message and gave the trade in the next messages:
+nothing understood. Now:
+
+- A short message that only names the pair (four words at most, not an update, not a result
+  claim) opens a draft, so the side and the prices that follow join it like any other piece.
+- Two prices where one has its label ("SL 4180 TP 4205"), or a name and two prices, go to the
+  AI with the channel's last five messages, even when the parser cannot make a signal of
+  them. A draft of three messages that is still incomplete goes to the AI too.
+- The AI is told to put the earlier messages and this one together. Its answer still has to
+  pass every check (known symbol, right sides, only numbers the channel wrote) and still ends
+  as a card that needs your hold.
+- A message that should go to the AI but cannot (no AI connection, the daily limit used) is
+  told in the chat and the log with the reason, once in ten minutes. The limit is 100 AI
+  readings a day (it was 40). A draft that only holds a symbol is not read when it expires.
+
 ## Next
 
 - **22e, the rest**: the desk note's tokens, and the readings per channel on the channels
