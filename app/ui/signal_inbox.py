@@ -57,8 +57,7 @@ INBOX_FA: dict[str, str] = {
     "NOTE": "یادداشت",
     "No channel signals yet": "هنوز سیگنالی از کانال‌ها نیامده",
     "Turn a channel on in Settings > Telegram channels: its signals and notes show up here.": (
-        "یک کانال را در تنظیمات > کانال‌های تلگرام روشن کنید: سیگنال‌ها و یادداشت‌هایش "
-        "اینجا می‌آیند."
+        "یک کانال را در تنظیمات > کانال‌های تلگرام روشن کنید: سیگنال‌ها و یادداشت‌هایش اینجا می‌آیند."
     ),
     "{waiting} waiting for you \u00b7 {today} today": "{waiting} منتظر شما \u00b7 {today} امروز",
     "AI: {reads} reading(s) \u00b7 {tokens} tokens": "AI: {reads} خواندن \u00b7 {tokens} توکن",
