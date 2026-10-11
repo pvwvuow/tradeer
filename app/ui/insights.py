@@ -43,11 +43,12 @@ from app.journal.scheduler import ReportService
 from app.journal.store import JournalRepository
 from app.mt5.connection import ConnectionService
 from app.mt5.models import AccountKind
+from app.notify.bot_text import CardReply, SignalAlert
 from app.notify.center import NotificationCenter
 from app.notify.events import EventKind, Notice
 from app.notify.remote import EngineRemote
 from app.notify.settings import NotificationSettingsSource, token_name
-from app.notify.telegram import TelegramApi, TelegramBot, TelegramError
+from app.notify.telegram import CardHandler, TelegramApi, TelegramBot, TelegramError
 from app.notify.watcher import NoticeWatcher
 from app.observability.categories import LogCategory
 from app.observability.logger import LogPipeline, audit, get_logger
@@ -58,6 +59,7 @@ from app.storage.runtime import StorageRuntime
 from app.strategies.registry import strategy_for_magic
 from app.ui.ai_lab_page import AiLabPage
 from app.ui.analytics_page import AnalyticsContext
+from app.ui.bot_cards import CardActions
 from app.ui.channel_feed import ChannelFeed
 from app.ui.channels_page import ChannelsContext, ChannelsPage
 from app.ui.dashboard_page import DashboardContext
@@ -138,6 +140,7 @@ class Insights:
     engine: ExecutionEngine | None = None  # a channel's follow-ups ask it to close or move SL
     actions: LabActions | None = None  # the AI Lab chat's channels, trades, doctor, proposals
     inbox: SignalInbox | None = None  # the AI Lab's Telegram signals tab (0.47.0)
+    card_handlers: list[CardHandler] = field(default_factory=list)  # bot buttons (0.47.0)
 
     def attach(self, window: QWidget) -> None:
         from app.ui.tray import TrayNotifier
@@ -201,8 +204,16 @@ class Insights:
         feed = ChannelFeed(self.desk, self.channels.repository, engine=self.engine, log=write)
         feed.attach(self.channels.reader)
         self.stop_hooks.append(feed.timer.stop)
+        feed.alerts.append(self.send_alert)
+        self.card_handlers.append(CardActions(self.desk).handle)
         self.feed = feed
         return feed
+
+    def send_alert(self, alert: SignalAlert) -> None:
+        """A channel signal to the Telegram bot, in its own thread (the network can be slow
+        and the UI must not wait for it)."""
+        for bot in list(self.bot_holder):
+            threading.Thread(target=bot.send_alert, args=(alert,), daemon=True).start()
 
     def attach_actions(self, window: QWidget) -> LabActions | None:
         """The AI Lab chat reads the channels, the open trades and the risk limits, checks
@@ -390,7 +401,14 @@ def build_insights(
     )
     remote = EngineRemote(execution, pipeline, risk, lambda: service.status, trades.today)
     holder: list[TelegramBot] = []
+    card_handlers: list[CardHandler] = []
     name = token_name(profile)
+
+    def handle_card(action: str, key: str) -> CardReply:
+        """A button under a channel signal in the bot: answered by the AI Lab's desk."""
+        if card_handlers:
+            return card_handlers[0](action, key)
+        return CardReply("The AI Lab is not ready yet.", done=True)
 
     def apply_bot() -> str:
         for bot in holder:
@@ -418,6 +436,7 @@ def build_insights(
                 source="telegram",
             ),
         )
+        bot.card_handler = handle_card
 
         def send(notice: Notice) -> None:
             threading.Thread(target=bot.notify, args=(notice,), daemon=True).start()
@@ -482,6 +501,7 @@ def build_insights(
         watcher=watcher,
         reports=reports,
         bot_holder=holder,
+        card_handlers=card_handlers,
         llm=LlmContext(
             source=LlmSettingsSource(profile_dir),
             credentials=credentials,
