@@ -17,6 +17,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,8 @@ from app.ui.journal_page import JournalContext
 from app.ui.lab_actions import LabActions
 from app.ui.lab_desk import LabDesk
 from app.ui.notifications_page import NotificationsContext, NotificationsPage
+from app.ui.shell import persian_digits
+from app.ui.signal_inbox import CHAT_TAB, LabTabs, SignalInbox, mount
 from app.ui.style import hand_cursors, name_controls
 from app.ui.trade_history import TradeHistory
 
@@ -134,6 +137,7 @@ class Insights:
     feed: ChannelFeed | None = None  # channel signals to the AI Lab's cards (phase 21d)
     engine: ExecutionEngine | None = None  # a channel's follow-ups ask it to close or move SL
     actions: LabActions | None = None  # the AI Lab chat's channels, trades, doctor, proposals
+    inbox: SignalInbox | None = None  # the AI Lab's Telegram signals tab (0.47.0)
 
     def attach(self, window: QWidget) -> None:
         from app.ui.tray import TrayNotifier
@@ -149,6 +153,7 @@ class Insights:
         QTimer.singleShot(30_000, self.reports.run_due)
         self.attach_llm(window)
         self.attach_desk(window)
+        self.attach_inbox(window)
         self.attach_feed()
         self.attach_actions(window)
         self.attach_channels(window)
@@ -165,6 +170,28 @@ class Insights:
         else:
             self.desk = LabDesk(lab, self.signals, self.real_account, market=market)
         return self.desk
+
+    def attach_inbox(self, window: QWidget) -> SignalInbox | None:
+        """The AI Lab's Telegram signals tab, next to the chat, and its count of cards that
+        wait for you on the sidebar's AI Lab (0.47.0)."""
+        desk = self.desk
+        if desk is None or self.channels is None:
+            return None
+        page = desk.page
+        inbox = SignalInbox(page.persian)
+        tabs = mount(page, page.chat, inbox, page.persian, page.tokens)
+        if tabs is None:
+            inbox.deleteLater()
+            return None
+        inbox.review.connect(partial(review_in_chat, tabs, page))
+        badge = getattr(window, "set_nav_badge", None)
+        if callable(badge):
+            fa = page.persian
+            inbox.counted.connect(lambda count: badge("ai_lab", count_text(count, fa)))
+        self.stop_hooks.append(inbox.timer.stop)
+        desk.inbox = inbox
+        self.inbox = inbox
+        return inbox
 
     def attach_feed(self) -> ChannelFeed | None:
         """A Live channel's signals become order cards in the AI Lab (docs/SIGNAL_DESK.md
@@ -230,6 +257,18 @@ class Insights:
             bot.stop()
         for hook in self.stop_hooks:
             hook()
+
+
+def count_text(count: int, fa: bool) -> str:
+    text = str(count) if count > 0 else ""
+    return persian_digits(text) if fa else text
+
+
+def review_in_chat(tabs: LabTabs, page: AiLabPage, question: str) -> bool:
+    """Review in chat: the chat tab, the question in its box, and sent when it can be."""
+    tabs.show_tab(CHAT_TAB)
+    page.chat.set_text(question)
+    return page.chat.send()
 
 
 def _offset(clock: Callable[[], BrokerClock | None]) -> float:
