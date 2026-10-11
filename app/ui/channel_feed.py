@@ -22,6 +22,8 @@ that became a card when the desk first answered, one that did not (a Paper trial
 duplicate, a refusal) at once; see `app.ui.bot_cards`.
 0.47.0: every reading is logged with what the AI answered, the time and the tokens, and its
 tokens and cost go to the AI Lab's usage (kind `channel`) and to the Telegram signals tab.
+0.48.1 (phase 22h): a draft of three messages that is still incomplete goes to the AI too;
+a message that cannot go to the AI (no connection, the daily limit used) says why (`cannot`).
 
 Phase 21d2 and 21e: every parsed signal is saved (`tg_signals`) and followed as a shadow
 trade in a worker thread every 10 minutes; the same signal from a second channel within 15
@@ -70,6 +72,7 @@ from app.channels.reading import (
     ReadResult,
     canonical,
     is_claim,
+    numbers,
     parse_reply,
     read_messages,
     unclear,
@@ -99,6 +102,8 @@ SHADOW_MS = 10 * 60 * 1000  # the shadow results are brought up to date this oft
 FIRST_SHADOW_MS = 60 * 1000
 READING = "; the AI reads it now"
 KEEP_ASKED = 500
+LONG_DRAFT = 3  # a draft of this many messages that is still incomplete goes to the AI
+CANNOT_SECONDS = 600.0  # the same "the AI could not read" line is told at most this often
 PICTURE_PAUSE = 6 * 3600  # no pictures to a model that refused one
 PICTURE_PAUSED = "; pictures go to the AI again in 6 hours"
 RAW_CHARS = 400  # characters of the AI's answer in the log
@@ -285,6 +290,7 @@ class ChannelFeed(QObject):
         self.ai = ai if ai is not None else self._page_ai
         self.reads = ReadCap()
         self.asked: set[tuple[int, int]] = set()  # (channel, message) read by the AI
+        self.cannot_at: dict[str, float] = {}  # why the AI could not read -> when it was told
         self.pictures_off_until = 0.0  # a model that refused a picture gets none until then
         self.usage = usage if usage is not None else desk.page.record_usage
         self.spend = AiSpend()
@@ -340,7 +346,9 @@ class ChannelFeed(QObject):
             )
             if step.action in ("open", "wait"):
                 extra = ""
-                odd = bool(message.photo) or unclear(step.text, symbols, policy.aliases)
+                pieces = len(step.draft.texts) if step.draft is not None else 0
+                odd = bool(message.photo) or pieces >= LONG_DRAFT
+                odd = odd or unclear(step.text, symbols, policy.aliases)
                 if odd and self.ask_ai(source, message, step.text, message.photo):
                     extra = READING
                 return self._waiting(source, message, step, symbols, policy.aliases, extra)
@@ -496,7 +504,10 @@ class ChannelFeed(QObject):
             last_id = draft.message_ids[-1]
             last = ChannelMessage(draft.channel_id, last_id, draft.started, draft.text)
             on = source is not None and source.enabled
-            if telling and on and source is not None and self.ask_ai(source, last, draft.text):
+            lone = len(draft.texts) == 1 and not numbers(draft.text)
+            lone = lone and self.desk.parse_text(draft.text, aliases).direction is None
+            ready = telling and on and not lone
+            if ready and source is not None and self.ask_ai(source, last, draft.text):
                 reason = reason.replace(", nothing done", ": the AI reads it once more")
             self.log("INFO", f"Telegram channel {title}: {reason}")
             if telling:
@@ -543,7 +554,11 @@ class ChannelFeed(QObject):
         if key in self.asked or (picture and self.now() < self.pictures_off_until):
             return False
         client = self.ai()
-        if isinstance(client, str) or not self.reads.take(self.now()):
+        if isinstance(client, str):
+            self.cannot(source, client)
+            return False
+        if not self.reads.take(self.now()):
+            self.cannot(source, f"the daily limit of {self.reads.limit} AI readings is used")
             return False
         if len(self.asked) >= KEEP_ASKED:
             self.asked.clear()
@@ -556,6 +571,18 @@ class ChannelFeed(QObject):
             name="channel-ai-read",
             daemon=True,
         ).start()
+        return True
+
+    def cannot(self, source: ChannelSource, reason: str) -> bool:
+        """Tell (log and chat line) that a message the parser did not understand could not go to
+        the AI, and why; the same reason is told once in a while (True when it was told)."""
+        now = self.now()
+        if now - self.cannot_at.get(reason, -math.inf) < CANNOT_SECONDS:
+            return False
+        self.cannot_at[reason] = now
+        line = f"the AI could not read a message: {reason}"
+        self.log("WARNING", f"Telegram channel {source.title}: {line}")
+        self.noted.emit(source.title, line)
         return True
 
     def _earlier(self, channel_id: int, message_id: int) -> list[str]:
