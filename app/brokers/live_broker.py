@@ -13,6 +13,12 @@ for the `mt5_requests` table and the `execution` log.
 
 A pending order that MT5 took is placed, whatever its return code: FIBO answers 10009 DONE,
 not 10008 PLACED (demo test on the PC, 6 October 2026).
+
+0.50.2 (docs/AI_AUTOPILOT.md B20, B21): after an uncertain answer the broker looks a few
+times, with a short pause, before it retries: an order the server took a moment to show is
+found instead of sent again. A close, a stop change or a cancel is checked the same way
+before a retry (the position's volume, its SL and TP, the order gone), so a lost reply to a
+partial close never closes the rest of the position.
 """
 
 from __future__ import annotations
@@ -50,6 +56,10 @@ from app.mt5.retcodes import (
 SEND_TIMEOUT_SECONDS = 60.0
 RETRY_PAUSE_SECONDS = 0.3
 UNCERTAIN = frozenset({10012, 10031})  # TIMEOUT, CONNECTION: the order may have arrived
+LOOKS = 5  # after an uncertain answer: looks for the result before any retry
+LOOK_PAUSE_SECONDS = 0.4
+VOLUME_EPSILON = 1e-6
+PRICE_TOLERANCE = 1e-6  # relative: an SL or TP the server keeps is the one that was sent
 # Bits of symbol_info().order_mode, expiration_mode and filling_mode (MQL5 SYMBOL_* flags).
 ORDER_FLAGS: tuple[tuple[int, str], ...] = ((1, "market"), (2, "limit"), (4, "stop"))
 EXPIRATION_FLAGS: tuple[tuple[int, str], ...] = (
@@ -64,6 +74,7 @@ SYMBOL_EXPIRATION_SPECIFIED = 4
 
 Pause = Callable[[float], None]
 Timer = Callable[[], float]
+Arrived = Callable[[MT5Api], bool]
 
 
 def as_mapping(value: Any) -> dict[str, Any]:
@@ -250,6 +261,83 @@ def _find_existing(mt5: MT5Api, plan: OrderPlan) -> tuple[int, float, bool] | No
     return None
 
 
+def _arrived_open(mt5: MT5Api, plan: OrderPlan, pause: Pause) -> tuple[int, float, bool] | None:
+    """After an uncertain answer: look `LOOKS` times for the order before a retry may send
+    it again (the server can take a moment to show a position it opened)."""
+    for look in range(LOOKS):
+        found = _find_existing(mt5, plan)
+        if found is not None:
+            return found
+        if look + 1 < LOOKS:
+            pause(LOOK_PAUSE_SECONDS)
+    return None
+
+
+def _arrived(mt5: MT5Api, arrived: Arrived, pause: Pause) -> bool:
+    """After an uncertain answer to a close, a stop change or a cancel: did it happen?"""
+    for look in range(LOOKS):
+        try:
+            if arrived(mt5):
+                return True
+        except Exception:
+            return False
+        if look + 1 < LOOKS:
+            pause(LOOK_PAUSE_SECONDS)
+    return False
+
+
+def volume_of(mt5: MT5Api, ticket: int) -> float | None:
+    """The open volume of a position (0 when it is gone), None when MT5 could not say."""
+    raw = mt5.positions_get(ticket=ticket)
+    if raw is None:
+        return None
+    return sum(_number(item, "volume") for item in raw if int(_number(item, "ticket")) == ticket)
+
+
+def _same(value: float, wanted: float) -> bool:
+    return abs(value - wanted) <= PRICE_TOLERANCE * max(1.0, abs(wanted))
+
+
+def close_arrived(ticket: int, before: float, amount: float) -> Arrived:
+    """A close of `amount` lots of position `ticket` arrived: it has that much less now."""
+
+    def check(mt5: MT5Api) -> bool:
+        now = volume_of(mt5, ticket)
+        return now is not None and now <= before - amount + VOLUME_EPSILON
+
+    return check
+
+
+def levels_arrived(ticket: int, sl: float, tp: float) -> Arrived:
+    """A stop change arrived: the position has this SL and TP now."""
+
+    def check(mt5: MT5Api) -> bool:
+        raw = [item for item in mt5.positions_get(ticket=ticket) or () if _ticket(item) == ticket]
+        if not raw:
+            return False
+        item = raw[0]
+        return _same(_number(item, "sl"), sl) and _same(_number(item, "tp"), tp)
+
+    return check
+
+
+def cancel_arrived(ticket: int) -> Arrived:
+    """A cancel arrived: the order is gone and it did not become a position."""
+
+    def check(mt5: MT5Api) -> bool:
+        orders = mt5.orders_get(ticket=ticket)
+        if orders is None or any(_ticket(item) == ticket for item in orders):
+            return False
+        positions = mt5.positions_get(ticket=ticket)
+        return positions is not None and not any(_ticket(item) == ticket for item in positions)
+
+    return check
+
+
+def _ticket(item: Any) -> int:
+    return int(_number(item, "ticket"))
+
+
 def send_open(
     mt5: MT5Api,
     plan: OrderPlan,
@@ -306,7 +394,7 @@ def send_open(
         if info.policy is not Policy.RETRY or number > retries:
             break
         if code in UNCERTAIN:
-            existing = _find_existing(mt5, plan)
+            existing = _arrived_open(mt5, plan, pause)
             if existing is not None:
                 ticket, price, pending = existing
                 return OrderResult(
@@ -345,10 +433,12 @@ def send_simple(
     *,
     retries: int,
     refresh: Callable[[MT5Api], float | None] | None = None,
+    arrived: Arrived | None = None,
     pause: Pause = time.sleep,
     timer: Timer = time.perf_counter,
 ) -> OrderResult:
-    """Modify, close or cancel: send, retrying safe codes (closes with a fresh price)."""
+    """Modify, close or cancel: send, retrying safe codes (closes with a fresh price). After
+    an uncertain answer `arrived` says whether it happened anyway: then it is not sent again."""
     attempts: list[Attempt] = []
     body = dict(request)
     for number in range(1, retries + 2):
@@ -361,11 +451,12 @@ def send_simple(
         result = mt5.order_send(body)
         elapsed = (timer() - started) * 1e3
         attempts.append(_attempt(mt5, "order_send", body, result, elapsed, number))
-        info = describe(attempts[-1].retcode)
+        code = attempts[-1].retcode
+        info = describe(code)
         if info.ok:
             return OrderResult(
                 True,
-                attempts[-1].retcode,
+                code,
                 attempts[-1].retcode_text,
                 order=int(_number(result, "order")),
                 deal=int(_number(result, "deal")),
@@ -373,11 +464,58 @@ def send_simple(
                 volume=_number(result, "volume"),
                 attempts=tuple(attempts),
             )
+        if code in UNCERTAIN and arrived is not None and _arrived(mt5, arrived, pause):
+            return OrderResult(
+                True,
+                code,
+                f"{attempts[-1].retcode_text}; it had arrived (checked before a retry)",
+                volume=float(body.get("volume", 0.0) or 0.0),
+                attempts=tuple(attempts),
+            )
         if info.policy is not Policy.RETRY or number > retries:
             break
         pause(RETRY_PAUSE_SECONDS)
     last = attempts[-1]
     return OrderResult(False, last.retcode, last.retcode_text, attempts=tuple(attempts))
+
+
+def close_position(
+    mt5: MT5Api,
+    position: BrokerPosition,
+    amount: float,
+    *,
+    retries: int,
+    deviation: int,
+    pause: Pause = time.sleep,
+) -> OrderResult:
+    """Close `amount` lots of a position (in the gateway thread). A lost reply is checked
+    against the position's volume before any retry."""
+    before = volume_of(mt5, position.ticket)
+    request = close_request(
+        position.ticket,
+        position.symbol,
+        position.direction,
+        amount,
+        0.0,
+        deviation=deviation,
+        magic=position.magic,
+        comment=position.comment,
+        filling=_filling(mt5, position.symbol),
+    )
+    start = position.volume if before is None or before <= 0 else before
+    return send_simple(
+        mt5,
+        request,
+        retries=retries,
+        refresh=lambda api_: _fresh_price(
+            api_,
+            position.symbol,
+            position.direction,
+            closing=True,
+        ),
+        arrived=close_arrived(position.ticket, start, amount),
+        pause=pause,
+    )
 
 
 def _direction(kind: Any) -> Direction:
@@ -471,9 +609,10 @@ class LiveBroker:
     def modify(self, position: BrokerPosition, sl: float, tp: float) -> OrderResult:
         request = modify_request(position.ticket, position.symbol, sl, tp, position.magic)
         retries, pause = self._retries(), self._pause
+        arrived = levels_arrived(position.ticket, float(sl), float(tp))
         return self._gateway.run(
             "order_modify",
-            lambda mt5: send_simple(mt5, request, retries=retries, pause=pause),
+            lambda mt5: send_simple(mt5, request, retries=retries, arrived=arrived, pause=pause),
             timeout=SEND_TIMEOUT_SECONDS,
             arguments={"position": position.ticket, "sl": sl, "tp": tp},
         )
@@ -481,35 +620,16 @@ class LiveBroker:
     def close(self, position: BrokerPosition, volume: float | None = None) -> OrderResult:
         amount = position.volume if volume is None else volume
         retries, pause, deviation = self._retries(), self._pause, self._deviation()
-
-        def work(mt5: MT5Api) -> OrderResult:
-            request = close_request(
-                position.ticket,
-                position.symbol,
-                position.direction,
-                amount,
-                0.0,
-                deviation=deviation,
-                magic=position.magic,
-                comment=position.comment,
-                filling=_filling(mt5, position.symbol),
-            )
-            return send_simple(
-                mt5,
-                request,
-                retries=retries,
-                refresh=lambda api_: _fresh_price(
-                    api_,
-                    position.symbol,
-                    position.direction,
-                    closing=True,
-                ),
-                pause=pause,
-            )
-
         return self._gateway.run(
             "order_close",
-            work,
+            lambda mt5: close_position(
+                mt5,
+                position,
+                amount,
+                retries=retries,
+                deviation=deviation,
+                pause=pause,
+            ),
             timeout=SEND_TIMEOUT_SECONDS,
             arguments={"position": position.ticket, "volume": amount},
         )
@@ -517,9 +637,10 @@ class LiveBroker:
     def cancel(self, order: BrokerOrder) -> OrderResult:
         request = cancel_request(order.ticket)
         retries, pause = self._retries(), self._pause
+        arrived = cancel_arrived(order.ticket)
         return self._gateway.run(
             "order_cancel",
-            lambda mt5: send_simple(mt5, request, retries=retries, pause=pause),
+            lambda mt5: send_simple(mt5, request, retries=retries, arrived=arrived, pause=pause),
             timeout=SEND_TIMEOUT_SECONDS,
             arguments={"order": order.ticket},
         )

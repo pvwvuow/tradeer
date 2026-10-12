@@ -79,3 +79,16 @@ Checked and not a bug: `management._allowed_sl` tests the freeze level on the cu
 | 23h | Channel memory: corrected readings saved as examples for that channel and sent with its readings | nothing |
 | 23i | Post-trade review, daily report and pre-London brief in the bot; log doctor (VPN, MT5 API setting, disk) | nothing |
 | rest | B6 to B8, B10, B17, B22 to B25 | nothing |
+
+## 4. Done
+
+- **0.50.2 (23a, first part)**: B20 and B21 (`app.brokers.live_broker`: after an uncertain
+  answer the broker looks 5 times, 0.4 s apart, before a retry; closes, stop changes and
+  cancels are checked the same way: `close_position`, `levels_arrived`, `cancel_arrived`),
+  B11 and B15 (`app.engine.desk_cards`, `app.ui.desk_card.DeskCard`: a refused card says the
+  legs' own reason and a fix line, one failed leg does not hide an open one, the bot is told
+  again when a waiting channel card ends with no trade), B16 (a running number in every desk
+  request id) and B3 (`reading.canonical` writes "now" for a market reading with one entry).
+  B14 stays with the pipeline's expiry and the engine's re-check; the card turns expired when
+  it is refreshed with a time. B19 (pending orders in the account picture) is next: the legs
+  of one signal must count as one there first.

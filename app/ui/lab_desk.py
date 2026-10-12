@@ -27,6 +27,11 @@ to the channel's own strategy and magic and sized with its budget, and it is a q
 goes there instead of the open chat, so a new chat no longer takes it away.
 A channel card's first answer is told to `on_settled` listeners once (the Telegram bot).
 
+0.50.2 (docs/AI_AUTOPILOT.md 23a): the cards are `DeskCard`s (a refused card says why and
+what can be done, one failed leg does not hide an open one). A channel card that waited and
+then ended with no trade (refused by the final check, expired, failed) is told to the
+listeners once more, so the bot does not keep saying it waits.
+
 The page's header shows the trading mode (PAPER, SEMI-AUTO, AUTO) and REAL ORDERS: ONLY
 WITH YOUR CONFIRM when a confirmed order would be real (Semi-auto or Auto on a real account).
 """
@@ -60,6 +65,7 @@ from app.signals.parse import ParsedSignal, parse
 from app.signals.prefilter import looks_like_signal
 from app.ui.ai_lab_page import AiLabPage
 from app.ui.backtest_page import BacktestContext
+from app.ui.desk_card import DeskCard
 from app.ui.lab_parts import apply_tree
 from app.ui.signal_card import NO_ANALYSIS, NO_HISTORY, OrderCard, order_words
 from app.ui.signal_inbox import SignalInbox
@@ -67,6 +73,7 @@ from app.ui.signal_inbox import SignalInbox
 QUESTION = re.compile(r"[?\u061f]|\bwhy\b|چرا", re.IGNORECASE)
 NEVER_TAG = "REAL ORDERS: NEVER"
 CONFIRM_TAG = "REAL ORDERS: ONLY WITH YOUR CONFIRM"
+ENDED_ALONE = ("refused", "failed", "expired")  # a waiting card that ended with no trade
 
 
 class Desk(Protocol):
@@ -168,6 +175,7 @@ class LabDesk(QObject):
         self.inbox: SignalInbox | None = None  # the Telegram signals tab (0.47.0)
         self.channel_requests: set[str] = set()  # cards of channel signals (0.47.0)
         self.announced: set[str] = set()  # channel cards whose first answer was told
+        self.waited: set[str] = set()  # channel cards told while they waited (0.50.2)
         self.on_settled: list[Callable[[str, OrderCard], None]] = []  # told once per card
         self._next = page.chat.intercept
         page.chat.intercept = self.intercept
@@ -222,7 +230,7 @@ class LabDesk(QObject):
         """An order card for a pasted or channel signal, handed to the desk (nothing is
         sent)."""
         parsed = self.parse_text(text, origin.aliases)
-        card = OrderCard(parsed, self.word, real=self.real_orders(), source=origin.label)
+        card = DeskCard(parsed, self.word, real=self.real_orders(), source=origin.label)
         request = new_request(
             parsed,
             time.time(),
@@ -260,6 +268,7 @@ class LabDesk(QObject):
         self.quick.discard(request_id)
         self.channel_requests.discard(request_id)
         self.announced.discard(request_id)
+        self.waited.discard(request_id)
 
     def _log(self, message: str) -> None:
         context = self.page.context
@@ -305,9 +314,16 @@ class LabDesk(QObject):
             )
             if card.state == "waiting" and key not in self.checked and key not in self.quick:
                 self.full_check(key)
-            fresh = key in self.channel_requests and key not in self.announced
+            if key not in self.channel_requests:
+                continue
+            fresh = key not in self.announced
             if fresh and card.state != "checking":
                 self.announced.add(key)
+                if card.state == "waiting":
+                    self.waited.add(key)
+                self._settled(key, card)
+            elif key in self.waited and card.state in ENDED_ALONE:
+                self.waited.discard(key)  # told once more: it does not wait any more
                 self._settled(key, card)
 
     def _settled(self, request_id: str, card: OrderCard) -> None:
