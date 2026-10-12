@@ -24,3 +24,6 @@
 - 11 October 2026, release PR #153 (0.49.1): same as #151; this docs commit starts CI.
 - 12 October 2026, release PR #155 (0.50.0): same as #151; this docs commit starts CI.
 - 12 October 2026, release PR #157 (0.50.1): same as #151; this docs commit starts CI.
+- Same PR, next commit: "Tests (Linux, Qt offscreen)" ended with exit code 134 (an abort in
+  the offscreen Qt platform) after 1 min 46 s, while the Windows `ci` job ran the full suite
+  green on the same commit and both merged PRs had passed on their own. Run again.
