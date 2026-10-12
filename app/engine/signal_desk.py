@@ -4,10 +4,15 @@ The AI Lab (and a Telegram channel) hands the pipeline a `DeskRequest`: the pars
 where it came from. In the analysis thread the pipeline plans it against the live price,
 sizes it, splits it into one leg per target and runs every leg through the normal path; the
 `DeskResult` says what happened, in words the card can show. Pure helpers only: no I/O.
+
+0.50.2 (docs/AI_AUTOPILOT.md B16): every request gets its own id, also two identical signals
+in the same millisecond (the id has a running number), so one card never takes the other's
+place.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -22,6 +27,7 @@ PENDING_MINUTES = 480  # a pending order waits at most 8 hours
 KEEP_RESULTS = 20  # the newest desk results the AI Lab can show
 REASON_CHARACTERS = 200
 MANUAL = "manual_signal"  # app.strategies.manual_signal.NAME
+_NUMBERS = itertools.count(1)
 
 
 @dataclass(frozen=True)
@@ -57,8 +63,9 @@ def new_request(
     market_minutes: int = MARKET_MINUTES,
     pending_minutes: int = PENDING_MINUTES,
 ) -> DeskRequest:
+    number = str(next(_NUMBERS))
     return DeskRequest(
-        stable_id("desk", source, parsed.text, f"{now:.3f}"),
+        stable_id("desk", source, parsed.text, f"{now:.3f}", number),
         parsed,
         source,
         market_minutes=market_minutes,
