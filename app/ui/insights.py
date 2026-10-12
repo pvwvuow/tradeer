@@ -73,6 +73,7 @@ from app.ui.notifications_page import NotificationsContext, NotificationsPage
 from app.ui.risk_page import RiskPage
 from app.ui.shell import persian_digits
 from app.ui.signal_inbox import CHAT_TAB, LabTabs, SignalInbox, mount
+from app.ui.standby_feed import StandbyFeed
 from app.ui.style import hand_cursors, name_controls
 from app.ui.trade_history import TradeHistory
 
@@ -206,10 +207,11 @@ class Insights:
 
     def attach_feed(self) -> ChannelFeed | None:
         """A Live channel's signals become order cards in the AI Lab (docs/SIGNAL_DESK.md
-        3.3 to 3.5); attached before the reader starts, so no message is missed."""
+        3.3 to 3.5); attached before the reader starts, so no message is missed. The feed
+        stands by for a channel whose admin hints a signal is coming (0.50.0)."""
         if self.desk is None or self.channels is None:
             return None
-        feed = ChannelFeed(self.desk, self.channels.repository, engine=self.engine, log=write)
+        feed = StandbyFeed(self.desk, self.channels.repository, engine=self.engine, log=write)
         feed.attach(self.channels.reader)
         self.stop_hooks.append(feed.timer.stop)
         feed.alerts.append(self.send_alert)
