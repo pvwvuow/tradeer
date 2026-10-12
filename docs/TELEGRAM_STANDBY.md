@@ -37,10 +37,16 @@ prompts and their parsing); `app/ui/standby_feed.py` is the `ChannelFeed` with i
 
 `tests/unit/test_standby.py` (the book, the limits, the prompts) and
 `tests/ui/test_standby_feed.py` (a hint, the standby, the pieces becoming one card; a teaser
-opening it; no AI).
+opening it; no AI) and `tests/ui/test_standby_bar.py` (the line over the tab).
+
+## The line over the tab (0.50.1)
+
+The Telegram signals tab shows "Standby: Gold Room (XAUUSD) 8:20" under its filters while a
+channel is on standby: the instrument the admin named and the time left, one entry per
+channel, hidden when none is (`app/ui/standby_bar.py`, put in the tab's layout by
+`Insights.attach_feed`; the tab itself is unchanged).
 
 ## Not done
 
-- A standby indicator in the tab's header (only the start and end lines for now).
 - The glance and the quick reading use the AI connection of the AI Lab (one model); a
   cheaper second model for glances would need its own setting.
