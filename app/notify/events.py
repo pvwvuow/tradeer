@@ -5,11 +5,17 @@ risk, connection, cloud sync) and returns the notices for what changed. The firs
 of a run never notifies (nothing "changed" when the app starts). Every order that could not
 be sent is told as an error, and in Auto mode no signal asks for an approval, because
 nothing waits for a click there (PC log of 5 October 2026).
+
+0.50.2 (PC log of 12 October 2026): a closed trade's notice gives its real net result, read
+from the engine's close line ("position 34969404 closed by take profit: net +32.25"), not
+the last floating profit seen before the close (+6.48 there).
 """
 
 from __future__ import annotations
 
+import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -22,6 +28,7 @@ from app.storage.sync import SyncState, SyncStatus
 
 FAILURE_TEXT = 500  # characters of a failed order's notice
 NOT_A_FAILURE = ("cancelled", "pending order")  # OCO cancels and expiries end FAILED too
+CLOSED_LINE = re.compile(r"position (\d+) closed by ([^:]*): net ([+-]?[\d,]+(?:\.\d+)?)")
 
 
 class EventKind(StrEnum):
@@ -72,6 +79,16 @@ class Notice:
         return self.kind.label
 
 
+def closed_result(messages: Sequence[str], ticket: int) -> tuple[str, str] | None:
+    """The exit reason and the net result of position `ticket` from the engine's newest
+    close line, None when there is none."""
+    for line in messages:
+        found = CLOSED_LINE.search(line)
+        if found is not None and int(found.group(1)) == ticket:
+            return found.group(2).strip(), found.group(3)
+    return None
+
+
 def execution_notices(old: ExecutionSnapshot | None, new: ExecutionSnapshot) -> list[Notice]:
     if old is None:
         return []
@@ -88,7 +105,14 @@ def execution_notices(old: ExecutionSnapshot | None, new: ExecutionSnapshot) -> 
             found.append(Notice(EventKind.TRADE_OPENED, text, f"open:{key}"))
     for key, view in before.items():
         if key not in after:
-            result = f", last result {view.profit:+,.2f}" if view.profit is not None else ""
+            closed = closed_result(new.messages, view.ticket)
+            if closed is not None:
+                reason, net = closed
+                result = f" by {reason}, net {net}" if reason else f", net {net}"
+            elif view.profit is not None:
+                result = f", last result {view.profit:+,.2f}"
+            else:
+                result = ""
             text = f"{view.symbol} position {view.ticket} ({view.mode}) closed{result}"
             found.append(Notice(EventKind.TRADE_CLOSED, text, f"close:{key}"))
     if new.stopped and not old.stopped:
