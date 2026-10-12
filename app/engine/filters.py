@@ -8,6 +8,10 @@ doubling the risk on one idea. Since then one symbol and side holds one trade at
 whichever strategy found it first. The same morning EURUSD and GBPUSD were sold a minute
 apart (both long USD); since 0.31.1 one currency and direction holds one trade at a time
 across symbols (`one_bet_per_currency`).
+
+0.50.1: a Telegram channel's signal (strategy "channel:...") is not held back by that last
+check. It waits for the owner's own hold, and a bot's EURUSD pending order had refused a
+channel's gold buy (12 October 2026). The channel's trades still count against the bots.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from app.observability.decision_trace import TraceStep
 
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 SAME_BET = "one bet per currency and direction (all symbols)"
+CHANNEL_PREFIX = "channel:"  # the strategy name of a Telegram channel's signals
 _DEFAULTS = TradingDefaults()
 
 
@@ -243,15 +248,18 @@ def run_filters(data: FilterInput, settings: FilterSettings) -> list[TraceStep]:
         0,
         f"already a {side} by {data.same_side_of}" if data.same_side else f"no other {side}",
     )
+    exempt = signal.strategy.startswith(CHANNEL_PREFIX)
     if not settings.one_bet_per_currency:
         bet_text = "this check is off"
+    elif exempt:
+        bet_text = "a Telegram channel signal: it waits for your own hold"
     elif data.same_bet:
         bet_text = f"same bet as {data.same_bet_of}"
     else:
         bet_text = "no other trade bets the same way on these currencies"
     add(
         SAME_BET,
-        not settings.one_bet_per_currency or data.same_bet == 0,
+        not settings.one_bet_per_currency or exempt or data.same_bet == 0,
         data.same_bet,
         0,
         bet_text,

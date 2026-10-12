@@ -7,6 +7,9 @@ sized with the channel's own budget (its risk per trade of its equity = budget +
 trades made) and still waiting for your hold-to-confirm. **Off** reads nothing new. A
 channel's daily loss stop pauses its cards for the day; its drawdown stop sends it back to
 Paper trial. The account's limits always apply on top.
+
+0.50.1: `floor_percent` lets the broker's smallest lot through when it risks more than the
+channel's normal share (see `app.risk.budget`).
 """
 
 from __future__ import annotations
@@ -47,6 +50,12 @@ class ChannelPolicy(BaseModel):
     mode: ChannelMode = Field(default=ChannelMode.PAPER)
     budget: float = Field(default=0.0, ge=0, description="money the channel may use")
     risk_percent: float = Field(default=2.0, gt=0, le=10, description="of the channel's equity")
+    floor_percent: float = Field(
+        default=8.0,
+        ge=0,
+        le=25,
+        description="most one trade may risk when the smallest lot is above the normal share",
+    )
     max_open: int = Field(default=2, ge=1, le=20, description="legs of one signal count as one")
     daily_loss_percent: float = Field(default=5.0, gt=0, le=100)
     drawdown_percent: float = Field(default=30.0, gt=0, le=100, description="of the budget")
@@ -137,7 +146,8 @@ def budget_state(policy: ChannelPolicy, money: ChannelMoney) -> BudgetState:
 
 
 def channel_budget(policy: ChannelPolicy, state: BudgetState) -> Budget:
-    return Budget(state.risk_money, state.equity, policy.risk_percent)
+    floor = max(0.0, state.equity) * policy.floor_percent / 100.0
+    return Budget(state.risk_money, state.equity, policy.risk_percent, floor)
 
 
 class Action(StrEnum):

@@ -182,6 +182,36 @@ def risk_share(signal: Signal) -> float:
     return share if math.isfinite(share) and 0 < share <= 1 else 1.0
 
 
+def floor_sizing(
+    sizing: SizingResult,
+    sized: Callable[[float], SizingResult],
+    budget: Budget,
+    share: float,
+    smallest: float,
+    capital: float,
+    account_percent: float,
+    currency: str,
+    min_lot: float,
+) -> SizingResult:
+    """The smallest lot, when the source's normal share gave none (0.50.1): it may risk up to
+    the source's floor, and no more than the account's own risk per trade (both times the
+    leg's share). Otherwise `sizing` unchanged."""
+    if not (math.isfinite(smallest) and smallest > 0 and math.isfinite(capital) and capital > 0):
+        return sizing
+    limit = budget.floor * share
+    percent = smallest * 1.001 / capital * 100.0
+    if smallest > limit or percent > account_percent * share:
+        return sizing
+    found = sized(percent)
+    if not found.ok:
+        return sizing
+    line = (
+        f"the smallest lot {min_lot:g} risks {smallest:,.2f} {currency}, more than the "
+        f"channel's normal share, but within its floor of {limit:,.2f} and the account's own limit"
+    )
+    return replace(found, lines=(*sizing.lines[:1], line, *found.lines))
+
+
 def currencies(signal: Signal, spec: SymbolSpec | None) -> tuple[str, str]:
     base = spec.currency_margin if spec is not None else ""
     quote = spec.currency_profit if spec is not None else ""
@@ -302,23 +332,43 @@ class RiskManager:
         capital = picture.capital(settings)
         budget = budget_of(signal.features)  # a channel's own budget (docs/SIGNAL_DESK.md 3.4)
         percent = capped_percent(settings.risk_per_trade_percent, budget, capital)
-        sizing = size_position(
-            SizingInput(
-                capital=capital,
-                capital_basis=settings.capital_basis,
-                risk_percent=percent * risk_share(signal),
-                loss_per_lot=loss if loss is not None else math.nan,
-                commission_per_lot=commission,
-                volume=volume_rules(spec),
-                currency=picture.currency,
-            ),
-        )
+
+        def sized(risk_percent: float) -> SizingResult:
+            return size_position(
+                SizingInput(
+                    capital=capital,
+                    capital_basis=settings.capital_basis,
+                    risk_percent=risk_percent,
+                    loss_per_lot=loss if loss is not None else math.nan,
+                    commission_per_lot=commission,
+                    volume=volume_rules(spec),
+                    currency=picture.currency,
+                ),
+            )
+
+        sizing = sized(percent * risk_share(signal))
+        cost = max(0.0, commission) if math.isfinite(commission) else 0.0
+        smallest = math.nan
+        if spec is not None and loss is not None:
+            smallest = spec.volume_min * (loss + cost)
         if budget is not None:  # the decision trace says where the smaller risk came from
             line = (
                 f"channel budget: {budget.money:,.2f} {picture.currency} per trade "
                 f"({budget.percent:g}% of its {budget.equity:,.2f}) = {percent:.4g}% of the account"
             )
             sizing = replace(sizing, lines=(line, *sizing.lines))
+            if not sizing.ok and spec is not None:
+                sizing = floor_sizing(
+                    sizing,
+                    sized,
+                    budget,
+                    risk_share(signal),
+                    smallest,
+                    capital,
+                    settings.risk_per_trade_percent,
+                    picture.currency,
+                    spec.volume_min,
+                )
         margin: float | None = None
         if sizing.ok:
             volume = sizing.volume
@@ -342,8 +392,6 @@ class RiskManager:
         blocked = failed(checks)
         why = sizing.reason
         if not sizing.ok and budget is not None and spec is not None and loss is not None:
-            cost = max(0.0, commission) if math.isfinite(commission) else 0.0
-            smallest = spec.volume_min * (loss + cost)
             share = risk_share(signal)
             limit = Budget(budget.money * share, budget.equity, budget.percent)
             why = small_budget_reason(limit, smallest, spec.volume_min, picture.currency) or why

@@ -6,17 +6,23 @@ The Signal desk puts that money on every leg (`budget_features`); the risk manag
 the trade with the smaller of the account's risk per trade and this money, so the account
 limits always apply on top of the channel's. When even the smallest lot would risk more than
 the channel may, the card says so with both numbers and the trade is refused.
+
+0.50.1: a small budget no longer refuses every signal. `Budget.floor` is the most one trade
+may risk when the broker's smallest lot is above the normal share (8% of the channel's
+equity by default, `ChannelPolicy.floor_percent`): then the smallest lot is used, if it is
+also within the account's own risk per trade. The account's other limits apply as always.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 BUDGET_RISK = "budget_risk"  # money this source may risk on one trade
 BUDGET_EQUITY = "budget_equity"  # the source's equity: its budget plus its closed result
 BUDGET_PERCENT = "budget_percent"  # the source's risk per trade, % of its equity
+BUDGET_FLOOR = "budget_floor"  # the most one trade may risk when the smallest lot is above it
 
 
 @dataclass(frozen=True)
@@ -24,16 +30,21 @@ class Budget:
     money: float
     equity: float
     percent: float
+    # Not part of the comparison: it only widens what the smallest lot may risk.
+    floor: float = field(default=0.0, compare=False)
 
 
 def budget_features(budget: Budget | None) -> dict[str, float | str]:
     if budget is None:
         return {}
-    return {
+    found: dict[str, float | str] = {
         BUDGET_RISK: round(budget.money, 2),
         BUDGET_EQUITY: round(budget.equity, 2),
         BUDGET_PERCENT: round(budget.percent, 4),
     }
+    if budget.floor > 0:
+        found[BUDGET_FLOOR] = round(budget.floor, 2)
+    return found
 
 
 def _number(raw: object) -> float:
@@ -52,12 +63,14 @@ def budget_of(features: Mapping[str, float | str]) -> Budget | None:
     money = _number(features.get(BUDGET_RISK))
     equity = _number(features.get(BUDGET_EQUITY))
     percent = _number(features.get(BUDGET_PERCENT))
+    floor = _number(features.get(BUDGET_FLOOR))
     if not math.isfinite(money):
         return Budget(0.0, 0.0, 0.0)  # a budget that cannot be read allows nothing
     return Budget(
         max(0.0, money),
         equity if math.isfinite(equity) else 0.0,
         percent if math.isfinite(percent) else 0.0,
+        floor if math.isfinite(floor) and floor > 0 else 0.0,
     )
 
 
