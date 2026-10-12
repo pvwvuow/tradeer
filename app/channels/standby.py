@@ -136,6 +136,10 @@ class StandbyBook:
     def close(self, channel_id: int) -> Standby | None:
         return self._open.pop(channel_id, None)
 
+    def active(self, now: float) -> list[Standby]:
+        """The channels on standby right now."""
+        return [s for s in self._open.values() if self.get(s.channel_id, now) is not None]
+
     def expired(self, now: float) -> list[Standby]:
         """The standbys whose time or readings are used up, taken out."""
         gone = [s for s in self._open.values() if self.get(s.channel_id, now) is None]
