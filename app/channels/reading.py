@@ -16,6 +16,10 @@ never a signal. The AI reads at most `DAILY_READS` messages a day (`ReadCap`). P
 
 0.44.1: a signal posted as a picture goes to the AI with the picture (a model that reads
 images). Its numbers cannot be checked against the text, so the card says to check them.
+
+0.50.2 (docs/AI_AUTOPILOT.md B3): a market order the AI read with one entry price stays a
+market order ("XAUUSD buy now 4175 ..."): the plan then checks that the price has not moved
+from it, instead of turning it into a pending order at that price.
 """
 
 from __future__ import annotations
@@ -232,6 +236,17 @@ def _sides(buy: bool, entry: Sequence[float], sl: float, tps: Sequence[float]) -
     return sl > high and all(tp < low for tp in tps)
 
 
+def _order_word(result: ReadResult) -> str:
+    """The order kind as the parser reads it: limit and stop as they are, "now" for a market
+    order (with no entry, or with one entry price: the plan checks the price has not moved);
+    a zone without a kind is left to the plan (market inside it, pending at its edge)."""
+    if result.order in ("limit", "stop"):
+        return f" {result.order}"
+    if not result.entry or (result.order == "market" and len(result.entry) == 1):
+        return " now"
+    return ""
+
+
 def canonical(
     result: ReadResult,
     texts: Sequence[str],
@@ -259,9 +274,7 @@ def canonical(
         return "", "the AI gave a number the channel did not write"
     if not _sides(result.side == "buy", result.entry, sl, tps):
         return "", f"the stop loss or a target is on the wrong side for a {result.side}"
-    order = f" {result.order}" if result.order in ("limit", "stop") else ""
-    if not order and not result.entry:
-        order = " now"
+    order = _order_word(result)
     entry = "".join(f" {_price(value)}" for value in result.entry)
     targets = "".join(f" tp {_price(value)}" for value in tps)
     text = f"{symbol} {result.side}{order}{entry} sl {_price(sl)}{targets}"
