@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.50.1](https://github.com/pvwvuow/tradeer/compare/v0.50.0...v0.50.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **channels:** the Telegram signals tab shows which channels are on standby (22k) ([#156](https://github.com/pvwvuow/tradeer/issues/156)) ([3a839cd](https://github.com/pvwvuow/tradeer/commit/3a839cdc606848f4d097c1b9cce5f08ef187dfeb))
+* **risk:** a channel may use the smallest lot, and its signals skip the one-bet check ([#158](https://github.com/pvwvuow/tradeer/issues/158)) ([a4f5138](https://github.com/pvwvuow/tradeer/commit/a4f5138206d24fa7300230db368c02ac7ff66e82))
+
 ## [0.50.0](https://github.com/pvwvuow/tradeer/compare/v0.49.1...v0.50.0) (2026-10-12)
 
 
