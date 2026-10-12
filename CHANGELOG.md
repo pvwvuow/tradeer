@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.50.2](https://github.com/pvwvuow/tradeer/compare/v0.50.1...v0.50.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* trade list follows reconnects and closes, lost replies never send twice, refused cards say why ([#161](https://github.com/pvwvuow/tradeer/issues/161)) ([6173211](https://github.com/pvwvuow/tradeer/commit/61732110e5a759e70ee34c024b65ce36005dc639))
+
+
+### Documentation
+
+* AI autopilot plan, prompt review and bug list (phase 23) ([#159](https://github.com/pvwvuow/tradeer/issues/159)) ([09a112f](https://github.com/pvwvuow/tradeer/commit/09a112f906d37eebda1a47b0166c5c843e051dae))
+
 ## [0.50.1](https://github.com/pvwvuow/tradeer/compare/v0.50.0...v0.50.1) (2026-10-12)
 
 
