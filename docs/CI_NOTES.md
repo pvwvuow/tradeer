@@ -23,3 +23,4 @@
   this PR does not touch; Linux ran the same suite green. Run again with this commit.
 - 11 October 2026, release PR #153 (0.49.1): same as #151; this docs commit starts CI.
 - 12 October 2026, release PR #155 (0.50.0): same as #151; this docs commit starts CI.
+- 12 October 2026, release PR #157 (0.50.1): same as #151; this docs commit starts CI.
