@@ -19,10 +19,12 @@ from app.domain.probability import baseline
 from app.engine.filters import SAME_BET, FilterInput, FilterSettings, run_filters
 from app.mt5.models import SymbolTradeMode
 from app.risk.budget import Budget, budget_features, budget_of
+from app.risk.risk_manager import RiskDecision
 from tests.unit.risk_helpers import CLOCK, connected, risk_manager, spec_of
 from tests.unit.signal_helpers import MORNING, make_signal
 
 NOW = float(MORNING)
+TOO_SMALL = "budget too small"
 
 
 def test_a_budget_carries_its_floor_but_compares_without_it() -> None:
@@ -53,7 +55,7 @@ def test_the_smallest_lot_may_use_the_floor_but_not_more() -> None:
     with risk_manager(fake) as manager:
         spec = spec_of(fake, "EURUSD.m")
 
-        def decide(budget: Budget) -> object:
+        def decide(budget: Budget) -> RiskDecision:
             signal = make_signal(
                 symbol="EURUSD.m",
                 entry=1.1,
@@ -64,13 +66,13 @@ def test_the_smallest_lot_may_use_the_floor_but_not_more() -> None:
             return manager.evaluate(signal, spec, CLOCK, NOW)
 
         refused = decide(Budget(0.5, 25.0, 2.0))  # no floor: the smallest lot risks 1.00
-        assert not refused.ok and refused.reason.startswith("budget too small")  # type: ignore[attr-defined]
+        assert not refused.ok and refused.reason.startswith(TOO_SMALL)
         floor = decide(Budget(0.5, 25.0, 2.0, 2.0))
-        assert floor.ok and floor.volume == 0.01, floor.reason  # type: ignore[attr-defined]
-        assert floor.sizing is not None  # type: ignore[attr-defined]
-        assert any("floor" in line for line in floor.sizing.lines)  # type: ignore[attr-defined]
+        assert floor.ok and floor.volume == 0.01, floor.reason
+        assert floor.sizing is not None
+        assert any("floor" in line for line in floor.sizing.lines)
         low = decide(Budget(0.5, 25.0, 2.0, 0.8))  # the floor is below the smallest lot
-        assert not low.ok and low.reason.startswith("budget too small")  # type: ignore[attr-defined]
+        assert not low.ok and low.reason.startswith(TOO_SMALL)
 
 
 def bet(strategy: str, same_bet: int) -> bool | None:
