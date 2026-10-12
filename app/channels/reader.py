@@ -10,6 +10,10 @@ leaves, reacts or marks anything as read, and nothing here can send an order.
 
 Telegram itself is behind `TelegramApi` (`app.channels.telethon_api` with Telethon, an
 optional dependency); the tests use a fake one.
+
+0.50.2 (docs/AI_AUTOPILOT.md B6): a reader that does not end in time is kept, so Start never
+opens a second reader next to it (every message would be handled twice), and `start` says
+what it did (connecting) even when the new thread already moved on.
 """
 
 from __future__ import annotations
@@ -195,9 +199,10 @@ class ChannelReader:
             self._set(ReaderStatus.ERROR, problem)
             return self.state
         self._set(ReaderStatus.CONNECTING, "Connecting to Telegram...")
+        state = self.state  # what start did; the thread may move on at once
         self._thread = threading.Thread(target=self._run, name=THREAD_NAME, daemon=True)
         self._thread.start()
-        return self.state
+        return state
 
     def stop(self, timeout: float = 10.0) -> None:
         """Disconnect and end the reader thread, also while it waits for a login step."""
@@ -209,9 +214,13 @@ class ChannelReader:
             if task is not None:
                 with contextlib.suppress(RuntimeError):
                     loop.call_soon_threadsafe(task.cancel)
-        thread, self._thread = self._thread, None
+        thread = self._thread
         if thread is not None:
             thread.join(timeout)
+            if thread.is_alive():
+                self._log("WARNING", "Telegram channels: the reader did not stop in time")
+                return  # kept: start() does not open a second reader next to it
+        self._thread = None
 
     def _run(self) -> None:
         try:
