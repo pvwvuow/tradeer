@@ -122,6 +122,7 @@ def test_a_teaser_opens_the_standby_and_a_plain_message_is_read(
         assert found.reason == "standby: the AI reads it"
         qtbot.waitUntil(lambda: len(ai.calls) == 1, timeout=5000)
         assert ai.calls[0][0] == "read" and "on standby" in ai.calls[0][2]
+        qtbot.waitUntil(lambda: any("read it as" in s.reason for s in feed.seen), timeout=5000)
         assert stands(feed)  # nothing came of it yet
         clock[0] = now + 11 * 60
         feed.expire_drafts()
@@ -142,5 +143,5 @@ def test_no_ai_and_a_no_answer_leave_the_channel_alone(qtbot: QtBot, tmp_path: P
         quiet = make(desk, repository, [now], ai)
         quiet.handle(ChannelMessage(GOLD.id, 2, now, HINT))
         qtbot.waitUntil(lambda: len(ai.calls) == 1, timeout=5000)
-        qtbot.wait(50)
+        qtbot.wait(300)  # the answer is handled in the UI thread before the database closes
         assert not stands(quiet)
