@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.50.0](https://github.com/pvwvuow/tradeer/compare/v0.49.1...v0.50.0) (2026-10-12)
+
+
+### Features
+
+* **channels:** the AI stands by for a channel that hints a signal is coming (22j) ([#154](https://github.com/pvwvuow/tradeer/issues/154)) ([3c855ec](https://github.com/pvwvuow/tradeer/commit/3c855ec2d77d280d598ac0047c31f498ba52c8dc))
+
 ## [0.49.1](https://github.com/pvwvuow/tradeer/compare/v0.49.0...v0.49.1) (2026-10-11)
 
 
