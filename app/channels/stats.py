@@ -10,6 +10,8 @@
   send), slippage (signal price to fill), deleted signals and edits after the result, and the
   shadow results of every signal. The ranking sorts by the shadow average R once a channel
   has 20 resolved signals; under that it says "too few signals to rank".
+- 0.50.4: the signals counted in the Paper trial (no card) are shown too, so taken, skipped,
+  Paper trial and refused add up to the signals.
 """
 
 from __future__ import annotations
@@ -109,11 +111,13 @@ class ChannelStats:
     shadow_signals: int
     shadow_win_rate: float | None
     shadow_average_r: float | None
+    paper: int = 0  # counted in the Paper trial, no card (0.50.4)
 
     def lines(self, currency: str = "") -> list[str]:
         money = f" {currency}" if currency else ""
+        paper = f", Paper trial {self.paper}" if self.paper else ""
         lines = [
-            f"Signals {self.signals}: taken {self.taken}, skipped {self.skipped}, "
+            f"Signals {self.signals}: taken {self.taken}, skipped {self.skipped}{paper}, "
             f"refused {sum(self.refused.values())}",
         ]
         if self.refused:
@@ -213,6 +217,7 @@ def channel_stats(
         shadow_signals=len(shadow_r),
         shadow_win_rate=shadow_wins / len(shadow_r) if shadow_r else None,
         shadow_average_r=_mean(list(shadow_r)),
+        paper=sum(1 for action in actions if action == "paper"),
     )
 
 
