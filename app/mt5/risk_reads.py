@@ -3,9 +3,10 @@
 `order_calc_profit` gives the loss of a lot at the stop loss in the account currency, so JPY
 quotes, gold and cross-currency accounts are converted by MT5 itself; the symbol's tick value
 is never used (ADR 60: on a real FIBO account XAUUSD reported 0.1 USD where a point is worth
-1 USD). `order_calc_margin` gives the margin a new trade needs. Positions, the account and
-today's deals come back as one `AccountPicture`. The demo test's entries (`TEST_MAGIC`) are
-not counted toward the trades of the day: 26 of them would block the bot until midnight.
+1 USD). `order_calc_margin` gives the margin a new trade needs. Positions, pending orders, the
+account and today's deals come back as one `AccountPicture`. The demo test's entries
+(`TEST_MAGIC`) are not counted toward the trades of the day: 26 of them would block the bot
+until midnight.
 """
 
 from __future__ import annotations
@@ -27,6 +28,15 @@ from app.risk.limits_state import AccountMoney
 DAY_SECONDS = 86_400
 REQUEST_TIMEOUT_SECONDS = 30.0
 Currencies = MutableMapping[str, tuple[str, str]]
+# orders_get().type -> the side of the position it opens (6 and 7 are the stop-limit orders)
+PENDING_SIDES: dict[int, Direction] = {
+    api.ORDER_TYPE_BUY_LIMIT: Direction.LONG,
+    api.ORDER_TYPE_SELL_LIMIT: Direction.SHORT,
+    api.ORDER_TYPE_BUY_STOP: Direction.LONG,
+    api.ORDER_TYPE_SELL_STOP: Direction.SHORT,
+    6: Direction.LONG,
+    7: Direction.SHORT,
+}
 
 
 def order_action(direction: Direction) -> int:
@@ -78,6 +88,20 @@ def _currencies(mt5: MT5Api, symbol: str, cache: Currencies) -> tuple[str, str]:
     return found
 
 
+def _risk_at_sl(
+    mt5: MT5Api,
+    symbol: str,
+    direction: Direction,
+    price: float,
+    sl: float,
+    volume: float,
+) -> float | None:
+    if not (sl > 0 and volume > 0):
+        return None
+    loss = loss_per_lot(mt5, symbol, direction, price, sl, volume)
+    return max(0.0, loss * volume) if loss is not None else None
+
+
 def read_position(
     mt5: MT5Api,
     raw: Any,
@@ -91,10 +115,7 @@ def read_position(
     price_open = float(getattr(raw, "price_open", 0.0) or 0.0)
     sl = float(getattr(raw, "sl", 0.0) or 0.0)
     magic = int(getattr(raw, "magic", 0) or 0)
-    risk: float | None = None
-    if sl > 0 and volume > 0:
-        loss = loss_per_lot(mt5, symbol, direction, price_open, sl, volume)
-        risk = max(0.0, loss * volume) if loss is not None else None
+    risk = _risk_at_sl(mt5, symbol, direction, price_open, sl, volume)
     base, quote = _currencies(mt5, symbol, cache)
     return OpenPosition(
         ticket=int(getattr(raw, "ticket", 0) or 0),
@@ -112,6 +133,53 @@ def read_position(
     )
 
 
+def read_order(
+    mt5: MT5Api,
+    raw: Any,
+    cache: Currencies,
+    strategy_of: Callable[[int], str],
+) -> OpenPosition | None:
+    """A pending order as the position it opens if it fills, risking the loss at its SL
+    (0.50.4). None for any other order type."""
+    direction = PENDING_SIDES.get(int(getattr(raw, "type", -1) or 0))
+    if direction is None:
+        return None
+    symbol = str(getattr(raw, "symbol", "") or "")
+    left = getattr(raw, "volume_current", 0.0) or getattr(raw, "volume_initial", 0.0)
+    volume = float(left or 0.0)
+    price = float(getattr(raw, "price_open", 0.0) or 0.0)
+    sl = float(getattr(raw, "sl", 0.0) or 0.0)
+    magic = int(getattr(raw, "magic", 0) or 0)
+    base, quote = _currencies(mt5, symbol, cache)
+    return OpenPosition(
+        ticket=int(getattr(raw, "ticket", 0) or 0),
+        symbol=symbol,
+        direction=direction,
+        volume=volume,
+        price_open=price,
+        sl=sl,
+        profit=0.0,
+        magic=magic,
+        risk_money=_risk_at_sl(mt5, symbol, direction, price, sl, volume),
+        base=base,
+        quote=quote,
+        strategy=strategy_of(magic),
+        pending=True,
+    )
+
+
+def read_orders(
+    mt5: MT5Api,
+    cache: Currencies,
+    strategy_of: Callable[[int], str],
+) -> tuple[OpenPosition, ...]:
+    """The pending orders; none when this MT5 stand-in cannot list them."""
+    listed = getattr(mt5, "orders_get", None)
+    raws = listed() if callable(listed) else None
+    found = (read_order(mt5, raw, cache, strategy_of) for raw in (raws or ()))
+    return tuple(order for order in found if order is not None)
+
+
 def read_picture(
     mt5: MT5Api,
     *,
@@ -121,8 +189,9 @@ def read_picture(
     strategy_of: Callable[[int], str],
     cache: Currencies,
 ) -> AccountPicture | None:
-    """Account, positions and today's deals. `day_start_server` is the broker midnight in
-    server time (MT5 deal times are server time). None when MT5 gave no account."""
+    """Account, positions, pending orders and today's deals. `day_start_server` is the broker
+    midnight in server time (MT5 deal times are server time). None when MT5 gave no
+    account."""
     info = mt5.account_info()
     if info is None:
         return None
@@ -130,6 +199,7 @@ def read_picture(
     positions = tuple(
         read_position(mt5, raw, cache, strategy_of) for raw in (mt5.positions_get() or ())
     )
+    orders = read_orders(mt5, cache, strategy_of)
     until = int(read_at) + 2 * DAY_SECONDS  # server time runs ahead of UTC
     raw_deals = mt5.history_deals_get(day_start_server - DAY_SECONDS, until)
     deals = [deal_from_mt5(raw) for raw in (raw_deals or ())]
@@ -152,6 +222,7 @@ def read_picture(
         bot_entries_today=sum(1 for d in entries if strategy_of(d.magic)),
         manual_entries_today=sum(1 for d in entries if not strategy_of(d.magic)),
         read_at=read_at,
+        orders=orders,
     )
 
 

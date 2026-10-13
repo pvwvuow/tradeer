@@ -5,15 +5,21 @@ daily loss, drawdown, open trades (total, per symbol, per strategy), trades toda
 open risk, currency exposure, the broker's stops level and the margin after the trade.
 Manual trades (magic 0) and other EAs' trades count toward exposure, open risk and daily
 trades when the setting says so; the bot never touches them.
+
+Pending orders count too (0.50.4): toward the open trades and the open risk, with the loss at
+their SL if they fill. The legs of one signal (same strategy, symbol, side and SL) are one
+trade, and so are one strategy's pending orders on a symbol; of such orders on both sides (a
+breakout's buy and sell stop) only the bigger side's risk counts, as only one side can fill.
+Currency exposure counts filled positions only.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from app.domain.signals import Direction
+from app.domain.signals import Direction, OrderType, Signal
 from app.risk.exposure import ExposureItem, as_percent, currency_exposure, exposure_text
 from app.risk.limits_state import (
     DAILY_LIMIT,
@@ -26,6 +32,37 @@ from app.risk.settings import RiskSettings
 EXPOSURE_BLOCK = "exposure_block"
 MARGIN_BLOCK = "margin_block"
 LIMIT_BLOCK = "limit_block"
+PENDING = "pending"
+JOINS = "; joins an open trade (the legs of one signal count once)"
+
+
+def trade_group(
+    strategy: str,
+    symbol: str,
+    direction: Direction,
+    sl: float,
+    *,
+    pending: bool,
+) -> str:
+    """The trade an entry belongs to, or "" when it is a trade of its own (a manual one, or a
+    position without a stop loss)."""
+    if not strategy:
+        return ""
+    if pending:
+        return f"{strategy}|{symbol}|{PENDING}"
+    if not math.isfinite(sl) or sl <= 0:
+        return ""
+    return f"{strategy}|{symbol}|{direction.value}|{sl:.6g}"
+
+
+def candidate_group(signal: Signal, symbol: str) -> str:
+    """The trade a new order may join: a pending order joins its strategy's other pending
+    orders on the symbol, a market leg the other legs of its signal. A plain market trade is
+    always a trade of its own ("")."""
+    pending = signal.order_type is not OrderType.MARKET
+    if not pending and not signal.features.get("leg_group"):
+        return ""
+    return trade_group(signal.strategy, symbol, signal.direction, signal.sl, pending=pending)
 
 
 @dataclass(frozen=True)
@@ -42,6 +79,7 @@ class OpenPosition:
     base: str = ""
     quote: str = ""
     strategy: str = ""  # from the magic number; "" for manual trades and other EAs
+    pending: bool = False  # a pending order: the position it opens if it fills
 
     @property
     def manual(self) -> bool:
@@ -55,10 +93,23 @@ class OpenPosition:
             return max(0.0, self.risk_money)
         return max(0.0, -self.profit)
 
+    @property
+    def group(self) -> str:
+        """The trade this entry is part of: entries of one group count as one open trade."""
+        found = trade_group(
+            self.strategy,
+            self.symbol,
+            self.direction,
+            self.sl,
+            pending=self.pending,
+        )
+        return found or f"#{self.ticket}"
+
 
 @dataclass(frozen=True)
 class AccountPicture:
-    """Account, open positions and today's deals, read from MT5 in one gateway call."""
+    """Account, open positions, pending orders and today's deals, read from MT5 in one
+    gateway call."""
 
     currency: str
     balance: float
@@ -71,12 +122,18 @@ class AccountPicture:
     bot_entries_today: int
     manual_entries_today: int
     read_at: float
+    orders: tuple[OpenPosition, ...] = ()  # pending orders (0.50.4)
 
     def capital(self, settings: RiskSettings) -> float:
         return self.equity if settings.capital_basis == "equity" else self.balance
 
     def counted(self, settings: RiskSettings) -> list[OpenPosition]:
         return [p for p in self.positions if settings.count_manual_trades or not p.manual]
+
+    def held(self, settings: RiskSettings) -> list[OpenPosition]:
+        """The counted positions and pending orders."""
+        orders = [o for o in self.orders if settings.count_manual_trades or not o.manual]
+        return [*self.counted(settings), *orders]
 
     def entries_today(self, settings: RiskSettings) -> int:
         manual = self.manual_entries_today if settings.count_manual_trades else 0
@@ -96,6 +153,27 @@ class Candidate:
     stop_points: float  # distance entry -> SL in points
     stops_level: int  # broker minimum distance in points (0 = none)
     margin_required: float | None  # order_calc_margin for the lot; None if MT5 failed
+    group: str = ""  # the open trade it joins (`candidate_group`); "" = a new trade
+    pending: bool = False  # a limit or stop order
+
+
+def open_risk_money(entries: Iterable[OpenPosition], candidate: Candidate | None = None) -> float:
+    """The money the entries (and the candidate) can lose: positions add up; of one group of
+    pending orders only the bigger side counts."""
+    total = 0.0
+    sides: dict[str, dict[Direction, float]] = {}
+    for entry in entries:
+        if entry.pending:
+            side = sides.setdefault(entry.group, {})
+            side[entry.direction] = side.get(entry.direction, 0.0) + entry.counted_risk
+        else:
+            total += entry.counted_risk
+    if candidate is not None and candidate.pending and candidate.group:
+        side = sides.setdefault(candidate.group, {})
+        side[candidate.direction] = side.get(candidate.direction, 0.0) + candidate.risk_money
+    elif candidate is not None:
+        total += candidate.risk_money
+    return total + sum(max(side.values()) for side in sides.values())
 
 
 @dataclass(frozen=True)
@@ -134,7 +212,8 @@ class RiskUsage:
 def usage(picture: AccountPicture, state: LimitsState, settings: RiskSettings) -> RiskUsage:
     capital = picture.capital(settings)
     counted = picture.counted(settings)
-    open_risk = sum(p.counted_risk for p in counted)
+    held = picture.held(settings)
+    open_risk = open_risk_money(held)
     exposure = currency_exposure(_items(counted))
     return RiskUsage(
         capital=capital,
@@ -142,7 +221,7 @@ def usage(picture: AccountPicture, state: LimitsState, settings: RiskSettings) -
         daily_loss_percent=state.daily_loss_percent(picture.money),
         drawdown_percent=state.drawdown_percent(picture.money, settings),
         open_risk_percent=open_risk / capital * 100.0 if capital > 0 else 0.0,
-        open_trades=len(counted),
+        open_trades=len({entry.group for entry in held}),
         trades_today=picture.entries_today(settings),
         exposure_percent=as_percent(exposure, capital),
         margin_level=picture.margin_level,
@@ -170,6 +249,7 @@ def check_trade(
     checks: list[LimitCheck] = []
     capital = picture.capital(settings)
     counted = picture.counted(settings)
+    held = picture.held(settings)
     money = picture.money
 
     if state.halted:
@@ -204,35 +284,40 @@ def check_trade(
             DD_LIMIT,
         ),
     )
+    joins = bool(candidate.group) and any(entry.group == candidate.group for entry in held)
+    note = JOINS if joins else ""
+    trades = len({entry.group for entry in held})
+    whose = "manual trades included" if settings.count_manual_trades else "bot trades only"
     checks.append(
         LimitCheck(
             "open trades",
-            len(counted) < settings.max_open_trades,
-            len(counted),
+            joins or trades < settings.max_open_trades,
+            trades,
             settings.max_open_trades,
-            "manual trades included" if settings.count_manual_trades else "bot trades only",
+            f"{whose}{note}",
             LIMIT_BLOCK,
         ),
     )
-    on_symbol = sum(1 for p in counted if p.symbol == candidate.symbol)
+    on_symbol = len({entry.group for entry in held if entry.symbol == candidate.symbol})
     checks.append(
         LimitCheck(
             "open trades on the symbol",
-            on_symbol < settings.max_open_per_symbol,
+            joins or on_symbol < settings.max_open_per_symbol,
             on_symbol,
             settings.max_open_per_symbol,
-            candidate.symbol,
+            f"{candidate.symbol}{note}",
             LIMIT_BLOCK,
         ),
     )
-    of_strategy = sum(1 for p in picture.positions if p.strategy == candidate.strategy)
+    entries = [*picture.positions, *picture.orders]
+    of_strategy = len({entry.group for entry in entries if entry.strategy == candidate.strategy})
     checks.append(
         LimitCheck(
             "open trades of the strategy",
-            of_strategy < settings.max_open_per_strategy,
+            joins or of_strategy < settings.max_open_per_strategy,
             of_strategy,
             settings.max_open_per_strategy,
-            candidate.strategy,
+            f"{candidate.strategy}{note}",
             LIMIT_BLOCK,
         ),
     )
@@ -248,15 +333,17 @@ def check_trade(
         ),
     )
 
-    open_risk = sum(p.counted_risk for p in counted)
-    total = (open_risk + candidate.risk_money) / capital * 100.0 if capital > 0 else math.inf
+    open_risk = open_risk_money(held)
+    added = open_risk_money(held, candidate) - open_risk
+    total = (open_risk + added) / capital * 100.0 if capital > 0 else math.inf
+    pair = " (the other side of a pending pair)" if added < candidate.risk_money - 0.005 else ""
     checks.append(
         LimitCheck(
             "total open risk",
             total <= settings.max_total_open_risk_percent + 1e-9,
             round(total, 3),
             settings.max_total_open_risk_percent,
-            f"open {open_risk:,.2f} + this trade {candidate.risk_money:,.2f} {picture.currency}",
+            f"open {open_risk:,.2f} + this trade {added:,.2f}{pair} {picture.currency}",
             EXPOSURE_BLOCK,
         ),
     )
