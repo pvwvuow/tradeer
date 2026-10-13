@@ -30,3 +30,4 @@
 - 12 October 2026, release PR #160 (0.50.2): same as #151; this docs commit starts CI.
 - 13 October 2026, release PR #164 (0.50.3): same as #151; this docs commit starts CI.
 - 13 October 2026, release PR #167 (0.50.4): same as #151; this docs commit starts CI.
+- 13 October 2026, release PR #170 (0.51.0): same as #151; this docs commit starts CI.

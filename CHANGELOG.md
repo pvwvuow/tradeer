@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.51.0](https://github.com/pvwvuow/tradeer/compare/v0.50.4...v0.51.0) (2026-10-13)
+
+
+### Features
+
+* **channels:** Auto-take per channel (off by default): a Live channel's waiting card goes after 10 s ([#169](https://github.com/pvwvuow/tradeer/issues/169)) ([a013f42](https://github.com/pvwvuow/tradeer/commit/a013f422d185f9867ee1ff75a5db3d97e8aef5c7))
+
+
+### Bug Fixes
+
+* **history:** the import uses the measured broker clock, not an hour-old quote ([#168](https://github.com/pvwvuow/tradeer/issues/168)) ([9af5c45](https://github.com/pvwvuow/tradeer/commit/9af5c45b8ed3c860668358255a47c41808baffec))
+
 ## [0.50.4](https://github.com/pvwvuow/tradeer/compare/v0.50.3...v0.50.4) (2026-10-13)
 
 
