@@ -30,6 +30,9 @@ it goes on the normal way, without a second AI call.
 0.50.4: a follow-up card obeys the channel's settings (none when the channel is off or its
 follow-ups or stop to entry are set to never; the shadow still changes), and a channel's
 daily loss stop counts from the broker's trading day (`app.channels.feed_rules`).
+0.50.5 (phase 23f): a Live channel with Auto-take on (you turn it on per channel, with one
+hold) confirms its waiting card by itself after 10 seconds unless you press Skip; never on a
+real account or for numbers read from a picture, at most 5 a day (`app.channels.auto_take`).
 
 Phase 21d2 and 21e: every parsed signal is saved (`tg_signals`) and followed as a shadow
 trade in a worker thread every 10 minutes; the same signal from a second channel within 15
@@ -57,6 +60,7 @@ from app.ai.transport import AiCallError, AiClient, Message, plain_text
 from app.ai.usage_store import UsageRecord, short_tokens
 from app.analysis.bars import Bars
 from app.backtest.service import BacktestRequest
+from app.channels.auto_take import AUTO_PER_DAY, AUTO_TAKE_SECONDS, read_auto
 from app.channels.chat_settings import Change, read_change
 from app.channels.drafts import Draft, Drafts, Step, edit, expired_reason, join, worth_telling
 from app.channels.feed_rules import channel_day_start, follow_block
@@ -304,6 +308,9 @@ class ChannelFeed(QObject):
         self.pictures_off_until = 0.0  # a model that refused a picture gets none until then
         self.symbol_waits: list[tuple[float, Reading]] = []  # readings waiting for a symbol
         self.clock_source: Callable[[], BrokerClock] | None = None  # the broker day (0.50.4)
+        self.auto: dict[str, int] = {}  # Auto-take: a card's request id -> its channel
+        self.auto_count: dict[tuple[int, float], int] = {}  # (channel, broker day) -> taken
+        self.no_auto: set[tuple[int, int]] = set()  # (channel, message) read from a picture
         self.usage = usage if usage is not None else desk.page.record_usage
         self.spend = AiSpend()
         self.alerts: list[Callable[[SignalAlert], None]] = []  # the Telegram bot (0.47.0)
@@ -412,6 +419,9 @@ class ChannelFeed(QObject):
                 )
                 card = self.desk.take(text, origin)
                 request_id = card.request_id
+                key = (source.channel_id, message.message_id)
+                if policy.auto_take and key not in self.no_auto:
+                    self.auto[request_id] = source.channel_id
                 found_entry = parsed.entry
                 self._remember_card(request_id, source, symbol, parsed.direction, found_entry, now)
         if found.action is Action.PAPER:
@@ -460,9 +470,80 @@ class ChannelFeed(QObject):
                 self.log("WARNING", f"Telegram signal message failed: {type(error).__name__}")
 
     def _card_settled(self, request_id: str, card: OrderCard) -> None:
-        """The desk answered a channel's card for the first time: tell the bot."""
+        """The desk answered a channel's card for the first time: tell the bot, and start
+        the Auto-take countdown when the channel has it on."""
         names = self.sources.get(request_id)
         self.tell(alert_from_card(card, " + ".join(names) if names else "channel"))
+        self.auto_take_soon(request_id, card)
+
+    # Auto-take (phase 23f, 0.50.5) ----------------------------------------------------------
+    def _title(self, channel_id: int) -> str:
+        source = self.repository.source(channel_id)
+        return source.title if source is not None else str(channel_id)
+
+    def auto_block(self, channel_id: int) -> str:
+        """Why Auto-take may not send now ("" when it may)."""
+        source = self.repository.source(channel_id)
+        policy = self.repository.policy(channel_id)
+        if source is None or not source.enabled or policy.mode is not ChannelMode.LIVE:
+            return "the channel is not Live"
+        if not policy.auto_take:
+            return "Auto-take was turned off"
+        if self.desk.real_orders():
+            return "a real account always needs your hold"
+        day = self.broker_day_start(self.now())
+        if self.auto_count.get((channel_id, day), 0) >= AUTO_PER_DAY:
+            return f"it took {AUTO_PER_DAY} trades by itself today"
+        return ""
+
+    def auto_take_soon(self, request_id: str, card: OrderCard) -> bool:
+        """A waiting card of a channel with Auto-take on is confirmed after a short
+        countdown unless you press Skip (True when the countdown started)."""
+        channel_id = self.auto.get(request_id)
+        if channel_id is None:
+            return False
+        title = self._title(channel_id)
+        if card.state != "waiting" or card.block:
+            self.auto.pop(request_id, None)
+            why = card.block or f"the card is {card.state}"
+            self.log("INFO", f"Telegram channel {title}: Auto-take: nothing to send ({why})")
+            return False
+        why = self.auto_block(channel_id)
+        if why:
+            self.auto.pop(request_id, None)
+            line = f"Auto-take: {why}; the card waits for your hold"
+            self.log("INFO", f"Telegram channel {title}: {line}")
+            self.noted.emit(title, line)
+            return False
+        line = f"Auto-take: the card goes in {AUTO_TAKE_SECONDS} s; press Skip to stop it"
+        self.log("INFO", f"Telegram channel {title}: {line}")
+        self.noted.emit(title, line)
+        QTimer.singleShot(AUTO_TAKE_SECONDS * 1000, partial(self.auto_send, request_id))
+        return True
+
+    def auto_send(self, request_id: str) -> bool:
+        """The countdown ended: confirm the card as your hold would (True when it went)."""
+        channel_id = self.auto.pop(request_id, None)
+        card = self.desk.cards.get(request_id)
+        if channel_id is None or card is None:
+            return False
+        title = self._title(channel_id)
+        why = self.auto_block(channel_id)
+        if not why and card.state != "waiting":
+            why = f"the card is {card.state}"
+        if why:
+            self.log("INFO", f"Telegram channel {title}: Auto-take stopped: {why}")
+            return False
+        if not self.desk.send(request_id):
+            self.log("WARNING", f"Telegram channel {title}: Auto-take: the card did not go")
+            return False
+        day = self.broker_day_start(self.now())
+        self.auto_count[(channel_id, day)] = self.auto_count.get((channel_id, day), 0) + 1
+        audit("channel auto-take", before=title, after=request_id)
+        line = "Auto-take: sent; the engine checks the price, the spread and the limits again"
+        self.log("INFO", f"Telegram channel {title}: {line}")
+        self.noted.emit(title, line)
+        return True
 
     # Half signals (docs/AI_LAB_V3.md section 1) -------------------------------------------
     def _waiting(
@@ -750,6 +831,9 @@ class ChannelFeed(QObject):
             self.drafts.drop(source.channel_id)
         if reading.picture:
             line = f"the AI read the picture as: {text} (check the numbers on the card)"
+            if len(self.no_auto) >= KEEP_ASKED:
+                self.no_auto.clear()
+            self.no_auto.add((message.channel_id, message.message_id))  # never Auto-take
         else:
             line = f"the AI read the message as: {text}"
         self.noted.emit(source.title, line)
@@ -978,7 +1062,14 @@ class ChannelFeed(QObject):
     # Settings in the chat (docs/SIGNAL_DESK.md 3.4) ---------------------------------------
     def intercept(self, text: str) -> bool:
         sources = [channel for channel in self.repository.channels() if channel.in_folder]
-        change = read_change(text, [channel.title for channel in sources])
+        titles = [channel.title for channel in sources]
+        auto = read_auto(text, titles)
+        if auto is not None:
+            source = next(channel for channel in sources if channel.title == auto[0])
+            self.desk.page.chat.add_bubble(text.strip())
+            self.auto_card(source, auto[1])
+            return True
+        change = read_change(text, titles)
         if change is None:
             return self._next(text)
         source = next(channel for channel in sources if channel.title == change.title)
@@ -993,6 +1084,35 @@ class ChannelFeed(QObject):
         card.held.connect(partial(self._save, card, source, change))
         self._show(card)
         return card
+
+    def auto_card(self, source: ChannelSource, on: bool) -> SettingsCard:
+        """Auto-take on or off for one channel: saved only after Hold to save (0.50.5)."""
+        policy = self.repository.policy(source.channel_id)
+        old = "on" if policy.auto_take else "off"
+        card = SettingsCard(
+            source.title,
+            "auto-take",
+            old,
+            "on" if on else "off",
+            fa=self.desk.page.persian,
+        )
+        card.held.connect(partial(self._save_auto, card, source, on))
+        self._show(card)
+        return card
+
+    def _save_auto(self, card: SettingsCard, source: ChannelSource, on: bool) -> bool:
+        if card.done:
+            return False
+        policy = self.repository.policy(source.channel_id)
+        if on and policy.mode is not ChannelMode.LIVE:
+            card.finish("Not saved: Auto-take needs a Live channel (set it to Live first).")
+            return False
+        updated = policy.model_copy(update={"auto_take": on})
+        self.repository.set_policy(source.channel_id, updated, self.now())
+        after = "on" if on else "off"
+        audit("telegram channel setting", before=f"{source.title} auto-take", after=after)
+        card.finish(card.word("Saved."))
+        return True
 
     def _save(self, card: SettingsCard, source: ChannelSource, change: Change) -> bool:
         if card.done:
