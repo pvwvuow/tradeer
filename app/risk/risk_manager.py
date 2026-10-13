@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from app.core.clock import BrokerClock
-from app.domain.signals import Direction, Signal
+from app.domain.signals import Direction, OrderType, Signal
 from app.domain.sizing import (
     SizingInput,
     SizingResult,
@@ -35,6 +35,7 @@ from app.risk.limits import (
     Candidate,
     LimitCheck,
     RiskUsage,
+    candidate_group,
     check_trade,
     failed,
     usage,
@@ -385,6 +386,8 @@ class RiskManager:
             stop_points=signal.risk / point,
             stops_level=spec.stops_level if spec is not None else 0,
             margin_required=margin,
+            group=candidate_group(signal, symbol),  # legs of one signal are one trade (0.50.4)
+            pending=signal.order_type is not OrderType.MARKET,
         )
         checks = check_trade(candidate, picture, state, settings)
         if not sizing.ok:
