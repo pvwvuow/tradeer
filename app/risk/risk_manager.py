@@ -6,6 +6,8 @@ passed the filters it reads the account from MT5 (positions, today's deals), rol
 state, sizes the trade from `order_calc_profit` and checks the limits; the result and the
 full calculation go into the decision trace and the `risk` log. The UI asks to stop or
 re-enable trading through a queue, so the limit state is only written in this one thread.
+0.51.1: a trade whose commission is too big a part of its risk is refused
+(`app.risk.costs`).
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from app.domain.sizing import (
 )
 from app.mt5.models import SymbolSpec
 from app.risk.budget import Budget, budget_of, capped_percent, small_budget_reason
+from app.risk.costs import commission_check
 from app.risk.limits import (
     AccountPicture,
     Candidate,
@@ -390,6 +393,9 @@ class RiskManager:
             pending=signal.order_type is not OrderType.MARKET,
         )
         checks = check_trade(candidate, picture, state, settings)
+        costly = commission_check(loss, cost)  # a stop too close for the costs (0.51.1)
+        if costly is not None:
+            checks.append(costly)
         if not sizing.ok:
             checks = [check for check in checks if check.name != "margin"]
         blocked = failed(checks)

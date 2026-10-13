@@ -9,7 +9,8 @@ on or off. The api_hash, the session and the proxy secret go to Windows Credenti
 Each channel has its own settings (phase 21d, `app.channels.policy`): Paper trial (counted,
 no card asks for money) or Live (an order card in the AI Lab for each signal, still with your
 hold-to-confirm), its budget, the risk per trade of its equity, how many trades it may have
-open, its daily loss and drawdown stops, the symbols it may trade and its aliases.
+open, its daily loss and drawdown stops, the symbols it may trade and its aliases. 0.51.1:
+and Auto-take (`app.channels.auto_take`), which only a Live channel can turn on.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.channels.auto_take import AUTO_PER_DAY, AUTO_TAKE_SECONDS
 from app.channels.folder import preview
 from app.channels.policy import (
     ChannelMode,
@@ -84,6 +86,10 @@ PROXY_LABELS: dict[ProxyKind, str] = {
     ProxyKind.MTPROTO: "MTProto proxy (the secret goes in the password field)",
 }
 CHANNEL_ROLE = Qt.ItemDataRole.UserRole
+
+
+def on_off(value: bool) -> str:
+    return "on" if value else "off"
 
 
 @dataclass
@@ -221,6 +227,12 @@ class ChannelsPage(QWidget):
         self.drawdown = self._edit("ChannelDrawdown", "Drawdown stop, % of the budget")
         self.symbols = self._edit("ChannelSymbols", "Symbols it may trade, e.g. XAUUSD, EURUSD")
         self.aliases = self._edit("ChannelAliases", "Aliases, e.g. GOLD=XAUUSD")
+        self.auto_take = QCheckBox(
+            "Auto-take: a waiting card of this Live channel goes by itself after "
+            f"{AUTO_TAKE_SECONDS} s (Skip stops it; demo only, at most {AUTO_PER_DAY} a day)",
+        )
+        self.auto_take.setObjectName("ChannelAutoTake")
+        self.auto_take.setAccessibleName("Auto-take")
         fields: list[tuple[str, QWidget]] = [
             ("Mode", self.mode),
             ("Budget", self.budget),
@@ -230,6 +242,7 @@ class ChannelsPage(QWidget):
             ("Drawdown stop %", self.drawdown),
             ("Symbols (empty = all)", self.symbols),
             ("Aliases", self.aliases),
+            ("Auto-take", self.auto_take),
         ]
         for row, (title, widget) in enumerate(fields):
             form.addWidget(styled_label(title, "muted"), row, 0)
@@ -441,6 +454,7 @@ class ChannelsPage(QWidget):
             self.drawdown,
             self.symbols,
             self.aliases,
+            self.auto_take,
             self.policy_button,
         )
         for widget in widgets:
@@ -470,6 +484,7 @@ class ChannelsPage(QWidget):
         self.drawdown.setText(f"{policy.drawdown_percent:g}")
         self.symbols.setText(", ".join(policy.symbols))
         self.aliases.setText(alias_text(policy.aliases))
+        self.auto_take.setChecked(policy.auto_take)
         self.policy_status.setText(self._money_text(source.magic, policy))
         lines = stats_of(context.repository, source, policy).lines()
         if policy.mode is ChannelMode.PAPER:
@@ -503,6 +518,9 @@ class ChannelsPage(QWidget):
         mode = ChannelMode(str(self.mode.currentData() or ChannelMode.PAPER.value))
         if mode is ChannelMode.LIVE and numbers["budget"] <= 0:
             raise ValueError("Live needs a budget: enter the money this channel may use")
+        auto = self.auto_take.isChecked()
+        if auto and not old.auto_take and mode is not ChannelMode.LIVE:
+            raise ValueError("Auto-take needs a Live channel: set the mode to Live first")
         try:
             return ChannelPolicy.model_validate(
                 {
@@ -512,6 +530,7 @@ class ChannelsPage(QWidget):
                     "mode": mode.value,
                     "symbols": self.symbols.text(),
                     "aliases": self.aliases.text(),
+                    "auto_take": auto,
                 },
             )
         except ValueError as error:
@@ -532,8 +551,10 @@ class ChannelsPage(QWidget):
         title = source.title if source is not None else str(channel_id)
         audit(
             "telegram channel settings saved",
-            before=f"{title}: {old.mode.value}, budget {old.budget:g}",
-            after=f"{title}: {policy.mode.value}, budget {policy.budget:g}",
+            before=f"{title}: {old.mode.value}, budget {old.budget:g}, "
+            f"auto-take {on_off(old.auto_take)}",
+            after=f"{title}: {policy.mode.value}, budget {policy.budget:g}, "
+            f"auto-take {on_off(policy.auto_take)}",
         )
         self.show_policy()
         self.policy_status.setText("Saved. " + self.policy_status.text())
