@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.1](https://github.com/pvwvuow/tradeer/compare/v0.51.0...v0.51.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **channels:** Auto-take is easy to find, the AI knows it; tiny stops warn, commission over 10% of the risk is refused ([#171](https://github.com/pvwvuow/tradeer/issues/171)) ([2c4b1d9](https://github.com/pvwvuow/tradeer/commit/2c4b1d983575781a2e29c8833188ae4caf990e77))
+
 ## [0.51.0](https://github.com/pvwvuow/tradeer/compare/v0.50.4...v0.51.0) (2026-10-13)
 
 
