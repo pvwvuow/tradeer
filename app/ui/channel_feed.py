@@ -27,6 +27,9 @@ a message that cannot go to the AI (no connection, the daily limit used) says wh
 0.50.3 (PC log of 12 October 2026): a reading whose symbol is not on the watchlist (AUDUSD,
 added a minute later) waits 15 minutes (`SYMBOL_WAIT_SECONDS`); once the symbol is watched
 it goes on the normal way, without a second AI call.
+0.50.4: a follow-up card obeys the channel's settings (none when the channel is off or its
+follow-ups or stop to entry are set to never; the shadow still changes), and a channel's
+daily loss stop counts from the broker's trading day (`app.channels.feed_rules`).
 
 Phase 21d2 and 21e: every parsed signal is saved (`tg_signals`) and followed as a shadow
 trade in a worker thread every 10 minutes; the same signal from a second channel within 15
@@ -56,6 +59,7 @@ from app.analysis.bars import Bars
 from app.backtest.service import BacktestRequest
 from app.channels.chat_settings import Change, read_change
 from app.channels.drafts import Draft, Drafts, Step, edit, expired_reason, join, worth_telling
+from app.channels.feed_rules import channel_day_start, follow_block
 from app.channels.folder import ChannelMessage, preview
 from app.channels.policy import (
     Action,
@@ -83,6 +87,7 @@ from app.channels.reading import (
 from app.channels.shadow_follow import BarSource, follow_signals
 from app.channels.stats import Card, duplicate_of
 from app.channels.updates import LINK_SECONDS, Earlier, Update, UpdateKind, link, read_update
+from app.core.clock import BrokerClock
 from app.domain.signals import Direction, SignalState
 from app.notify.bot_text import SignalAlert
 from app.observability.logger import audit
@@ -298,6 +303,7 @@ class ChannelFeed(QObject):
         self.cannot_at: dict[str, float] = {}  # why the AI could not read -> when it was told
         self.pictures_off_until = 0.0  # a model that refused a picture gets none until then
         self.symbol_waits: list[tuple[float, Reading]] = []  # readings waiting for a symbol
+        self.clock_source: Callable[[], BrokerClock] | None = None  # the broker day (0.50.4)
         self.usage = usage if usage is not None else desk.page.record_usage
         self.spend = AiSpend()
         self.alerts: list[Callable[[SignalAlert], None]] = []  # the Telegram bot (0.47.0)
@@ -371,7 +377,8 @@ class ChannelFeed(QObject):
             self.follow_up(source, message, symbols, policy.aliases)
         symbol = self._symbol(text, symbols, policy.aliases)
         now = self.now()
-        state = budget_state(policy, self.repository.money(source.magic, day_start(now)))
+        since = self.broker_day_start(now)
+        state = budget_state(policy, self.repository.money(source.magic, since))
         found = route(policy, kind, symbol, state, symbols)
         if found.back_to_paper:
             self.repository.set_policy(
@@ -433,6 +440,15 @@ class ChannelFeed(QObject):
             self.log("INFO", f"Telegram channel {source.title}: {found.reason}")
         self._remember(source, message, found)
         return found
+
+    def broker_day_start(self, now: float) -> float:
+        """UTC start of the broker's trading day, for a channel's daily loss stop (0.50.4)."""
+        clock: BrokerClock | None = None
+        source = self.clock_source
+        if source is not None:
+            with contextlib.suppress(Exception):
+                clock = source()
+        return channel_day_start(clock, now)
 
     # The Telegram bot (phase 22b) ---------------------------------------------------------
     def tell(self, alert: SignalAlert) -> None:
@@ -893,8 +909,13 @@ class ChannelFeed(QObject):
                 message.date,
             )
         signal = next(item for item in signals if item.message_id == found.message_id)
-        if update.acts and signal.request_id and signal.request_id in self.desk.cards:
-            self.follow_up_card(source.title, preview(message.text), update, signal.request_id)
+        if not (update.acts and signal.request_id and signal.request_id in self.desk.cards):
+            return update
+        why = follow_block(self.repository.policy(source.channel_id), update.kind)
+        if why:
+            self.log("INFO", f"Telegram channel {source.title}: no follow-up card, {why}")
+            return update
+        self.follow_up_card(source.title, preview(message.text), update, signal.request_id)
         return update
 
     def follow_up_card(
