@@ -24,6 +24,9 @@ duplicate, a refusal) at once; see `app.ui.bot_cards`.
 tokens and cost go to the AI Lab's usage (kind `channel`) and to the Telegram signals tab.
 0.48.1 (phase 22h): a draft of three messages that is still incomplete goes to the AI too;
 a message that cannot go to the AI (no connection, the daily limit used) says why (`cannot`).
+0.50.3 (PC log of 12 October 2026): a reading whose symbol is not on the watchlist (AUDUSD,
+added a minute later) waits 15 minutes (`SYMBOL_WAIT_SECONDS`); once the symbol is watched
+it goes on the normal way, without a second AI call.
 
 Phase 21d2 and 21e: every parsed signal is saved (`tg_signals`) and followed as a shadow
 trade in a worker thread every 10 minutes; the same signal from a second channel within 15
@@ -110,6 +113,8 @@ RAW_CHARS = 400  # characters of the AI's answer in the log
 REFUSED_CODES = frozenset({400, 413, 415, 422})  # a refused request, not a network problem
 WAITING = frozenset({SignalState.PENDING_APPROVAL})
 ON_THEIR_WAY = frozenset({SignalState.SENT, SignalState.FILLED, SignalState.MANAGED})
+SYMBOL_WAIT_SECONDS = 15 * 60.0  # a reading waits this long for its symbol (0.50.3)
+KEEP_SYMBOL_WAITS = 20
 
 Log = Callable[[str, str], None]
 
@@ -292,6 +297,7 @@ class ChannelFeed(QObject):
         self.asked: set[tuple[int, int]] = set()  # (channel, message) read by the AI
         self.cannot_at: dict[str, float] = {}  # why the AI could not read -> when it was told
         self.pictures_off_until = 0.0  # a model that refused a picture gets none until then
+        self.symbol_waits: list[tuple[float, Reading]] = []  # readings waiting for a symbol
         self.usage = usage if usage is not None else desk.page.record_usage
         self.spend = AiSpend()
         self.alerts: list[Callable[[SignalAlert], None]] = []  # the Telegram bot (0.47.0)
@@ -492,7 +498,9 @@ class ChannelFeed(QObject):
         return self.handle(whole, joined=True)
 
     def expire_drafts(self) -> list[Draft]:
-        """Timer (UI thread): drafts whose time is up, each told once with what was missing."""
+        """Timer (UI thread): drafts whose time is up, each told once with what was missing.
+        Readings that waited for their symbol go on first (0.50.3)."""
+        self.retry_symbols()
         gone = self.drafts.expired(self.now())
         symbols = self.desk.symbols()
         for draft in gone:
@@ -513,6 +521,62 @@ class ChannelFeed(QObject):
             if telling:
                 self.noted.emit(title, reason)
         return gone
+
+    # A symbol that is not watched yet (0.50.3) --------------------------------------------
+    def wait_for_symbol(
+        self,
+        source: ChannelSource,
+        reading: Reading,
+        symbols: tuple[str, ...],
+        aliases: dict[str, str],
+    ) -> bool:
+        """Keep a signal reading whose symbol is not on the watchlist for a while (True when
+        it waits now)."""
+        outcome = reading.outcome
+        if not isinstance(outcome, ReadResult) or outcome.kind != "signal" or not outcome.symbol:
+            return False
+        if resolve_symbol(outcome.symbol, symbols, aliases):
+            return False  # the symbol is watched: it failed for another reason
+        key = (reading.channel_id, reading.message.message_id)
+        if any((item.channel_id, item.message.message_id) == key for _, item in self.symbol_waits):
+            return False
+        self.symbol_waits = [*self.symbol_waits, (self.now(), reading)][-KEEP_SYMBOL_WAITS:]
+        minutes = SYMBOL_WAIT_SECONDS / 60
+        self.log(
+            "INFO",
+            f"Telegram channel {source.title}: the signal waits {minutes:.0f} min; add "
+            f"{outcome.symbol} on the Market page and its card comes by itself",
+        )
+        return True
+
+    def retry_symbols(self) -> int:
+        """Readings whose symbol is on the watchlist now go on the normal way (the number
+        that went on); the ones that waited too long are dropped."""
+        if not self.symbol_waits:
+            return 0
+        now = self.now()
+        symbols = self.desk.symbols()
+        keep: list[tuple[float, Reading]] = []
+        ready: list[Reading] = []
+        for at, reading in self.symbol_waits:
+            if now - at > SYMBOL_WAIT_SECONDS:
+                continue
+            outcome = reading.outcome
+            symbol = outcome.symbol if isinstance(outcome, ReadResult) else ""
+            aliases = self.repository.policy(reading.channel_id).aliases
+            if symbol and resolve_symbol(symbol, symbols, aliases):
+                ready.append(reading)
+            else:
+                keep.append((at, reading))
+        self.symbol_waits = keep
+        for reading in ready:
+            self.log(
+                "INFO",
+                f"Telegram channel message {reading.message.message_id}: its symbol is on the "
+                "watchlist now, the reading goes on",
+            )
+            self.show_read(replace(reading, model=""))  # nothing is spent a second time
+        return len(ready)
 
     # The AI reads unclear messages (docs/AI_LAB_V3.md section 1) ----------------------------
     def _unclear(
@@ -663,6 +727,7 @@ class ChannelFeed(QObject):
             self._remember(source, message, found)
             if outcome.kind in ("signal", "part"):
                 self.noted.emit(source.title, problem)
+            self.wait_for_symbol(source, reading, symbols, aliases)
             return found
         draft = self.drafts.get(source.channel_id, self.now())
         if draft is not None and message.message_id in draft.message_ids:

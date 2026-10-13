@@ -9,6 +9,8 @@ nothing waits for a click there (PC log of 5 October 2026).
 0.50.2 (PC log of 12 October 2026): a closed trade's notice gives its real net result, read
 from the engine's close line ("position 34969404 closed by take profit: net +32.25"), not
 the last floating profit seen before the close (+6.48 there).
+0.50.3: a restart no longer tells "trade opened" again for the trades the engine resumed
+or adopted (it did at 08:26 that day).
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ from app.storage.sync import SyncState, SyncStatus
 FAILURE_TEXT = 500  # characters of a failed order's notice
 NOT_A_FAILURE = ("cancelled", "pending order")  # OCO cancels and expiries end FAILED too
 CLOSED_LINE = re.compile(r"position (\d+) closed by ([^:]*): net ([+-]?[\d,]+(?:\.\d+)?)")
+RESUMED_LINE = "Resumed managing"
+ADOPTED_LINE = re.compile(r"Adopted bot position (\d+)")
 
 
 class EventKind(StrEnum):
@@ -89,14 +93,25 @@ def closed_result(messages: Sequence[str], ticket: int) -> tuple[str, str] | Non
     return None
 
 
+def known_again(old: Sequence[str], new: Sequence[str]) -> tuple[bool, set[int]]:
+    """Whether the engine resumed its saved trades in this step, and the positions it
+    adopted: neither was opened now."""
+    seen = set(old)
+    fresh = [line for line in new if line not in seen]
+    resumed = any(RESUMED_LINE in line for line in fresh)
+    adopted = {int(found.group(1)) for line in fresh if (found := ADOPTED_LINE.search(line))}
+    return resumed, adopted
+
+
 def execution_notices(old: ExecutionSnapshot | None, new: ExecutionSnapshot) -> list[Notice]:
     if old is None:
         return []
     found: list[Notice] = []
     before = {(p.mode, p.ticket): p for p in old.positions if not p.pending}
     after = {(p.mode, p.ticket): p for p in new.positions if not p.pending}
+    resumed, adopted = known_again(old.messages, new.messages)
     for key, view in after.items():
-        if key not in before:
+        if key not in before and not resumed and view.ticket not in adopted:
             side = "Buy" if view.direction in ("buy", "long") else "Sell"
             text = (
                 f"{side} {view.volume:g} {view.symbol} at {view.entry:g} ({view.mode}), "
