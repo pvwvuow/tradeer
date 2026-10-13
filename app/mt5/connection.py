@@ -5,6 +5,11 @@ terminal every few seconds; when it is lost, the service reconnects with exponen
 (`initialize()` also starts the terminal again if it was closed) and raises an urgent alert
 when positions were open. A failed first connection is not retried on its own: retrying a
 wrong password could lock the account.
+
+0.50.3 (PC log of 12 October 2026): 180 reconnects in a row failed with an IPC timeout
+(-10005) for 9 hours, each one through the same MT5 helper process. Every third failed
+attempt now shuts the MT5 library down and starts the helper process again before it
+initializes, so a stuck link to the terminal is opened fresh.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ StatusListener = Callable[["ConnectionStatus"], None]
 HEARTBEAT_SECONDS = 5.0
 HEARTBEAT_TIMEOUT_SECONDS = 15.0
 CONNECT_EXTRA_SECONDS = 30.0
+FRESH_EVERY = 3  # every third failed reconnect starts the MT5 link fresh (0.50.3)
 
 
 class ConnectionState(StrEnum):
@@ -102,7 +108,20 @@ def _read_heartbeat(mt5: MT5Api) -> _Heartbeat:
     )
 
 
-def _reconnect(mt5: MT5Api, request: ConnectRequest) -> _Heartbeat:
+def start_fresh(mt5: MT5Api) -> None:
+    """Shut the MT5 library down and end the helper process (the next call starts a new
+    one). Runs in the gateway thread; anything that fails here is only a cleanup."""
+    with contextlib.suppress(Exception):
+        mt5.shutdown()
+    close = getattr(mt5, "close", None)
+    if callable(close):
+        with contextlib.suppress(Exception):
+            close()
+
+
+def _reconnect(mt5: MT5Api, request: ConnectRequest, fresh: bool = False) -> _Heartbeat:
+    if fresh:
+        start_fresh(mt5)
     options: dict[str, object] = {"timeout": request.timeout_ms}
     started = (
         mt5.initialize(request.terminal_path, **options)
@@ -325,10 +344,17 @@ class ConnectionService:
 
     def _try_reconnect(self, status: ConnectionStatus, request: ConnectRequest, now: float) -> None:
         timeout = request.timeout_ms / 1000.0 + CONNECT_EXTRA_SECONDS
+        fresh = status.attempt > 0 and status.attempt % FRESH_EVERY == 0
+        if fresh:
+            self._emit(
+                "INFO",
+                f"Reconnect attempt {status.attempt}: starting the MT5 link fresh "
+                "(library shut down, helper process started again)",
+            )
         try:
             beat = self.gateway.run(
                 "reconnect",
-                lambda mt5: _reconnect(mt5, request),
+                lambda mt5: _reconnect(mt5, request, fresh),
                 timeout=timeout,
                 arguments={"login": request.login, "server": request.server},
             )
