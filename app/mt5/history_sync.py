@@ -9,6 +9,11 @@ Deal times are broker server time. They are converted to UTC with the broker clo
 knows the broker's daylight-saving rules (New York close brokers are UTC+2 in winter and
 UTC+3 in summer). When the clock rules change, everything is imported again once so that
 older trades get the right UTC times too.
+
+0.50.5: the clock the analysis measured (two agreeing fresh ticks, ten minutes apart) wins
+over the offset from the connection report's quotes. Those quotes are as old as the
+connection: an hour later UTC+3 reads as UTC+2, which looked like EU summer time, and every
+trade was rebuilt one hour off and then back again (PC log of 13 October 2026).
 """
 
 from __future__ import annotations
@@ -124,6 +129,19 @@ def history_clock(offset_hours: float | None, utc_now: float) -> BrokerClock:
     return BrokerClock(winter, scheme, measured=True)
 
 
+def import_clock(
+    offset_hours: float | None,
+    known: BrokerClock | None,
+    utc_now: float,
+) -> tuple[BrokerClock, float | None]:
+    """The clock for an import and its offset now: the measured clock when there is one,
+    else the offset of a fresh quote with its likely rules."""
+    if known is not None and known.measured and known.winter_hours is not None:
+        clock = BrokerClock(known.winter_hours, known.scheme, measured=True)
+        return clock, clock.offset_at(utc_now)
+    return history_clock(offset_hours, utc_now), offset_hours
+
+
 def read_history(mt5: MT5Api, date_from: int, date_to: int) -> tuple[list[Deal], list[Order]]:
     """Runs in the gateway thread. Read-only: never an order function."""
     deals = _records(mt5, mt5.history_deals_get(date_from, date_to))
@@ -154,18 +172,14 @@ class HistoryImporter:
     ) -> HistoryResult:
         """Import new history for `account`. Blocks: call it from a worker thread.
 
-        `offset_hours` comes from a fresh quote; without one, `known` (the clock the analysis
-        measured or saved earlier) is used.
+        `known` (the clock the analysis measured or saved earlier) is used when it was
+        measured; otherwise `offset_hours` from a fresh quote (`import_clock`).
         """
         with self._lock:
             key = self._store.upsert_account(account)
             state_key = f"history_until:{key}"
             clock_key = f"history_clock:{key}"
-            if offset_hours is None and known is not None and known.measured:
-                clock = BrokerClock(known.winter_hours, known.scheme, measured=True)
-                offset_hours = clock.offset_at(self._clock())
-            else:
-                clock = history_clock(offset_hours, self._clock())
+            clock, offset_hours = import_clock(offset_hours, known, self._clock())
             rules = f"{clock.scheme.value}:{clock.winter_hours:g}"
             saved = self._store.get_state(state_key)
             if self._store.get_state(clock_key) != rules:
