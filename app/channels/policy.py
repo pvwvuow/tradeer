@@ -10,6 +10,8 @@ Paper trial. The account's limits always apply on top.
 
 0.50.1: `floor_percent` lets the broker's smallest lot through when it risks more than the
 channel's normal share (see `app.risk.budget`).
+0.50.5: `auto_take` (off by default): a Live channel's waiting card is confirmed by itself
+after a short countdown (`app.channels.auto_take`).
 """
 
 from __future__ import annotations
@@ -65,6 +67,7 @@ class ChannelPolicy(BaseModel):
     break_even: Ask = Field(default=Ask.ASK)
     market_minutes: int = Field(default=MARKET_MINUTES, ge=1, le=60)
     pending_minutes: int = Field(default=PENDING_MINUTES, ge=5, le=1440)
+    auto_take: bool = Field(default=False, description="a waiting card is confirmed by itself")
 
     @field_validator("symbols", mode="before")
     @classmethod
