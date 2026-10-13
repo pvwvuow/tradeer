@@ -7,6 +7,11 @@ effort of some models) is dropped. What worked is remembered per base URL and mo
 the next call goes straight to it. The key is only ever in the Authorization header and is
 masked in every error text. A message with a picture (the Chat Completions form, text and
 image_url parts) is sent in the Responses form there (`responses_content`, 0.44.1).
+
+0.50.3 (docs/AI_AUTOPILOT.md B18): a call that fails on a passing problem (HTTP 429, a 5xx
+or a network error that came quickly, such as a VPN blip) is tried twice more, 2 s and then
+5 s later. A network error that took longer (a timeout) is not tried again: the user would
+wait minutes. Nothing is paid for a call that failed.
 """
 
 from __future__ import annotations
@@ -39,6 +44,8 @@ MAX_ATTEMPTS = 6
 HTTP_CODE = re.compile(r"^HTTP (\d{3}):")
 FORMAT_WORDS = ("response_format", "json_schema", "json_object", "text.format", "structured")
 RESPONSES_WORDS = ("/responses", "responses api", "responses endpoint", "v1/responses")
+RETRY_SECONDS = (2.0, 5.0)  # the waits before the second and the third try (0.50.3)
+QUICK_FAILURE_SECONDS = 15.0  # a network failure that took longer is not tried again
 Message = Mapping[str, str]
 
 
@@ -59,6 +66,8 @@ class FailureKind(StrEnum):
     FORMAT = "format"
     OTHER = "other"
 
+
+PASSING = frozenset({FailureKind.RATE, FailureKind.SERVER, FailureKind.NETWORK})
 
 FAILURE_TEXT: dict[FailureKind, str] = {
     FailureKind.REFUSED: "The AI settings are not complete.",
@@ -118,6 +127,14 @@ def classify(text: str) -> tuple[FailureKind, int]:
     if code >= 500:
         return FailureKind.SERVER, code
     return FailureKind.OTHER, code
+
+
+def try_again(error: AiCallError, retries: int, seconds: float) -> bool:
+    """Whether a failed call is worth another try: a passing problem, tries left, and for a
+    network error only when it failed quickly (a timeout would make the user wait again)."""
+    if error.kind not in PASSING or retries >= len(RETRY_SECONDS):
+        return False
+    return error.kind is not FailureKind.NETWORK or seconds < QUICK_FAILURE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -383,12 +400,14 @@ class AiClient:
         transport: Transport = urllib_post,
         clock: Callable[[], float] = time.monotonic,
         learned: dict[str, CallOptions] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.settings = settings
         self.key = key.strip()
         self.transport = transport
         self.clock = clock
         self.learned: dict[str, CallOptions] = learned if learned is not None else {}
+        self.sleep = sleep
 
     @property
     def prices(self) -> Prices:
@@ -458,13 +477,21 @@ class AiClient:
         options = self.first_options(structured)
         auto = self.settings.api_style is ApiStyle.AUTO
         started = self.clock()
+        sent = started  # when this try began (read again only after a passing failure)
         attempts = 0
+        retries = 0
         while True:
             attempts += 1
             try:
                 raw = self._send(options, messages, schema, max_tokens)
                 break
             except AiCallError as error:
+                took = self.clock() - sent if error.kind in PASSING else 0.0
+                if try_again(error, retries, took):
+                    self.sleep(RETRY_SECONDS[retries])
+                    retries += 1
+                    sent = self.clock()
+                    continue
                 following = fallback(options, error, auto_style=auto, structured=structured)
                 if following is None or attempts >= MAX_ATTEMPTS:
                     raise
