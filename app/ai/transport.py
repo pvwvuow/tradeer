@@ -477,18 +477,20 @@ class AiClient:
         options = self.first_options(structured)
         auto = self.settings.api_style is ApiStyle.AUTO
         started = self.clock()
+        sent = started  # when this try began (read again only after a passing failure)
         attempts = 0
         retries = 0
         while True:
             attempts += 1
-            sent = self.clock()
             try:
                 raw = self._send(options, messages, schema, max_tokens)
                 break
             except AiCallError as error:
-                if try_again(error, retries, self.clock() - sent):
+                took = self.clock() - sent if error.kind in PASSING else 0.0
+                if try_again(error, retries, took):
                     self.sleep(RETRY_SECONDS[retries])
                     retries += 1
+                    sent = self.clock()
                     continue
                 following = fallback(options, error, auto_style=auto, structured=structured)
                 if following is None or attempts >= MAX_ATTEMPTS:
