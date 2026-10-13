@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.channels.auto_take import channel_named, read_auto
+from app.channels.auto_take import channel_named, plain, read_auto
 from app.channels.policy import ChannelPolicy, policy_from_json
 
 TITLES = ["Araz Forex | Signals", "Gold Room", "Gold Room VIP"]
@@ -29,3 +29,12 @@ def test_other_lines_are_not_auto_take() -> None:
     assert read_auto("Gold Room live", TITLES) is None
     assert read_auto("auto on", TITLES) is None
     assert read_auto("Gold Room auto-take", TITLES) is None
+
+
+def test_typed_on_a_persian_keyboard_it_still_counts() -> None:
+    titles = ["Araz Forex | \u0633\u06cc\u06af\u0646\u0627\u0644 \ud83d\udcc8", "Mmd Jvd | MSJ Trade"]
+    title = titles[0]
+    assert read_auto("\u200fAraz\u00a0Forex auto\u2010take on\u200e", titles) == (title, True)
+    assert read_auto("Araz  Forex   AUTO\u2013TAKE   OFF", titles) == (title, False)
+    assert read_auto("Araz Forex \u062e\u0648\u062f\u06a9\u0627\u0631 \u0631\u0648\u0634\u0646", titles) == (title, True)
+    assert plain("\u0643\u064a") == "\u06a9\u06cc"
