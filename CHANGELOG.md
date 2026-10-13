@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.50.3](https://github.com/pvwvuow/tradeer/compare/v0.50.2...v0.50.3) (2026-10-13)
+
+
+### Bug Fixes
+
+* **ai:** calls that fail on 429, 5xx or a quick network error are tried twice more ([#163](https://github.com/pvwvuow/tradeer/issues/163)) ([30548a6](https://github.com/pvwvuow/tradeer/commit/30548a6807a65014fc015910a49c9dfd8729dd26))
+* stuck reconnects start the MT5 link fresh, no duplicate open notice, unwatched channel symbols wait ([#162](https://github.com/pvwvuow/tradeer/issues/162)) ([c52ba63](https://github.com/pvwvuow/tradeer/commit/c52ba639fe1e42a5e65d585e5575fcb30dbafe3e))
+
 ## [0.50.2](https://github.com/pvwvuow/tradeer/compare/v0.50.1...v0.50.2) (2026-10-12)
 
 
