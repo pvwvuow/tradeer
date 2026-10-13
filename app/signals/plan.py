@@ -12,7 +12,9 @@ price against the live quote before a card is shown:
 
 Then: the stop loss on the losing side, every target on the winning side, a pending entry
 within 2 ATR, the stop beyond the stops level plus the spread, and the reward to risk of
-the first target (a warning under 1). Pure: the quote and the ATR come in as numbers.
+the first target (a warning under 1). 0.51.1: a stop under 0.5 ATR is a warning too (the
+price's normal moves reach it, and the spread and the commission are a big part of the
+risk). Pure: the quote and the ATR come in as numbers.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from app.signals.parse import ParsedSignal
 
 MARKET_ATR = 0.3
 PENDING_ATR = 2.0
+NOISE_ATR = 0.5  # a stop closer than this is inside the price's normal moves (a warning)
 MIN_RR = 1.0
 
 
@@ -125,6 +128,20 @@ def _side_check(direction: Direction, order: OrderType, entry: float, market: Ma
     )
 
 
+def _noise_check(stop: float, atr: float) -> Check:
+    """A warning when the stop is inside the price's normal moves (0.51.1)."""
+    size = stop / atr
+    if size >= NOISE_ATR:
+        return Check("stop size", True, f"{size:.1f} ATR (at least {NOISE_ATR:g})", warning=True)
+    return Check(
+        "stop size",
+        False,
+        f"{size:.1f} ATR, under {NOISE_ATR:g}: normal moves can hit it, and the spread and "
+        "the commission are a big part of the risk",
+        warning=True,
+    )
+
+
 def plan(signal: ParsedSignal, market: Market) -> OrderPlan:
     """The order and every check of section 2.3, nothing sent."""
     if not signal.complete:
@@ -195,6 +212,8 @@ def plan(signal: ParsedSignal, market: Market) -> OrderPlan:
             f"{stop:.{digits}f}{in_atr}; stops level plus spread {floor:.{digits}f}",
         ),
     )
+    if atr_ok and stop > 0 and (entry - sl) * sign > 0:
+        checks.append(_noise_check(stop, market.atr))
     if order is not OrderType.MARKET and market.stops_level:
         level = market.stops_level * market.point
         checks.append(
