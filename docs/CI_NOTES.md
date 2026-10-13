@@ -28,3 +28,4 @@
   the offscreen Qt platform) after 1 min 46 s, while the Windows `ci` job ran the full suite
   green on the same commit and both merged PRs had passed on their own. Run again.
 - 12 October 2026, release PR #160 (0.50.2): same as #151; this docs commit starts CI.
+- 13 October 2026, release PR #164 (0.50.3): same as #151; this docs commit starts CI.
