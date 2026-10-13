@@ -11,8 +11,12 @@ price against the live quote before a card is shown:
 - an explicit limit or stop is kept and checked for the right side of the price.
 
 Then: the stop loss on the losing side, every target on the winning side, a pending entry
-within 2 ATR, the stop beyond the stops level plus the spread, and the reward to risk of
+within 6 ATR, the stop beyond the stops level plus the spread, and the reward to risk of
 the first target (a warning under 1). Pure: the quote and the ATR come in as numbers.
+
+0.51.1 (PC, 13 October 2026): a pending entry may be 6 ATR (M15) away, not 2. A channel's
+sell limit 21 pips above a quiet GBPUSD (4.3 ATR) was refused although it is a normal
+limit order; a misread or mistyped price is still far beyond 6 ATR.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from app.domain.signals import Direction, OrderType
 from app.signals.parse import ParsedSignal
 
 MARKET_ATR = 0.3
-PENDING_ATR = 2.0
+PENDING_ATR = 6.0
 MIN_RR = 1.0
 
 

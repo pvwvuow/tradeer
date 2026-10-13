@@ -120,12 +120,22 @@ def test_wrong_prices_are_refused_with_the_reason() -> None:
     assert wrong_side.problems == ("order side: a buy limit must be below the ask (2343.30)",)
     moved = plan(parse("GOLD sell now @ 2361 sl 2368 tp 2335"), GOLD)
     assert [p.split(":")[0] for p in moved.problems] == ["price has not moved"]
-    far = plan(parse("XAUUSD buy 2355 sl 2350 tp 2365"), GOLD)
+    far = plan(parse("XAUUSD buy 2375 sl 2370 tp 2385"), GOLD)
     assert [p.split(":")[0] for p in far.problems] == ["entry distance"]
     sl = plan(parse("XAUUSD buy 2338 sl 2340 tp 2350"), GOLD)
     assert "stop loss side" in sl.problems[0]
     tp = plan(parse("XAUUSD sell 2350 sl 2356 tp 2352"), GOLD)
     assert "targets side" in tp.problems[0]
+
+
+def test_a_channel_limit_a_few_atr_away_is_a_normal_pending_order() -> None:
+    """PC, 13 October 2026: a sell limit 4.3 ATR above a quiet GBPUSD was refused (0.51.1)."""
+    quiet = Market(bid=1.32334, ask=1.32341, atr=0.00051)
+    order = plan(parse("GBPUSD sell limit 1.3255 sl 1.3257 tp 1.3251 tp 1.3247"), quiet)
+    assert order.ok, order.problems
+    assert (order.order, order.entry) == (OrderType.LIMIT, 1.3255)
+    typo = plan(parse("GBPUSD sell limit 1.3355 sl 1.3375 tp 1.3300"), quiet)
+    assert [p.split(":")[0] for p in typo.problems] == ["entry distance"]
 
 
 def test_tight_stops_and_missing_data_block_and_low_rr_only_warns() -> None:
