@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.50.4](https://github.com/pvwvuow/tradeer/compare/v0.50.3...v0.50.4) (2026-10-13)
+
+
+### Bug Fixes
+
+* **channels:** follow-up cards obey the channel's settings, daily stop counts from the broker day ([#166](https://github.com/pvwvuow/tradeer/issues/166)) ([fc35495](https://github.com/pvwvuow/tradeer/commit/fc354957885f8aa7a53d42175113df6cf906faeb))
+* **risk:** pending orders count toward the limits, the legs of one signal count as one trade ([#165](https://github.com/pvwvuow/tradeer/issues/165)) ([467bd50](https://github.com/pvwvuow/tradeer/commit/467bd505131291bac519a10d4fa05813b5c55a8a))
+
 ## [0.50.3](https://github.com/pvwvuow/tradeer/compare/v0.50.2...v0.50.3) (2026-10-13)
 
 
