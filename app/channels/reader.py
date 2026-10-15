@@ -14,6 +14,13 @@ optional dependency); the tests use a fake one.
 0.50.2 (docs/AI_AUTOPILOT.md B6): a reader that does not end in time is kept, so Start never
 opens a second reader next to it (every message would be handled twice), and `start` says
 what it did (connecting) even when the new thread already moved on.
+
+0.51.2 (B9): live events alone missed every message posted while the app was closed or
+Telegram was cut (the VPN at night). At the start and every `CATCH_UP_SECONDS` the reader
+asks each channel that is on for the messages after the last one stored (an API with a
+`history` method; at most `CATCH_UP_LIMIT`). All are stored; the ones at most
+`FRESH_SECONDS` old go to the listeners like new ones, older ones are only kept (a signal
+that old is stale). A message is handled once: the store refuses one it already has.
 """
 
 from __future__ import annotations
@@ -32,6 +39,9 @@ from app.channels.settings import ChannelSettings
 from app.storage.channel_store import ChannelRepository
 
 FOLDER_SECONDS = 600.0
+CATCH_UP_SECONDS = 90.0  # how often missed messages are looked for (0.51.2)
+CATCH_UP_LIMIT = 20  # messages per channel and look
+FRESH_SECONDS = 300.0  # a missed message this young is still handled like a new one
 THREAD_NAME = "telegram-channels"
 WAIT_SECONDS = 60.0
 Result = TypeVar("Result")
@@ -125,6 +135,7 @@ class ChannelReader:
         log: Log = _quiet,
         utc_now: Callable[[], float] = time.time,
         folder_seconds: float = FOLDER_SECONDS,
+        catch_up_seconds: float = CATCH_UP_SECONDS,
     ) -> None:
         self._settings = settings
         self._make_api = make_api
@@ -133,6 +144,8 @@ class ChannelReader:
         self._log = log
         self._now = utc_now
         self._folder_seconds = folder_seconds
+        self._catch_up_seconds = catch_up_seconds
+        self._catch_up_error = ""  # the last catch-up failure, told once until it changes
         self._lock = threading.Lock()
         self._listeners: list[Listener] = []
         self._readers: list[MessageListener] = []
@@ -257,13 +270,18 @@ class ChannelReader:
             want_photos(self._wanted)
         api.listen(self._on_new, self._on_edit, self._on_delete)
         await self.read_folder()
-        refresher = asyncio.create_task(self._refresh_folder())
+        helpers = [
+            asyncio.create_task(self._refresh_folder()),
+            asyncio.create_task(self._catch_up_loop()),
+        ]
         try:
             await api.run()
         finally:
-            refresher.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await refresher
+            for helper in helpers:
+                helper.cancel()
+            for helper in helpers:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await helper
         self._set(ReaderStatus.OFF, "Disconnected from Telegram.")
 
     async def _refresh_folder(self) -> None:
@@ -273,6 +291,47 @@ class ChannelReader:
                 await self.read_folder()
             except Exception as error:
                 self._log("WARNING", f"Telegram folder not read: {plain_error(error)}")
+
+    async def _catch_up_loop(self) -> None:
+        while True:
+            await self.catch_up()
+            await asyncio.sleep(self._catch_up_seconds)
+
+    async def catch_up(self) -> int:
+        """Store the messages of the channels that are on that came while the app was closed
+        or Telegram was cut; the young ones are handled like new ones (the number stored)."""
+        history = getattr(self._api, "history", None)
+        if not callable(history):
+            return 0
+        now = self._now()
+        stored = 0
+        for channel_id in sorted(self._repository.read_ids()):
+            last = self._repository.messages(channel_id, 1)
+            if not last:
+                continue  # a channel just turned on starts with its next message
+            after = max(row.message_id for row in last)
+            try:
+                found = await history(channel_id, after, CATCH_UP_LIMIT, now - FRESH_SECONDS)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                self._catch_up_failed(plain_error(error))
+                return stored
+            for message in found:
+                if not isinstance(message, ChannelMessage) or message.message_id <= after:
+                    continue
+                fresh = now - message.date <= FRESH_SECONDS
+                if self._store_new(message, handle=fresh):
+                    stored += 1
+        self._catch_up_error = ""
+        if stored:
+            self._log("INFO", f"Telegram channels: {stored} missed message(s) caught up")
+        return stored
+
+    def _catch_up_failed(self, why: str) -> None:
+        if why != self._catch_up_error:
+            self._catch_up_error = why
+            self._log("WARNING", f"Telegram catch-up failed: {why}")
 
     async def read_folder(self) -> ReaderState:
         """Read the folder again: its channels get their magic, the counts are updated."""
@@ -381,15 +440,26 @@ class ChannelReader:
         return channel_id in self._repository.read_ids()
 
     def _on_new(self, message: ChannelMessage) -> None:
-        if self._wanted(message.channel_id) and self._repository.save_message(message, self._now()):
-            self._count()
-            with self._lock:
-                readers = list(self._readers)
-            for reader in readers:
-                try:
-                    reader(message)
-                except Exception as error:
-                    self._log("WARNING", f"Telegram message not handled: {type(error).__name__}")
+        self._store_new(message, handle=True)
+
+    def _store_new(self, message: ChannelMessage, *, handle: bool) -> bool:
+        """Store a message of a channel that is on (False: not wanted, or stored already)
+        and, when `handle`, give it to the message listeners."""
+        if not self._wanted(message.channel_id):
+            return False
+        if not self._repository.save_message(message, self._now()):
+            return False
+        self._count()
+        if not handle:
+            return True
+        with self._lock:
+            readers = list(self._readers)
+        for reader in readers:
+            try:
+                reader(message)
+            except Exception as error:
+                self._log("WARNING", f"Telegram message not handled: {type(error).__name__}")
+        return True
 
     def _on_edit(self, message: ChannelMessage) -> None:
         if self._wanted(message.channel_id) and self._repository.edit_message(message, self._now()):
