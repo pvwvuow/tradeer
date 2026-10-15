@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.2](https://github.com/pvwvuow/tradeer/compare/v0.51.1...v0.51.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **channels:** catch up on missed Telegram messages, short channel names in chat settings, broker day on the Channels page ([#173](https://github.com/pvwvuow/tradeer/issues/173)) ([45259d2](https://github.com/pvwvuow/tradeer/commit/45259d27f8175630d62e296309e92d9bbcd0b39c))
+
 ## [0.51.1](https://github.com/pvwvuow/tradeer/compare/v0.51.0...v0.51.1) (2026-10-13)
 
 
