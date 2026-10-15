@@ -6,6 +6,8 @@ Read only: no method here posts, joins, leaves, reacts or marks anything as read
 
 0.44.1: the picture of a new message of a channel that is on (`want_photos`) is downloaded
 into memory when it is at most `PHOTO_BYTES`, so the AI can read a signal posted as a photo.
+0.51.2 (docs/AI_AUTOPILOT.md B9): `history` reads a channel's messages after the last one
+stored (the reader's catch-up); reading the history marks nothing as read.
 """
 
 from __future__ import annotations
@@ -170,6 +172,38 @@ class TelethonApi:
             reply_to=getattr(message, "reply_to_msg_id", None),
             photo=photo,
         )
+
+    async def history(
+        self,
+        channel_id: int,
+        after_id: int,
+        limit: int,
+        photos_since: float,
+    ) -> list[ChannelMessage]:
+        """The channel's messages after `after_id`, oldest first, at most `limit`; pictures
+        only of the ones posted after `photos_since` (UTC seconds)."""
+        try:
+            wanted = self._photos(channel_id)
+        except Exception:
+            wanted = False
+        entity = self._inputs.get(channel_id, channel_id)
+        found: list[ChannelMessage] = []
+        async for message in self._client.iter_messages(entity, min_id=after_id, limit=limit):
+            if getattr(message, "action", None) is not None:
+                continue  # a service message (pinned, joined, ...)
+            date = float(message.date.timestamp())
+            photo = await photo_of(message, wanted and date >= photos_since)
+            found.append(
+                ChannelMessage(
+                    channel_id=channel_id,
+                    message_id=int(message.id),
+                    date=date,
+                    text=str(message.message or ""),
+                    reply_to=getattr(message, "reply_to_msg_id", None),
+                    photo=photo,
+                ),
+            )
+        return sorted(found, key=lambda item: item.message_id)
 
     def listen(
         self,

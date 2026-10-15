@@ -10,7 +10,8 @@ Each channel has its own settings (phase 21d, `app.channels.policy`): Paper tria
 no card asks for money) or Live (an order card in the AI Lab for each signal, still with your
 hold-to-confirm), its budget, the risk per trade of its equity, how many trades it may have
 open, its daily loss and drawdown stops, the symbols it may trade and its aliases. 0.51.1:
-and Auto-take (`app.channels.auto_take`), which only a Live channel can turn on.
+and Auto-take (`app.channels.auto_take`), which only a Live channel can turn on. 0.51.2:
+today's money counts from the broker's trading day, as the daily loss stop does.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.channels.auto_take import AUTO_PER_DAY, AUTO_TAKE_SECONDS
+from app.channels.feed_rules import channel_day_start
 from app.channels.folder import preview
 from app.channels.policy import (
     ChannelMode,
@@ -496,8 +498,7 @@ class ChannelsPage(QWidget):
         context = self.context
         if context is None:
             return ""
-        now = context.now()
-        start = now - now % 86_400
+        start = channel_day_start(None, context.now())  # the broker's day (0.51.2)
         return budget_state(policy, context.repository.money(magic, start)).text
 
     def collect_policy(self, old: ChannelPolicy) -> ChannelPolicy:
