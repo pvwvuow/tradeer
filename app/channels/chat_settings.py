@@ -4,6 +4,9 @@ Pure: the text and the channel names in, the one change it asks for out.
 "Give Gold Room 100 dollars", "به کانال Gold Room ۱۰۰ دلار بده", "set Gold Room risk to 1%",
 "Gold Room live". The chat then shows a settings card with the old and the new value; it is
 saved only after your hold-to-confirm. Nothing here (and not the AI) can save a setting.
+0.51.2: the channel is found as Auto-take finds it (`app.channels.auto_take.channel_named`):
+the part of its title before " | " is enough, and dashes, invisible marks and Arabic letter
+forms do not matter.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from app.channels.auto_take import channel_named, plain, short_title
 from app.channels.policy import ChannelMode, ChannelPolicy
 from app.signals.words import normalise
 
@@ -53,18 +57,26 @@ def _shown(field: str, value: object) -> str:
 
 
 def find_title(text: str, titles: Sequence[str]) -> str:
-    """The longest channel title in the text (case does not matter), "" for none."""
-    lower = text.casefold()
-    found = [title for title in titles if title.strip() and title.casefold() in lower]
-    return max(found, key=len, default="")
+    """The channel the text names: the longest whole title, else the one title whose part
+    before " | " is in the text (case does not matter), "" for none."""
+    return channel_named(text, titles)
+
+
+def without_title(text: str, title: str) -> str:
+    """The text as the matching sees it, with the channel's name (whole or short) left out."""
+    clean = plain(text)
+    for name in (plain(title), plain(short_title(title))):
+        if name:
+            clean = clean.replace(name, " ")
+    return clean
 
 
 def read_change(text: str, titles: Sequence[str]) -> Change | None:
     title = find_title(text, titles)
     if not title:
         return None
-    rest = normalise(text.casefold().replace(title.casefold(), " "))
-    raw = text.casefold().replace(title.casefold(), " ")
+    raw = without_title(text, title)
+    rest = normalise(raw)
     percent = PERCENT.search(rest) or PERCENT.search(raw)
     if RISK.search(rest) and percent:
         return Change(title, "risk_percent", float(percent.group(1)))
