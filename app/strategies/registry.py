@@ -19,12 +19,14 @@ from app.strategies.reversed import (
     RangeReversionReversed,
     TrendPullbackReversed,
 )
+from app.strategies.trend_following import TrendFollowing
 from app.strategies.trend_pullback import TrendPullback
 
 # The two spec examples, then the lab strategies (7 October 2026): different ideas (a range
 # fade, a channel breakout, a M15 momentum cross) so a demo account running all of them at
 # once shows which kind of trade works on which symbol and session. Then the reversed ones
 # (16 October 2026, app.strategies.reversed): each takes the opposite trade of one above.
+# Last the daily trend following (16 October 2026), the family with the longest evidence.
 STRATEGIES: dict[str, type[Strategy]] = {
     TrendPullback.name: TrendPullback,
     LondonBreakout.name: LondonBreakout,
@@ -36,6 +38,7 @@ STRATEGIES: dict[str, type[Strategy]] = {
     RangeReversionReversed.name: RangeReversionReversed,
     ChannelBreakoutReversed.name: ChannelBreakoutReversed,
     EmaMomentumReversed.name: EmaMomentumReversed,
+    TrendFollowing.name: TrendFollowing,
 }
 # The lab strategies start off: on a real account every strategy that is on needs its own
 # Go-Live approval before Auto may trade, so a new one must be turned on by choice (the
@@ -50,6 +53,7 @@ OFF_BY_DEFAULT: frozenset[str] = frozenset(
         RangeReversionReversed.name,
         ChannelBreakoutReversed.name,
         EmaMomentumReversed.name,
+        TrendFollowing.name,
     },
 )
 
@@ -68,6 +72,7 @@ MAGIC_NUMBERS: dict[str, int] = {
     ChannelBreakout.name: 26_070_004,
     EmaMomentum.name: 26_070_005,
     MANUAL_SIGNAL: 26_070_007,
+    TrendFollowing.name: 26_070_010,
     TrendPullbackReversed.name: 26_070_101,
     LondonBreakoutReversed.name: 26_070_102,
     RangeReversionReversed.name: 26_070_103,
