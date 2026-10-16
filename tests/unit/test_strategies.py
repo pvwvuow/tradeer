@@ -85,13 +85,14 @@ def test_params_are_validated_and_hashed() -> None:
 
 
 def test_the_registry_builds_every_strategy() -> None:
-    assert sorted(STRATEGIES) == [
+    base = [
         "channel_breakout",
         "ema_momentum",
         "london_breakout",
         "range_reversion",
         "trend_pullback",
     ]
+    assert sorted(STRATEGIES) == sorted([*base, *(f"{name}_reversed" for name in base)])
     info = strategy_info("london_breakout")
     assert info.example and info.entry_timeframe == "M15" and info.defaults["reward_r"] == 1.5
     built = create_strategy("trend_pullback", {"reward_r": 2.5})
