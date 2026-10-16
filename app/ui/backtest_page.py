@@ -5,6 +5,9 @@ A run reads the history from MT5 (through the gateway, cached on disk) and repla
 strategy, risk and execution code on it in a background thread, so the window never waits.
 Progress and the result come back through Qt signals. The MT5 Strategy Tester cannot be
 driven from Python; this engine replaces it.
+
+16 October 2026: the reversed strategies (app.strategies.reversed) have their own row and are
+not ticked by default; tick one alone to see the opposite trades of its strategy.
 """
 
 from __future__ import annotations
@@ -63,6 +66,7 @@ from app.core.strategy_settings import StrategySettingsSource
 from app.risk.settings import RiskSettingsSource
 from app.storage.backtest_store import BacktestRepository, SavedRun
 from app.strategies.registry import STRATEGIES
+from app.strategies.reversed import is_reversed
 from app.ui.pages import PAGE_MARGIN, card_frame, styled_label
 from app.ui.strategies_page import ParamsForm
 
@@ -71,6 +75,10 @@ INTRO = (
     "the next bar open, the bar's spread, commission, slippage and swap, and a stop loss and "
     "take profit inside one candle count as a loss. The MT5 Strategy Tester cannot be driven "
     "from Python, so this engine replaces it. Past results do not promise future ones."
+)
+REVERSED_NOTE = (
+    "Reversed (the opposite trade of each strategy: other side, SL and TP swapped). Test one "
+    "alone to compare it with its strategy; the costs are paid on both."
 )
 NOT_CONNECTED = "Connect to MT5 first: the backtest reads the history from MT5."
 GROUPS = ("Month", "Session", "Weekday", "Strategy", "Symbol")
@@ -242,17 +250,21 @@ class BacktestPage(QWidget):
         top.addRow("To (UTC, inclusive)", self.end)
         layout.addLayout(top)
         strategies = QHBoxLayout()
+        flipped = QHBoxLayout()
         self.strategy_boxes: dict[str, QCheckBox] = {}
         for name, kind in STRATEGIES.items():
             box = QCheckBox(kind.title)
             box.setObjectName(f"backtest_{name}")
-            box.setChecked(True)
+            box.setChecked(not is_reversed(name))
             self.strategy_boxes[name] = box
-            strategies.addWidget(box)
+            (flipped if is_reversed(name) else strategies).addWidget(box)
         strategies.addStretch(1)
+        flipped.addStretch(1)
         note = "Strategies (with the settings of the Strategies page)"
         layout.addWidget(styled_label(note, "muted"))
         layout.addLayout(strategies)
+        layout.addWidget(styled_label(REVERSED_NOTE, "muted", wrap=True))
+        layout.addLayout(flipped)
         costs = QGroupBox("Costs and account")
         costs_layout = QVBoxLayout(costs)
         self.costs = ParamsForm(BacktestCosts, BacktestCosts().model_dump(mode="json"))
