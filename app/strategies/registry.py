@@ -12,23 +12,45 @@ from app.strategies.ema_momentum import EmaMomentum
 from app.strategies.london_breakout import LondonBreakout
 from app.strategies.manual_signal import NAME as MANUAL_SIGNAL
 from app.strategies.range_reversion import RangeReversion
+from app.strategies.reversed import (
+    ChannelBreakoutReversed,
+    EmaMomentumReversed,
+    LondonBreakoutReversed,
+    RangeReversionReversed,
+    TrendPullbackReversed,
+)
 from app.strategies.trend_pullback import TrendPullback
 
 # The two spec examples, then the lab strategies (7 October 2026): different ideas (a range
 # fade, a channel breakout, a M15 momentum cross) so a demo account running all of them at
-# once shows which kind of trade works on which symbol and session.
+# once shows which kind of trade works on which symbol and session. Then the reversed ones
+# (16 October 2026, app.strategies.reversed): each takes the opposite trade of one above.
 STRATEGIES: dict[str, type[Strategy]] = {
     TrendPullback.name: TrendPullback,
     LondonBreakout.name: LondonBreakout,
     RangeReversion.name: RangeReversion,
     ChannelBreakout.name: ChannelBreakout,
     EmaMomentum.name: EmaMomentum,
+    TrendPullbackReversed.name: TrendPullbackReversed,
+    LondonBreakoutReversed.name: LondonBreakoutReversed,
+    RangeReversionReversed.name: RangeReversionReversed,
+    ChannelBreakoutReversed.name: ChannelBreakoutReversed,
+    EmaMomentumReversed.name: EmaMomentumReversed,
 }
 # The lab strategies start off: on a real account every strategy that is on needs its own
 # Go-Live approval before Auto may trade, so a new one must be turned on by choice (the
-# Strategies page; docs/STRATEGY_LAB.md).
+# Strategies page; docs/STRATEGY_LAB.md). The reversed ones too.
 OFF_BY_DEFAULT: frozenset[str] = frozenset(
-    {RangeReversion.name, ChannelBreakout.name, EmaMomentum.name},
+    {
+        RangeReversion.name,
+        ChannelBreakout.name,
+        EmaMomentum.name,
+        TrendPullbackReversed.name,
+        LondonBreakoutReversed.name,
+        RangeReversionReversed.name,
+        ChannelBreakoutReversed.name,
+        EmaMomentumReversed.name,
+    },
 )
 
 # One magic number per strategy (spec C7): MT5 marks every bot order and position with it, so
@@ -38,6 +60,7 @@ OFF_BY_DEFAULT: frozenset[str] = frozenset(
 # (docs/AI_DESK.md). The Signal desk's manual signals are not in STRATEGIES (they have no
 # rules to run on a bar) but their orders need a magic number like every bot order. Each
 # Telegram channel has its own from 26_071_001 (`channel:<magic>`, docs/SIGNAL_DESK.md 3.4).
+# The reversed strategies use 26_070_1xx: the number of the one they reverse plus 100.
 MAGIC_NUMBERS: dict[str, int] = {
     TrendPullback.name: 26_070_001,
     LondonBreakout.name: 26_070_002,
@@ -45,6 +68,11 @@ MAGIC_NUMBERS: dict[str, int] = {
     ChannelBreakout.name: 26_070_004,
     EmaMomentum.name: 26_070_005,
     MANUAL_SIGNAL: 26_070_007,
+    TrendPullbackReversed.name: 26_070_101,
+    LondonBreakoutReversed.name: 26_070_102,
+    RangeReversionReversed.name: 26_070_103,
+    ChannelBreakoutReversed.name: 26_070_104,
+    EmaMomentumReversed.name: 26_070_105,
 }
 
 

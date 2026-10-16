@@ -1,6 +1,10 @@
 """One backtest as the Backtest page and `--backtest` run it (spec C8, F3 page 7): the
 replay, its metrics and Monte-Carlo, plus the optional walk-forward and sensitivity tests,
-and the row saved in `backtest_runs`."""
+and the row saved in `backtest_runs`.
+
+16 October 2026: a request tests every strategy but the reversed ones unless it names them
+(`base_strategies`); a reversed one is tested when it is picked.
+"""
 
 from __future__ import annotations
 
@@ -26,10 +30,16 @@ from app.risk.settings import RiskConfig
 from app.storage.signal_store import config_id
 from app.strategies.base import Strategy
 from app.strategies.registry import STRATEGIES, create_strategy
+from app.strategies.reversed import is_reversed
 
 Progress = Callable[[str, int, int], None]  # stage, done, total
 Cancelled = Callable[[], bool]
 DAY = 86_400
+
+
+def base_strategies() -> list[str]:
+    """Every strategy but the reversed ones: what a backtest tests when none are named."""
+    return [name for name in STRATEGIES if not is_reversed(name)]
 
 
 class WalkForwardOptions(BaseModel):
@@ -69,7 +79,7 @@ class BacktestRequest(BaseModel):
     symbol: str = Field(default="EURUSD", min_length=1)
     start: date
     end: date  # the last day tested (inclusive)
-    strategies: list[str] = Field(default_factory=lambda: list(STRATEGIES))
+    strategies: list[str] = Field(default_factory=base_strategies)
     costs: BacktestCosts = Field(default_factory=BacktestCosts)
     monte_carlo_runs: int = Field(default=1000, ge=0, le=20_000)
     ruin_percent: float = Field(default=50.0, gt=0, le=100)
