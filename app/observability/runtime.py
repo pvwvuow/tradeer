@@ -19,7 +19,7 @@ from app.observability.files import LogFileWriter
 from app.observability.levels import LevelRegistry
 from app.observability.logger import LogPipeline, audit, get_logger, log_startup
 from app.observability.masking import MASKER, SecretMasker
-from app.observability.watchdog import FreezeEvent, RecoveryEvent, Watchdog
+from app.observability.watchdog import FreezeEvent, RecoveryEvent, SuspendEvent, Watchdog
 
 
 @dataclass
@@ -89,6 +89,13 @@ class _FreezeHandler:
             event.silent_seconds,
         )
 
+    def suspended(self, event: SuspendEvent) -> None:
+        self._log.bind(paused_seconds=round(event.paused_seconds, 1)).warning(
+            "The PC was asleep (or the app was paused) for {:.0f} min; nothing froze. "
+            "Turn off sleep on this PC while the bot trades.",
+            event.paused_seconds / 60,
+        )
+
 
 def start_observability(
     profile: str,
@@ -116,7 +123,11 @@ def start_observability(
     reporter.add_listener(_log_crash)
     reporter.install()
     freezes = _FreezeHandler(reporter)
-    watchdog = Watchdog(on_freeze=freezes.frozen, on_recover=freezes.recovered)
+    watchdog = Watchdog(
+        on_freeze=freezes.frozen,
+        on_recover=freezes.recovered,
+        on_suspend=freezes.suspended,
+    )
     watchdog.start()
     controls = LogControls(buffer, registry, log_dir, crash_dir, audit=_audit_change)
     details = {
