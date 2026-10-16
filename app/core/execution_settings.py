@@ -3,7 +3,9 @@
 Paper is the default. Auto mode can be saved (Phase 13b); the Positions page switches to it
 only after the typed word AUTO and, on a REAL account, the Go-Live approval of every strategy
 that is on, and the execution engine asks the Go-Live gate again before every Auto order.
-Position management rules are kept per strategy and are all off until the user turns them on.
+Position management rules are kept per strategy and are all off until the user turns them on,
+except for a strategy whose exit is its management (`DEFAULT_MANAGEMENT`, 16 October 2026:
+the daily trend following exits with its ATR trailing stop). A saved choice always wins.
 """
 
 from __future__ import annotations
@@ -20,6 +22,11 @@ from app.domain.modes import DEFAULT_MODE, OperatingMode
 
 EXECUTION_FILE_NAME = "execution.json"
 AUTO_NOTE = "Auto mode: on a REAL account only Go-Live approved strategies are sent"
+# The trailing ATR is the ATR(14) of the strategy's entry timeframe (H4): 7 of them are about
+# 3 ATR of D1, the strategy's own stop distance.
+DEFAULT_MANAGEMENT: dict[str, ManagementSettings] = {
+    "trend_following": ManagementSettings(trailing_atr=7.0, trailing_start_r=1.0),
+}
 
 
 class ExecutionSettings(BaseModel):
@@ -85,7 +92,11 @@ class ExecutionConfig(BaseModel):
     management: dict[str, ManagementSettings] = Field(default_factory=_no_management)
 
     def management_for(self, strategy: str) -> ManagementSettings:
-        return self.management.get(strategy) or ManagementSettings()
+        saved = self.management.get(strategy)
+        if saved is not None:
+            return saved
+        default = DEFAULT_MANAGEMENT.get(strategy)
+        return default.model_copy() if default is not None else ManagementSettings()
 
 
 def load_execution_config(directory: Path) -> tuple[ExecutionConfig, str]:
