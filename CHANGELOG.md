@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/pvwvuow/tradeer/compare/v0.51.2...v0.52.0) (2026-10-16)
+
+
+### Features
+
+* **strategies:** reversed strategies take the opposite trade of each built-in one, off by default ([#175](https://github.com/pvwvuow/tradeer/issues/175)) ([92664c0](https://github.com/pvwvuow/tradeer/commit/92664c0f4b7c025b7707a3e2b737f6353029ee18))
+
 ## [0.51.2](https://github.com/pvwvuow/tradeer/compare/v0.51.1...v0.51.2) (2026-10-15)
 
 
