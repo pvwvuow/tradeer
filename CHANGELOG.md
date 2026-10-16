@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.0](https://github.com/pvwvuow/tradeer/compare/v0.52.1...v0.53.0) (2026-10-16)
+
+
+### Features
+
+* **strategies:** daily trend following ([#179](https://github.com/pvwvuow/tradeer/issues/179)) ([dbd936b](https://github.com/pvwvuow/tradeer/commit/dbd936b058876344650748a09a5db5ab53a36bf6))
+
 ## [0.52.1](https://github.com/pvwvuow/tradeer/compare/v0.52.0...v0.52.1) (2026-10-16)
 
 
