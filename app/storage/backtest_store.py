@@ -9,8 +9,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from app.domain.sizing import commission_per_lot
 from app.storage.ids import new_id
 from app.storage.repositories import Store
+from app.storage.risk_store import RiskRepository
 from app.storage.signal_store import epoch
 
 RECENT_RUNS = 50
@@ -46,6 +48,14 @@ def _json(value: object) -> Any:
 class BacktestRepository:
     def __init__(self, store: Store) -> None:
         self.store = store
+
+    def measured_commission(self, account: str | None, symbol: str) -> float | None:
+        """The round-turn commission per lot the account paid on `symbol` (the imported MT5
+        deals, as the risk manager sizes live trades), or None without history."""
+        if not account:
+            return None
+        total, lots = RiskRepository(self.store).commission_stats(account, symbol)
+        return commission_per_lot(total, lots)
 
     def save(
         self,

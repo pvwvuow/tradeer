@@ -3,15 +3,18 @@ replay, its metrics and Monte-Carlo, plus the optional walk-forward and sensitiv
 and the row saved in `backtest_runs`.
 
 16 October 2026: a request tests every strategy but the reversed ones unless it names them
-(`base_strategies`); a reversed one is tested when it is picked.
+(`base_strategies`); a reversed one is tested when it is picked. A commission of 0 on the
+form is replaced by the commission the account really paid on the symbol (`filled_commission`):
+the PC's backtests ran without the 6.73 USD a lot that every live trade pays.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -35,6 +38,7 @@ from app.strategies.reversed import is_reversed
 Progress = Callable[[str, int, int], None]  # stage, done, total
 Cancelled = Callable[[], bool]
 DAY = 86_400
+MAX_COMMISSION = 1000.0  # the cost form's own limit
 
 
 def base_strategies() -> list[str]:
@@ -112,6 +116,44 @@ class BacktestRequest(BaseModel):
     @property
     def period(self) -> str:
         return f"{self.start.isoformat()}..{self.end.isoformat()}"
+
+    def describe(self) -> str:
+        """The strategies and costs of the run, for the log."""
+        costs = self.costs
+        return (
+            f"{', '.join(self.strategies)}; commission {costs.commission_per_lot:g} a lot, "
+            f"spread floor {costs.min_spread_points} + {costs.extra_spread_points} points, "
+            f"slippage {costs.slippage_points} points"
+        )
+
+
+class CommissionSource(Protocol):
+    def measured_commission(self, account: str | None, symbol: str) -> float | None: ...
+
+
+def filled_commission(
+    request: BacktestRequest,
+    source: CommissionSource | None,
+    account: str | None,
+) -> tuple[BacktestRequest, str]:
+    """The request with a commission of 0 replaced by the round-turn commission per lot the
+    account paid on the symbol (MT5 history), and a note saying so. Unchanged (with no note)
+    when the form has a commission or the history has none."""
+    if request.costs.commission_per_lot > 0 or source is None:
+        return request, ""
+    try:
+        measured = source.measured_commission(account, request.symbol)
+    except Exception:
+        return request, ""
+    if measured is None or not math.isfinite(measured) or measured <= 0:
+        return request, ""
+    value = round(min(measured, MAX_COMMISSION), 2)
+    costs = request.costs.model_copy(update={"commission_per_lot": value})
+    note = (
+        f"Commission: {value:g} a lot (round turn) from your MT5 history of {request.symbol}, "
+        "because the form said 0 and live trades pay it."
+    )
+    return request.model_copy(update={"costs": costs}), note
 
 
 def default_request(today: date | None = None) -> BacktestRequest:

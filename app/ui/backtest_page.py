@@ -7,7 +7,9 @@ Progress and the result come back through Qt signals. The MT5 Strategy Tester ca
 driven from Python; this engine replaces it.
 
 16 October 2026: the reversed strategies (app.strategies.reversed) have their own row and are
-not ticked by default; tick one alone to see the opposite trades of its strategy.
+not ticked by default; tick one alone to see the opposite trades of its strategy. A run with
+a commission of 0 uses the one the account paid on the symbol (`filled_commission`), and the
+log names the tested strategies and costs.
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ from app.backtest.service import (
     SensitivityOptions,
     WalkForwardOptions,
     default_request,
+    filled_commission,
     parse_values,
     run_report,
 )
@@ -421,10 +424,15 @@ class BacktestPage(QWidget):
     def _work(self, context: BacktestContext, request: BacktestRequest) -> None:
         log = context.log or (lambda level, message: None)
         try:
+            account = context.account() if context.account is not None else None
+            request, commission_note = filled_commission(request, context.runs, account)
+            log("INFO", f"Backtest {request.symbol} {request.period}: {request.describe()}")
             history, notes = context.load(
                 request,
                 lambda text: self.bridge.progress.emit(text, 0, 0),
             )
+            if commission_note:
+                notes = (*notes, commission_note)
             events: Sequence[CalendarEvent] = ()
             if context.events is not None:
                 events = context.events(request.utc_start - 2 * DAY, request.utc_end + 7 * DAY)
@@ -441,7 +449,6 @@ class BacktestPage(QWidget):
                 notes=notes,
             )
             if context.runs is not None and not report.result.cancelled:
-                account = context.account() if context.account is not None else None
                 context.runs.save(account, **report.storage_row())
             for line in metric_text.summary_lines(report.metrics):
                 log("INFO", f"Backtest {request.symbol} {request.period}: {line}")
