@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.1](https://github.com/pvwvuow/tradeer/compare/v0.52.0...v0.52.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* sleeping PC is not a freeze; backtests pay the real commission ([#177](https://github.com/pvwvuow/tradeer/issues/177)) ([2e82033](https://github.com/pvwvuow/tradeer/commit/2e8203369d10a7b48591e95c87b47e52154a9de7))
+
 ## [0.52.0](https://github.com/pvwvuow/tradeer/compare/v0.51.2...v0.52.0) (2026-10-16)
 
 
