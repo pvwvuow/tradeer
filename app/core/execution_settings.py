@@ -5,7 +5,8 @@ only after the typed word AUTO and, on a REAL account, the Go-Live approval of e
 that is on, and the execution engine asks the Go-Live gate again before every Auto order.
 Position management rules are kept per strategy and are all off until the user turns them on,
 except for a strategy whose exit is its management (`DEFAULT_MANAGEMENT`, 16 October 2026:
-the daily trend following exits with its ATR trailing stop). A saved choice always wins.
+the daily trend following exits with its ATR trailing stop; 23 October 2026: the trendline
+break takes half at 2R and moves the rest to break-even). A saved choice always wins.
 """
 
 from __future__ import annotations
@@ -26,6 +27,11 @@ AUTO_NOTE = "Auto mode: on a REAL account only Go-Live approved strategies are s
 # 3 ATR of D1, the strategy's own stop distance.
 DEFAULT_MANAGEMENT: dict[str, ManagementSettings] = {
     "trend_following": ManagementSettings(trailing_atr=7.0, trailing_start_r=1.0),
+    "trendline_break": ManagementSettings(
+        partial_close_at_r=2.0,
+        partial_close_percent=50.0,
+        break_even_at_r=2.0,
+    ),
 }
 
 
