@@ -21,7 +21,7 @@ from app.strategies.trendline_break import (
     TrendlineBreakParams,
     symbol_allowed,
 )
-from tests.unit.signal_helpers import MORNING, make_signal, pipeline
+from tests.unit.signal_helpers import MORNING, make_record, make_signal, pipeline
 from tests.unit.strategy_helpers import context
 from tests.unit.trendline_scenes import PULLBACK, PULLBACK_END, m5_bars, mirror
 
@@ -168,21 +168,7 @@ def open_record(since: int) -> SignalRecord:
         SignalState.MANAGED,
     ):
         signal = signal.with_state(state, float(MORNING), "test")
-    return SignalRecord(
-        signal,
-        make_signal_trace(signal),
-        baseline(0, 0),
-        None,
-        0.0,
-        1.0,
-        "",
-    )
-
-
-def make_signal_trace(signal: Any) -> Any:
-    from tests.unit.signal_helpers import make_record
-
-    return make_record(signal).trace
+    return make_record(signal)
 
 
 def test_the_pipeline_closes_a_position_whose_trend_turned() -> None:
