@@ -78,6 +78,15 @@ class Evaluation:
         return [condition.step(at) for condition in self.conditions]
 
 
+@dataclass(frozen=True)
+class Held:
+    """An open position of a strategy, for its exit check (23 October 2026)."""
+
+    id: str  # the id of the signal that opened it
+    direction: Direction
+    since: int  # open time of the entry bar the signal was made on
+
+
 def params_hash(name: str, version: str, params: BaseModel) -> str:
     raw = json.dumps(
         {"strategy": name, "version": version, "params": params.model_dump(mode="json")},
@@ -97,6 +106,12 @@ class Strategy(ABC):
     required_history: ClassVar[Mapping[str, int]]
     sessions: ClassVar[tuple[str, ...]] = ()  # sessions in which new entries are allowed
     example: ClassVar[bool] = True
+    # A stackable strategy may hold several positions on one symbol (a new entry on every
+    # correction of the trend); the risk limits still cap them.
+    stackable: ClassVar[bool] = False
+    # False for a strategy that is judged by its R multiples: the win probability and the
+    # expected value gates (built for strategies that must win most trades) do not apply.
+    judged_by_win_rate: ClassVar[bool] = True
 
     def __init__(self, params: BaseModel | None = None) -> None:
         self.params = params if params is not None else self.params_model()
@@ -108,6 +123,11 @@ class Strategy(ABC):
 
     def generate_signal(self, ctx: MarketContext) -> Signal | None:
         return self.evaluate(ctx).signal
+
+    def exit_check(self, ctx: MarketContext, held: Sequence[Held]) -> Mapping[str, str]:
+        """The held positions to close now: signal id -> why. None by default (the exit is
+        the stop, the take profit and the management)."""
+        return {}
 
     # Helpers for subclasses ------------------------------------------------------------
     def history_condition(self, ctx: MarketContext) -> Condition:

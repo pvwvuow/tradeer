@@ -9,6 +9,7 @@ does not trade news, a wide spread or a range. He estimates a win rate near 50%.
 backtest it on both symbols with the real commission before it trades anything.
 
 Rules, long (short mirrored), on the newest closed M5 bar:
+- only the symbols in `symbols` (US30 and NAS100 and their usual broker names);
 - the two latest confirmed swing highs fall (A then B, B lower), `min_span_bars` to
   `max_span_bars` bars apart: the line through them is the trendline;
 - this bar closes above the line and the bar before did not, and no close since B was above
@@ -20,17 +21,25 @@ Rules, long (short mirrored), on the newest closed M5 bar:
 - not a range (the last `range_bars` bars span at least `min_range_atr` ATR), no high impact
   news close by, and the spread is at most `max_spread_risk` of the stop distance.
 
+There is no limit on open trades: the strategy is `stackable`, so every new break is taken
+while earlier ones are open (the risk settings still cap them). Its trades are judged by
+R, not by a win probability gate (`judged_by_win_rate` is False).
+
 The exit is the management (`DEFAULT_MANAGEMENT` in app/core/execution_settings.py): half
-closed at 2R and the stop of the rest to the entry. The far take profit (`reward_r`) only
-ends a run that never turns; closing on a change of the trend is the next step.
+closed at 2R and the stop of the rest to the entry. The rest is also closed when the trend
+turns (`exit_check`, version 1.1.0): a close beyond the last higher low (lower high) that
+formed after the entry, or a fresh break of the opposite trendline. The far take profit
+(`reward_r`) only ends a run that never turns.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.analysis import indicators
@@ -38,16 +47,22 @@ from app.analysis.bars import Bars
 from app.analysis.structure import Swing, SwingKind, Trend, analyze_structure, find_swings
 from app.calendar.models import Impact, matches_symbol
 from app.domain.signals import Direction, OrderType, Signal
-from app.strategies.base import Condition, Evaluation, SetupState, Strategy
+from app.strategies.base import Condition, Evaluation, Held, SetupState, Strategy
 from app.strategies.context import MarketContext
 
 NEAR_ATR = 0.5  # a close this close to the line counts as forming
 VIEW_BARS = 400  # the newest bars the swings are looked for in
+MIN_EXIT_BARS = 20  # fewest bars the exit check looks at
+SYMBOLS = "US30,NAS100,US100,USTEC,DJ30,WS30"
 
 
 class TrendlineBreakParams(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
+    symbols: str = Field(
+        default=SYMBOLS,
+        description="Symbols it trades, by name start, comma separated (empty: all)",
+    )
     swing_strength: int = Field(default=3, ge=2, le=10, description="Bars that confirm a swing")
     min_span_bars: int = Field(default=8, ge=3, le=200, description="Shortest line, in bars")
     max_span_bars: int = Field(default=120, ge=10, le=400, description="Longest line, in bars")
@@ -65,6 +80,13 @@ class TrendlineBreakParams(BaseModel):
     news_after_min: int = Field(default=15, ge=0, le=240, description="No entry after news")
     news_currency: str = Field(default="USD", description="Currency of the news to avoid")
     expiry_bars: int = Field(default=2, ge=1, le=20, description="Bars until a signal expires")
+    exit_on_trend_change: bool = Field(default=True, description="Close when the trend turns")
+    exit_swing_strength: int = Field(
+        default=6,
+        ge=2,
+        le=20,
+        description="Bars that confirm the higher low (lower high) the exit watches",
+    )
 
 
 @dataclass(frozen=True)
@@ -82,6 +104,16 @@ class Line:
 
     def at(self, index: int) -> float:
         return self.b_price + self.slope * (index - self.b_index)
+
+
+@dataclass(frozen=True)
+class Cut:
+    """Where the newest closed bar stands against a trendline."""
+
+    broke: bool  # a fresh close beyond the line: not the bar before, nor any bar since B
+    beyond: float  # the close beyond the line, in price, in the direction asked
+    level: float  # the line at the newest bar
+    age: int  # bars after B
 
 
 def find_line(
@@ -104,6 +136,28 @@ def find_line(
     return Line(a.index, b.index, a.price, b.price)
 
 
+def fresh_break(bars: Bars, line: Line, sign: float) -> Cut:
+    """Did the newest close cut the line for the first time, going the way of `sign`?"""
+    last = len(bars) - 1
+    close, before = float(bars.close[last]), float(bars.close[last - 1])
+    level, level_before = line.at(last), line.at(last - 1)
+    beyond = (close - level) * sign
+    fresh_cut = all(
+        (float(bars.close[i]) - line.at(i)) * sign <= 0 for i in range(line.b_index + 1, last)
+    )
+    broke = beyond > 0 and (before - level_before) * sign <= 0 and fresh_cut
+    return Cut(broke, beyond, level, last - line.b_index)
+
+
+def symbol_allowed(symbol: str, allowed: str) -> bool:
+    """Is the symbol one of the comma separated name starts ("US30" allows "US30.p")?"""
+    wanted = [part.strip().upper() for part in allowed.split(",") if part.strip()]
+    if not wanted:
+        return True
+    name = symbol.upper()
+    return any(name.startswith(start) for start in wanted)
+
+
 def news_block(ctx: MarketContext, cfg: TrendlineBreakParams) -> str:
     """The title of a high impact event too close to trade, "" when there is none."""
     before, after = cfg.news_before_min * 60, cfg.news_after_min * 60
@@ -120,19 +174,22 @@ def news_block(ctx: MarketContext, cfg: TrendlineBreakParams) -> str:
 
 class TrendlineBreak(Strategy):
     name: ClassVar[str] = "trendline_break"
-    version: ClassVar[str] = "1.0.0"
+    version: ClassVar[str] = "1.1.0"
     title: ClassVar[str] = "Trendline break (M5)"
     description: ClassVar[str] = (
-        "Enters when an M5 close breaks the trendline through the last two swing highs "
-        "(lows), first break or a correction inside the trend. Stop behind the move's "
-        "extreme, half out at 2R, the rest to break-even. Not in news, a range or a wide "
-        "spread."
+        "For NAS100 and US30. Enters when an M5 close breaks the trendline through the last "
+        "two swing highs (lows), first break or a correction inside the trend, and again on "
+        "every later correction (no limit on open trades). Stop behind the move's extreme, "
+        "half out at 2R, the rest to break-even and closed when the trend turns. Not in "
+        "news, a range or a wide spread."
     )
     params_model: ClassVar[type[BaseModel]] = TrendlineBreakParams
     entry_timeframe: ClassVar[str] = "M5"
     required_history: ClassVar[dict[str, int]] = {"M5": 200}
     sessions: ClassVar[tuple[str, ...]] = ("London", "New York")
     example: ClassVar[bool] = False
+    stackable: ClassVar[bool] = True
+    judged_by_win_rate: ClassVar[bool] = False
 
     def __init__(self, params: TrendlineBreakParams | None = None) -> None:
         self.cfg = params if params is not None else TrendlineBreakParams()
@@ -143,11 +200,18 @@ class TrendlineBreak(Strategy):
         history = self.history_condition(ctx)
         if not history.passed:
             return self.result(ctx, SetupState.NONE, [history], note="waiting for history")
+        listed = Condition(
+            f"symbol is one of {cfg.symbols or 'any'}",
+            symbol_allowed(ctx.symbol, cfg.symbols),
+            detail=ctx.symbol,
+        )
+        if not listed.passed:
+            return self.result(ctx, SetupState.NONE, [history, listed], note="symbol not traded")
         view = ctx.entry.tail(VIEW_BARS)
         atr = indicators.last(indicators.atr(view.high, view.low, view.close))
         if not (math.isfinite(atr) and atr > 0):
             missing = Condition("M5 ATR", False, detail="not enough M5 bars")
-            return self.result(ctx, SetupState.NONE, [history, missing])
+            return self.result(ctx, SetupState.NONE, [history, listed, missing])
         span = float(view.high[-cfg.range_bars :].max() - view.low[-cfg.range_bars :].min())
         moved = span / atr
         trending = Condition(
@@ -158,7 +222,7 @@ class TrendlineBreak(Strategy):
         )
         title = news_block(ctx, cfg)
         calm = Condition("no high impact news close", not title, detail=title or "clear")
-        conditions = [history, trending, calm]
+        conditions = [history, listed, trending, calm]
         if not (trending.passed and calm.passed):
             return self.result(ctx, SetupState.NONE, conditions, note="range or news")
         swings = find_swings(view, cfg.swing_strength)
@@ -176,6 +240,54 @@ class TrendlineBreak(Strategy):
         conditions += found
         signals = [signal] if signal is not None else []
         return self.result(ctx, state, conditions, signals, note=note)
+
+    def exit_check(self, ctx: MarketContext, held: Sequence[Held]) -> Mapping[str, str]:
+        """The held positions whose trend turned: the newest close is beyond the last higher
+        low (lower high) that formed after the entry, or it broke the opposite trendline.
+        Runs on every new bar, also in a range or during news."""
+        cfg = self.cfg
+        if not cfg.exit_on_trend_change or not held:
+            return {}
+        view = ctx.entry.tail(VIEW_BARS)
+        if len(view) < MIN_EXIT_BARS:
+            return {}
+        swings = find_swings(view, cfg.swing_strength)
+        steady = find_swings(view, cfg.exit_swing_strength)
+        found: dict[str, str] = {}
+        for item in held:
+            why = self._turned(cfg, view, swings, steady, item)
+            if why:
+                found[item.id] = why
+        return found
+
+    def _turned(
+        self,
+        cfg: TrendlineBreakParams,
+        bars: Bars,
+        swings: list[Swing],
+        steady: list[Swing],
+        item: Held,
+    ) -> str:
+        last = len(bars) - 1
+        entry = int(np.searchsorted(bars.time, item.since))
+        if entry >= last:
+            return ""
+        sign = item.direction.sign
+        close = float(bars.close[last])
+        kind = SwingKind.LOW if sign > 0 else SwingKind.HIGH
+        after = [s for s in steady if s.kind is kind and s.index > entry and s.confirmed_index <= last]
+        if after:
+            level = after[-1].price
+            if (close - level) * sign < 0:
+                word = "higher low" if sign > 0 else "lower high"
+                return f"trend turned: closed beyond the {word} {level:.5g} formed after the entry"
+        opposite = Direction.SHORT if sign > 0 else Direction.LONG
+        line = find_line(swings, opposite, cfg.min_span_bars, cfg.max_span_bars)
+        if line is not None:
+            cut = fresh_break(bars, line, opposite.sign)
+            if cut.broke and cut.age <= cfg.max_age_bars:
+                return f"trend turned: broke the opposite trendline ({cut.level:.5g})"
+        return ""
 
     def _side(
         self,
@@ -199,15 +311,9 @@ class TrendlineBreak(Strategy):
         ]
         if line is None:
             return SetupState.NONE, found, None, "no trendline"
-        last = len(bars) - 1
-        close, before = float(bars.close[last]), float(bars.close[last - 1])
-        level, level_before = line.at(last), line.at(last - 1)
-        beyond = (close - level) * sign
-        fresh_cut = all(
-            (float(bars.close[i]) - line.at(i)) * sign <= 0 for i in range(line.b_index + 1, last)
-        )
-        age = last - line.b_index
-        broke = beyond > 0 and (before - level_before) * sign <= 0 and fresh_cut
+        close = float(bars.close[len(bars) - 1])
+        cut = fresh_break(bars, line, sign)
+        level, beyond, age, broke = cut.level, cut.beyond, cut.age, cut.broke
         found.append(
             Condition(
                 f"{direction.value}: fresh close beyond the line within {cfg.max_age_bars} bars",
