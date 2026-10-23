@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.54.0](https://github.com/pvwvuow/tradeer/compare/v0.53.0...v0.54.0) (2026-10-23)
+
+
+### Features
+
+* **strategies:** trendline_break exits on a trend change, stacks, indices only ([#183](https://github.com/pvwvuow/tradeer/issues/183)) ([13fab00](https://github.com/pvwvuow/tradeer/commit/13fab00515de26e13e6a9906173b9e996b6bf236))
+* trendline_break strategy on M5 (owner's method) ([#181](https://github.com/pvwvuow/tradeer/issues/181)) ([b7db83d](https://github.com/pvwvuow/tradeer/commit/b7db83dd6064fcada06c72c5bdeb5648b347512a))
+
 ## [0.53.0](https://github.com/pvwvuow/tradeer/compare/v0.52.1...v0.53.0) (2026-10-16)
 
 
