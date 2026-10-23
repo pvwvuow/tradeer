@@ -1,11 +1,12 @@
 """Risk settings per profile (spec B4, C6): `risk.json`.
 
-Four built-in profiles: Conservative (0.25% per trade), Normal (0.5%, the default),
-Prop-firm (the usual prop daily-loss and drawdown rules with a safety buffer) and Strategy
-lab (for a DEMO account that runs every strategy at once: small risk per trade, room for
-many trades). Editing a value makes the profile "custom". The model's limits are hard caps:
-no setting can raise the risk per trade above 1%, and a file that cannot be read gives the
-Normal profile, never a riskier one.
+Five built-in profiles: Conservative (0.25% per trade), Normal (0.5%, the default),
+Prop-firm (the usual prop daily-loss and drawdown rules with a safety buffer), Strategy lab
+(for a DEMO account that runs every strategy at once: small risk per trade, room for many
+trades) and Trendline (23 October 2026: the owner's index method, 0.5% per trade and room
+for every trade it stacks). Editing a value makes the profile "custom". The model's limits
+are hard caps: no setting can raise the risk per trade above 1%, and a file that cannot be
+read gives the Normal profile, never a riskier one.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 RISK_FILE_NAME = "risk.json"
 CUSTOM = "custom"
 LAB = "strategy_lab"
+TRENDLINE = "trendline"
 
 
 class RiskSettings(BaseModel):
@@ -134,12 +136,27 @@ PROFILES: dict[str, RiskSettings] = {
         max_trades_per_day=40,
         max_currency_exposure_percent=2.0,
     ),
+    # 23 October 2026: the owner's index method stacks a trade on every correction and sets
+    # no limit of its own. 0.5% per trade; the model's hard caps are the only ceilings, and
+    # the daily loss (3%) and drawdown (10%) stops stay on.
+    TRENDLINE: RiskSettings(
+        risk_per_trade_percent=0.5,
+        max_total_open_risk_percent=5.0,
+        max_daily_loss_percent=3.0,
+        max_total_drawdown_percent=10.0,
+        max_open_trades=20,
+        max_open_per_symbol=10,
+        max_open_per_strategy=20,
+        max_trades_per_day=50,
+        max_currency_exposure_percent=5.0,
+    ),
 }
 PROFILE_TITLES: dict[str, str] = {
     "conservative": "Conservative",
     "normal": "Normal",
     "prop_firm": "Prop-firm",
     LAB: "Strategy lab (demo)",
+    TRENDLINE: "Trendline (indices)",
     CUSTOM: "Custom",
 }
 PROFILE_NOTES: dict[str, str] = {
@@ -153,6 +170,12 @@ PROFILE_NOTES: dict[str, str] = {
         "For a DEMO account that runs every strategy at once to compare them: 0.25% per "
         "trade, up to 12 open trades (5 per symbol, 3 per strategy) and 40 a day, 5% daily "
         "loss, 20% drawdown. Not for a real account."
+    ),
+    TRENDLINE: (
+        "For the Trendline break strategy on NAS100 and US30, which stacks a trade on every "
+        "correction: 0.5% per trade, up to 20 open trades (10 per symbol) and 50 a day, 5% "
+        "total open risk, 3% daily loss, 10% drawdown. Twenty open trades can lose 10% "
+        "together: watch the total open risk."
     ),
     CUSTOM: "Your own values.",
 }

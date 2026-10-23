@@ -12,6 +12,11 @@ through a queue, so every database write happens in this one thread.
 The Signal desk (docs/SIGNAL_DESK.md) hands in pasted signals the same way (`submit`): each
 is planned against the newest analysis of its symbol, split into one leg per target and
 every leg runs the same features, probability, filters and risk as a strategy's signal.
+
+23 October 2026: a strategy may hold several positions on a symbol (`stackable`), may be
+judged by R instead of a win probability (`judged_by_win_rate`), and may close its open
+positions when its own trend turns (`exit_check`, asked on every new bar before the entry
+rules).
 """
 
 from __future__ import annotations
@@ -54,7 +59,7 @@ from app.signals.plan import Market, OrderPlan, plan
 from app.signals.words import resolve_symbol
 from app.storage.ids import stable_id
 from app.storage.signal_store import TradeResult, config_id
-from app.strategies.base import EXAMPLE_NOTE, Evaluation, Strategy
+from app.strategies.base import EXAMPLE_NOTE, Evaluation, Held, Strategy
 from app.strategies.context import MarketContext, build_context
 from app.strategies.manual_signal import GROUP_FEATURE, ManualSignal
 
@@ -65,6 +70,7 @@ FILTERED_RISK_NOTE = "not sized: the signal was filtered out"
 EXECUTION_NOTE = "approve to send it (Paper or Semi-auto mode); unapproved signals expire"
 NO_EXECUTION_NOTE = "No execution engine is running: signal only"
 OCO_REASON = "the other side of the breakout filled (OCO)"
+R_JUDGED_NOTE = "judged by R: the win probability and expected value gates do not apply"
 # A trade on its way or open: one per symbol and side across strategies (8 October 2026)
 LIVE_STATES = frozenset(
     {
@@ -243,6 +249,20 @@ def history_of(results: Sequence[TradeResult]) -> _History:
         elif result.outcome == "win":
             streak = False
     return found
+
+
+def judged_settings(strategy: Strategy, settings: FilterSettings) -> FilterSettings:
+    """The filter settings for `strategy`. A strategy judged by R, not by its win rate, skips
+    the win probability and expected value gates (they would refuse a 50% win rate)."""
+    if strategy.judged_by_win_rate:
+        return settings
+    return settings.model_copy(
+        update={
+            "min_probability_percent": 0.0,
+            "min_ev_r": -1_000_000.0,
+            "require_probability": False,
+        },
+    )
 
 
 def _same_group(signal: Signal, other: Signal) -> bool:
@@ -430,6 +450,7 @@ class SignalPipeline:
         self._evaluated[key] = bar_time
         point = spec.point if spec is not None and spec.point > 0 else 10.0**-analysis.digits
         ctx = build_context(analysis, timeframe, clock=clock, now=now, point=point, spread=spread)
+        self._exits(strategy, ctx)
         evaluation = strategy.evaluate(ctx)
         records = [
             self._process(strategy, signal, evaluation, ctx, analysis, spec, now)
@@ -438,6 +459,39 @@ class SignalPipeline:
         ]
         self._scan_entry(strategy, evaluation, records)
         return records
+
+    def _exits(self, strategy: Strategy, ctx: MarketContext) -> None:
+        """Close the open positions of `strategy` on this symbol when it says its trend has
+        turned (`exit_check`). Runs on every new bar, whatever the entry rules say. The close
+        goes to the execution engine, which closes the whole position on its next cycle."""
+        held = [
+            Held(record.id, record.signal.direction, record.signal.bar_time)
+            for record in self._records.values()
+            if record.signal.state.open_position
+            and record.signal.strategy == strategy.name
+            and record.signal.symbol == ctx.symbol
+        ]
+        if not held:
+            return
+        try:
+            reasons = strategy.exit_check(ctx, held)
+        except Exception as error:
+            self._log("ERROR", f"{strategy.name} exit check failed on {ctx.symbol}: {error}")
+            return
+        snapshot = getattr(self._executor, "snapshot", None)
+        close = getattr(self._executor, "request_close", None)
+        if not reasons or snapshot is None or close is None:
+            return
+        for view in snapshot.positions:
+            why = reasons.get(view.signal_id)
+            if why is None or view.pending:
+                continue
+            close(view.mode, view.ticket)
+            self._log("INFO", f"Closing {view.symbol} {view.ticket} [{strategy.name}]: {why}")
+            record = self._records.get(view.signal_id)
+            if record is not None:
+                record.trace.add("execution", "exit on trend change", None, detail=why, at=ctx.now)
+                self._save(record, None)
 
     def _scan_entry(
         self,
@@ -470,7 +524,7 @@ class SignalPipeline:
         spec: SymbolSpec | None,
         now: float,
     ) -> SignalRecord:
-        settings = self._filters()
+        settings = judged_settings(strategy, self._filters())
         trace = DecisionTrace(signal.id, stable_id("trace", signal.id))
         counts = ", ".join(f"{tf} {len(bars)}" for tf, bars in ctx.bars.items())
         trace.add(
@@ -547,6 +601,7 @@ class SignalPipeline:
         since_streak = (signal.created_at - end) / 3600.0 if end is not None else None
         same_side = self._same_side(signal)
         same_bet = self._same_bet(signal)
+        stacked = 0 if strategy.stackable else self._open_positions(signal)
         data = FilterInput(
             signal=signal,
             now=now,
@@ -556,7 +611,7 @@ class SignalPipeline:
             probability=estimate,
             expected_value=ev,
             duplicate=other is not None,
-            open_positions=self._open_positions(signal),
+            open_positions=stacked,
             losses_in_row=history.losses_in_row,
             bars_since_loss=since_loss,
             hours_since_losses=since_streak,
@@ -571,6 +626,8 @@ class SignalPipeline:
             same_bet=len(same_bet),
             same_bet_of=", ".join(same_bet),
         )
+        if not strategy.judged_by_win_rate:
+            trace.add("filter", "win rate gates", None, detail=R_JUDGED_NOTE, at=now)
         trace.extend(run_filters(data, settings))
         trace.add(
             "filter",
