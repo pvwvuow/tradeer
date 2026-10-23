@@ -275,7 +275,11 @@ class TrendlineBreak(Strategy):
         sign = item.direction.sign
         close = float(bars.close[last])
         kind = SwingKind.LOW if sign > 0 else SwingKind.HIGH
-        after = [s for s in steady if s.kind is kind and s.index > entry and s.confirmed_index <= last]
+        after = [
+            swing
+            for swing in steady
+            if swing.kind is kind and swing.index > entry and swing.confirmed_index <= last
+        ]
         if after:
             level = after[-1].price
             if (close - level) * sign < 0:
