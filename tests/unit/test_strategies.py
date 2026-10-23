@@ -93,7 +93,9 @@ def test_the_registry_builds_every_strategy() -> None:
         "trend_pullback",
     ]
     reversed_ = [f"{name}_reversed" for name in base]
-    assert sorted(STRATEGIES) == sorted([*base, *reversed_, "trend_following"])
+    assert sorted(STRATEGIES) == sorted(
+        [*base, *reversed_, "trend_following", "trendline_break"]
+    )
     info = strategy_info("london_breakout")
     assert info.example and info.entry_timeframe == "M15" and info.defaults["reward_r"] == 1.5
     built = create_strategy("trend_pullback", {"reward_r": 2.5})
